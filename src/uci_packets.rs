@@ -1,5 +1,12 @@
 // @generated rust packets from uci_packets.pdl
 
+#![allow(clippy::all)]
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(unused)]
+#![allow(missing_docs)]
+
 use bytes::{BufMut, Bytes, BytesMut};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};

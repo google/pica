@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bytes::BytesMut;
+use std::collections::HashMap;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -7,6 +8,7 @@ use tokio::task::JoinHandle;
 
 use crate::uci_packets::*;
 
+const MAX_DEVICE: usize = 4;
 const MAX_SESSION: usize = 4;
 const MAX_PAYLOAD_SIZE: usize = 4096;
 
@@ -33,19 +35,10 @@ struct Session {
 }
 
 pub struct Device {
-    connection: Connection,
-
     mac_address: usize,
     state: DeviceState,
     sessions: [Session; MAX_SESSION],
-
-    notify_tx: mpsc::Sender<UciPacketPacket>,
-    notify_rx: mpsc::Receiver<UciPacketPacket>,
-}
-
-struct Connection {
-    socket: TcpStream,
-    buffer: BytesMut,
+    tx: mpsc::Sender<UciPacketPacket>,
 }
 
 impl Default for Session {
@@ -59,8 +52,31 @@ impl Default for Session {
     }
 }
 
+impl Device {
+    pub fn new(device_handle: usize, tx: mpsc::Sender<UciPacketPacket>) -> Self {
+        Device {
+            mac_address: device_handle,
+            state: DeviceState::Ready,
+            sessions: Default::default(),
+            tx,
+        }
+    }
+}
+
+struct Connection {
+    socket: TcpStream,
+    buffer: BytesMut,
+}
+
 impl Connection {
-    async fn read(&mut self) -> Result<Option<UciPacketPacket>> {
+    fn new(socket: TcpStream) -> Self {
+        Connection {
+            socket,
+            buffer: BytesMut::with_capacity(MAX_PAYLOAD_SIZE),
+        }
+    }
+
+    async fn read(&mut self) -> Result<Option<UciCommandPacket>> {
         let len = self.socket.read_buf(&mut self.buffer).await?;
         if len == 0 {
             return Ok(None);
@@ -68,7 +84,7 @@ impl Connection {
 
         let packet = UciPacketPacket::parse(&self.buffer)?;
         self.buffer.clear();
-        Ok(Some(packet))
+        Ok(Some(packet.try_into()?))
     }
 
     async fn write(&mut self, packet: UciPacketPacket) -> Result<()> {
@@ -77,166 +93,294 @@ impl Connection {
     }
 }
 
-impl Device {
-    pub fn new(mac_address: usize, socket: TcpStream) -> Self {
-        let (notify_tx, notify_rx) = mpsc::channel(MAX_SESSION);
-        Device {
-            mac_address,
-            connection: Connection {
-                socket,
-                buffer: BytesMut::with_capacity(MAX_PAYLOAD_SIZE),
-            },
-            state: DeviceState::Ready,
-            sessions: Default::default(),
-            notify_tx,
-            notify_rx,
+#[derive(Debug)]
+pub enum PicaCommand {
+    // Connect a new device.
+    Connect(TcpStream),
+    // Disconnect the selected device.
+    Disconnect(usize),
+    // Execute ranging command for selected device and session.
+    Ranging(usize, usize),
+    // Execute UCI command received for selected device.
+    Command(usize, UciCommandPacket),
+}
+
+pub struct Pica {
+    devices: HashMap<usize, Device>,
+    counter: usize,
+    rx: mpsc::Receiver<PicaCommand>,
+    tx: mpsc::Sender<PicaCommand>,
+}
+
+impl Pica {
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
+        Pica {
+            devices: HashMap::new(),
+            counter: 0,
+            rx,
+            tx,
         }
     }
 
-    async fn device_reset(&mut self, command: DeviceResetCmdPacket) -> Result<()> {
-        let reset_config = command.get_reset_config();
-        println!("[{}] Device Reset", self.mac_address);
-        println!("  reset_config={}", reset_config);
-        self.connection
-            .write(
-                DeviceResetRspBuilder {
-                    status: StatusCode::UciStatusOk,
+    pub fn tx(&self) -> mpsc::Sender<PicaCommand> {
+        self.tx.clone()
+    }
+
+    fn get_device(&mut self, device_handle: usize) -> &mut Device {
+        self.devices.get_mut(&device_handle).unwrap()
+    }
+
+    async fn connect(&mut self, stream: TcpStream) {
+        let (packet_tx, mut packet_rx) = mpsc::channel(MAX_SESSION);
+        let device_handle = self.counter;
+        let pica_tx = self.tx.clone();
+
+        println!("[{}] Connecting device", device_handle);
+
+        self.counter += 1;
+        self.devices
+            .insert(device_handle, Device::new(device_handle, packet_tx));
+
+        // Spawn and detach the connection handling task.
+        // The task notifies pica when exiting to let it clean
+        // the state.
+        tokio::spawn(async move {
+            let mut connection = Connection::new(stream);
+            'outer: loop {
+                tokio::select! {
+                    // Read command packet sent from connected UWB host.
+                    // Run associated command.
+                    result = connection.read() => {
+                        match result {
+                            Ok(Some(packet)) =>
+                                pica_tx.send(PicaCommand::Command(device_handle, packet)).await.unwrap(),
+                            Ok(None) |
+                            Err(_) => break 'outer
+                        }
+                    },
+
+                    // Send response packets to the connected UWB host.
+                    Some(packet) = packet_rx.recv() =>
+                        if connection.write(packet).await.is_err() {
+                            break 'outer
+                        }
                 }
-                .build()
-                .into(),
-            )
-            .await
+            }
+            pica_tx
+                .send(PicaCommand::Disconnect(device_handle))
+                .await
+                .unwrap()
+        });
     }
 
-    async fn get_device_info(&mut self, _command: GetDeviceInfoCmdPacket) -> Result<()> {
+    fn disconnect(&mut self, device_handle: usize) {
+        println!("[{}] Disconnecting device", device_handle);
+        self.devices.remove(&device_handle);
+    }
+
+    async fn ranging(&mut self, _device_handle: usize, _session_id: usize) {
         todo!()
     }
 
-    async fn get_caps_info(&mut self, _command: GetCapsInfoCmdPacket) -> Result<()> {
-        todo!()
-    }
+    async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) -> Result<()> {
+        if !self.devices.contains_key(&device_handle) {
+            anyhow::bail!("Received command for disconnected device {}", device_handle);
+        }
 
-    async fn set_config(&mut self, _command: SetConfigCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn get_config(&mut self, _command: GetConfigCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn session_init(&mut self, _command: SessionInitCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn session_deinit(&mut self, _command: SessionDeinitCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn session_set_app_config(
-        &mut self,
-        _command: SessionSetAppConfigCmdPacket,
-    ) -> Result<()> {
-        todo!()
-    }
-
-    async fn session_get_app_config(
-        &mut self,
-        _command: SessionGetAppConfigCmdPacket,
-    ) -> Result<()> {
-        todo!()
-    }
-
-    async fn session_get_count(&mut self, _command: SessionGetCountCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn session_get_state(&mut self, _command: SessionGetStateCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn session_update_controller_multicast_list(
-        &mut self,
-        _command: SessionUpdateControllerMulticastListCmdPacket,
-    ) -> Result<()> {
-        todo!()
-    }
-
-    async fn range_start(&mut self, _command: RangeStartCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn range_stop(&mut self, _command: RangeStopCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn range_get_ranging_count(
-        &mut self,
-        _command: RangeGetRangingCountCmdPacket,
-    ) -> Result<()> {
-        todo!()
-    }
-
-    async fn handle_command(&mut self, packet: UciPacketPacket) -> Result<()> {
-        let command: UciCommandPacket = packet.try_into().unwrap();
-        match command.specialize() {
+        match cmd.specialize() {
             UciCommandChild::CoreCommand(core_command) => match core_command.specialize() {
-                CoreCommandChild::DeviceResetCmd(cmd) => self.device_reset(cmd).await,
-                CoreCommandChild::GetDeviceInfoCmd(cmd) => self.get_device_info(cmd).await,
-                CoreCommandChild::GetCapsInfoCmd(cmd) => self.get_caps_info(cmd).await,
-                CoreCommandChild::SetConfigCmd(cmd) => self.set_config(cmd).await,
-                CoreCommandChild::GetConfigCmd(cmd) => self.get_config(cmd).await,
+                CoreCommandChild::DeviceResetCmd(cmd) => {
+                    self.device_reset(device_handle, cmd).await
+                }
+                CoreCommandChild::GetDeviceInfoCmd(cmd) => {
+                    self.get_device_info(device_handle, cmd).await
+                }
+                CoreCommandChild::GetCapsInfoCmd(cmd) => {
+                    self.get_caps_info(device_handle, cmd).await
+                }
+                CoreCommandChild::SetConfigCmd(cmd) => self.set_config(device_handle, cmd).await,
+                CoreCommandChild::GetConfigCmd(cmd) => self.get_config(device_handle, cmd).await,
                 CoreCommandChild::None => anyhow::bail!("Unsupported core command"),
             },
             UciCommandChild::SessionCommand(session_command) => {
                 match session_command.specialize() {
-                    SessionCommandChild::SessionInitCmd(cmd) => self.session_init(cmd).await,
-                    SessionCommandChild::SessionDeinitCmd(cmd) => self.session_deinit(cmd).await,
+                    SessionCommandChild::SessionInitCmd(cmd) => {
+                        self.session_init(device_handle, cmd).await
+                    }
+                    SessionCommandChild::SessionDeinitCmd(cmd) => {
+                        self.session_deinit(device_handle, cmd).await
+                    }
                     SessionCommandChild::SessionSetAppConfigCmd(cmd) => {
-                        self.session_set_app_config(cmd).await
+                        self.session_set_app_config(device_handle, cmd).await
                     }
                     SessionCommandChild::SessionGetAppConfigCmd(cmd) => {
-                        self.session_get_app_config(cmd).await
+                        self.session_get_app_config(device_handle, cmd).await
                     }
                     SessionCommandChild::SessionGetCountCmd(cmd) => {
-                        self.session_get_count(cmd).await
+                        self.session_get_count(device_handle, cmd).await
                     }
                     SessionCommandChild::SessionGetStateCmd(cmd) => {
-                        self.session_get_state(cmd).await
+                        self.session_get_state(device_handle, cmd).await
                     }
                     SessionCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
-                        self.session_update_controller_multicast_list(cmd).await
+                        self.session_update_controller_multicast_list(device_handle, cmd)
+                            .await
                     }
                     SessionCommandChild::None => anyhow::bail!("Unsupported session command"),
                 }
             }
             UciCommandChild::RangingCommand(ranging_command) => {
                 match ranging_command.specialize() {
-                    RangingCommandChild::RangeStartCmd(cmd) => self.range_start(cmd).await,
-                    RangingCommandChild::RangeStopCmd(cmd) => self.range_stop(cmd).await,
+                    RangingCommandChild::RangeStartCmd(cmd) => {
+                        self.range_start(device_handle, cmd).await
+                    }
+                    RangingCommandChild::RangeStopCmd(cmd) => {
+                        self.range_stop(device_handle, cmd).await
+                    }
                     RangingCommandChild::RangeGetRangingCountCmd(cmd) => {
-                        self.range_get_ranging_count(cmd).await
+                        self.range_get_ranging_count(device_handle, cmd).await
                     }
                     RangingCommandChild::None => anyhow::bail!("Unsupported ranging command"),
                 }
             }
-
             _ => anyhow::bail!("Unsupported command type"),
         }
     }
 
     pub async fn run(&mut self) -> Result<()> {
         loop {
-            tokio::select! {
-                // Read command packet sent from connected UWB host.
-                // Run associated command.
-                Ok(Some(packet)) = self.connection.read() =>
-                    self.handle_command(packet).await?,
-
-                // Send notifications generated from ranging sessions
-                // to the connected host.
-                Some(notification) = self.notify_rx.recv() =>
-                    self.connection.write(notification).await?,
+            use PicaCommand::*;
+            match self.rx.recv().await {
+                Some(Connect(stream)) => self.connect(stream).await,
+                Some(Disconnect(device_handle)) => self.disconnect(device_handle),
+                Some(Ranging(device_handle, session_id)) => {
+                    self.ranging(device_handle, session_id).await
+                }
+                Some(Command(device_handle, cmd)) => self.command(device_handle, cmd).await?,
+                None => (),
             }
         }
+    }
+
+    async fn device_reset(
+        &mut self,
+        device_handle: usize,
+        cmd: DeviceResetCmdPacket,
+    ) -> Result<()> {
+        let reset_config = cmd.get_reset_config();
+        println!("[{}] Device Reset", device_handle);
+        println!("  reset_config={}", reset_config);
+        Ok(self
+            .get_device(device_handle)
+            .tx
+            .send(
+                DeviceResetRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                }
+                .build()
+                .into(),
+            )
+            .await?)
+    }
+
+    async fn get_device_info(
+        &mut self,
+        _device_handle: usize,
+        _cmd: GetDeviceInfoCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn get_caps_info(
+        &mut self,
+        _device_handle: usize,
+        _cmd: GetCapsInfoCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn set_config(&mut self, _device_handle: usize, _cmd: SetConfigCmdPacket) -> Result<()> {
+        todo!()
+    }
+
+    async fn get_config(&mut self, _device_handle: usize, _cmd: GetConfigCmdPacket) -> Result<()> {
+        todo!()
+    }
+
+    async fn session_init(
+        &mut self,
+        _device_handle: usize,
+        _cmd: SessionInitCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn session_deinit(
+        &mut self,
+        _device_handle: usize,
+        _cmd: SessionDeinitCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn session_set_app_config(
+        &mut self,
+        _device_handle: usize,
+        _cmd: SessionSetAppConfigCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn session_get_app_config(
+        &mut self,
+        _device_handle: usize,
+        _cmd: SessionGetAppConfigCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn session_get_count(
+        &mut self,
+        _device_handle: usize,
+        _cmd: SessionGetCountCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn session_get_state(
+        &mut self,
+        _device_handle: usize,
+        _cmd: SessionGetStateCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn session_update_controller_multicast_list(
+        &mut self,
+        _device_handle: usize,
+        _cmd: SessionUpdateControllerMulticastListCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn range_start(
+        &mut self,
+        _device_handle: usize,
+        _cmd: RangeStartCmdPacket,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    async fn range_stop(&mut self, _device_handle: usize, _cmd: RangeStopCmdPacket) -> Result<()> {
+        todo!()
+    }
+
+    async fn range_get_ranging_count(
+        &mut self,
+        _device_handle: usize,
+        _cmd: RangeGetRangingCountCmdPacket,
+    ) -> Result<()> {
+        todo!()
     }
 }
