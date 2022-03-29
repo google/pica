@@ -74,7 +74,7 @@ pub enum GroupId {
     SessionConfig = 0x1,
     RangingSessionControl = 0x2,
     DataControl = 0x3,
-    VendorReserved9 = 0x9,
+    VendorPica = 0x9,
     VendorReservedA = 0xa,
     VendorReservedB = 0xb,
     VendorReservedE = 0xc,
@@ -93,9 +93,7 @@ impl fmt::Display for GroupId {
                 self.to_u8().unwrap()
             ),
             GroupId::DataControl => write!(f, "{:#04X} (DATA_CONTROL)", self.to_u8().unwrap()),
-            GroupId::VendorReserved9 => {
-                write!(f, "{:#04X} (VENDOR_RESERVED_9)", self.to_u8().unwrap())
-            }
+            GroupId::VendorPica => write!(f, "{:#04X} (VENDOR_PICA)", self.to_u8().unwrap()),
             GroupId::VendorReservedA => {
                 write!(f, "{:#04X} (VENDOR_RESERVED_A)", self.to_u8().unwrap())
             }
@@ -240,6 +238,41 @@ impl fmt::Display for AppDataOpCode {
         match self {
             AppDataOpCode::AppDataTx => write!(f, "{:#04X} (APP_DATA_TX)", self.to_u8().unwrap()),
             AppDataOpCode::AppDataRx => write!(f, "{:#04X} (APP_DATA_RX)", self.to_u8().unwrap()),
+        }
+    }
+}
+
+#[derive(FromPrimitive, ToPrimitive, Debug, Hash, Eq, PartialEq, Clone, Copy)]
+#[repr(u64)]
+pub enum PicaOpCode {
+    PicaInitDevice = 0x0,
+    PicaSetDevicePosition = 0x1,
+    PicaCreateBeacon = 0x2,
+    PicaSetBeaconPosition = 0x3,
+    PicaDestroyBeacon = 0x4,
+}
+impl fmt::Display for PicaOpCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PicaOpCode::PicaInitDevice => {
+                write!(f, "{:#04X} (PICA_INIT_DEVICE)", self.to_u8().unwrap())
+            }
+            PicaOpCode::PicaSetDevicePosition => write!(
+                f,
+                "{:#04X} (PICA_SET_DEVICE_POSITION)",
+                self.to_u8().unwrap()
+            ),
+            PicaOpCode::PicaCreateBeacon => {
+                write!(f, "{:#04X} (PICA_CREATE_BEACON)", self.to_u8().unwrap())
+            }
+            PicaOpCode::PicaSetBeaconPosition => write!(
+                f,
+                "{:#04X} (PICA_SET_BEACON_POSITION)",
+                self.to_u8().unwrap()
+            ),
+            PicaOpCode::PicaDestroyBeacon => {
+                write!(f, "{:#04X} (PICA_DESTROY_BEACON)", self.to_u8().unwrap())
+            }
         }
     }
 }
@@ -1922,6 +1955,91 @@ impl ExtendedAddressTwoWayRangingMeasurement {
 }
 
 #[derive(Debug, Clone)]
+pub struct PicaPosition {
+    pub x: u16,
+    pub y: u16,
+    pub z: u16,
+    pub azimuth: u16,
+    pub elevation: u8,
+}
+impl PicaPosition {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 2 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaPosition".to_string(),
+                field: "x".to_string(),
+                wanted: 2,
+                got: bytes.len(),
+            });
+        }
+        let x = u16::from_le_bytes([bytes[0], bytes[1]]);
+        if bytes.len() < 4 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaPosition".to_string(),
+                field: "y".to_string(),
+                wanted: 4,
+                got: bytes.len(),
+            });
+        }
+        let y = u16::from_le_bytes([bytes[2], bytes[3]]);
+        if bytes.len() < 6 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaPosition".to_string(),
+                field: "z".to_string(),
+                wanted: 6,
+                got: bytes.len(),
+            });
+        }
+        let z = u16::from_le_bytes([bytes[4], bytes[5]]);
+        if bytes.len() < 8 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaPosition".to_string(),
+                field: "azimuth".to_string(),
+                wanted: 8,
+                got: bytes.len(),
+            });
+        }
+        let azimuth = u16::from_le_bytes([bytes[6], bytes[7]]);
+        if bytes.len() < 9 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaPosition".to_string(),
+                field: "elevation".to_string(),
+                wanted: 9,
+                got: bytes.len(),
+            });
+        }
+        let elevation = u8::from_le_bytes([bytes[8]]);
+        Ok(Self {
+            x,
+            y,
+            z,
+            azimuth,
+            elevation,
+        })
+    }
+    fn write_to(&self, buffer: &mut [u8]) {
+        let x = self.x;
+        buffer[0..2].copy_from_slice(&x.to_le_bytes()[0..2]);
+        let y = self.y;
+        buffer[2..4].copy_from_slice(&y.to_le_bytes()[0..2]);
+        let z = self.z;
+        buffer[4..6].copy_from_slice(&z.to_le_bytes()[0..2]);
+        let azimuth = self.azimuth;
+        buffer[6..8].copy_from_slice(&azimuth.to_le_bytes()[0..2]);
+        let elevation = self.elevation;
+        buffer[8..9].copy_from_slice(&elevation.to_le_bytes()[0..1]);
+    }
+    fn get_total_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 9;
+        ret
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PowerStats {
     pub status: StatusCode,
     pub idle_time_ms: u32,
@@ -2266,8 +2384,8 @@ enum UciCommandDataChild {
     CoreCommand(Arc<CoreCommandData>),
     SessionCommand(Arc<SessionCommandData>),
     RangingCommand(Arc<RangingCommandData>),
+    PicaCommand(Arc<PicaCommandData>),
     AndroidCommand(Arc<AndroidCommandData>),
-    UciVendor_9_Command(Arc<UciVendor_9_CommandData>),
     UciVendor_A_Command(Arc<UciVendor_A_CommandData>),
     UciVendor_B_Command(Arc<UciVendor_B_CommandData>),
     UciVendor_E_Command(Arc<UciVendor_E_CommandData>),
@@ -2281,8 +2399,8 @@ impl UciCommandDataChild {
             UciCommandDataChild::CoreCommand(value) => value.get_total_size(),
             UciCommandDataChild::SessionCommand(value) => value.get_total_size(),
             UciCommandDataChild::RangingCommand(value) => value.get_total_size(),
+            UciCommandDataChild::PicaCommand(value) => value.get_total_size(),
             UciCommandDataChild::AndroidCommand(value) => value.get_total_size(),
-            UciCommandDataChild::UciVendor_9_Command(value) => value.get_total_size(),
             UciCommandDataChild::UciVendor_A_Command(value) => value.get_total_size(),
             UciCommandDataChild::UciVendor_B_Command(value) => value.get_total_size(),
             UciCommandDataChild::UciVendor_E_Command(value) => value.get_total_size(),
@@ -2297,8 +2415,8 @@ pub enum UciCommandChild {
     CoreCommand(CoreCommandPacket),
     SessionCommand(SessionCommandPacket),
     RangingCommand(RangingCommandPacket),
+    PicaCommand(PicaCommandPacket),
     AndroidCommand(AndroidCommandPacket),
-    UciVendor_9_Command(UciVendor_9_CommandPacket),
     UciVendor_A_Command(UciVendor_A_CommandPacket),
     UciVendor_B_Command(UciVendor_B_CommandPacket),
     UciVendor_E_Command(UciVendor_E_CommandPacket),
@@ -2346,15 +2464,16 @@ impl UciCommandData {
                     opcode,
                 )?))
             }
-            (GroupId::VendorAndroid) if AndroidCommandData::conforms(&bytes[..]) => {
-                UciCommandDataChild::AndroidCommand(Arc::new(AndroidCommandData::parse(
+            (GroupId::VendorPica) if PicaCommandData::conforms(&bytes[..]) => {
+                UciCommandDataChild::PicaCommand(Arc::new(PicaCommandData::parse(
                     &bytes[..],
                     opcode,
                 )?))
             }
-            (GroupId::VendorReserved9) if UciVendor_9_CommandData::conforms(&bytes[..]) => {
-                UciCommandDataChild::UciVendor_9_Command(Arc::new(UciVendor_9_CommandData::parse(
+            (GroupId::VendorAndroid) if AndroidCommandData::conforms(&bytes[..]) => {
+                UciCommandDataChild::AndroidCommand(Arc::new(AndroidCommandData::parse(
                     &bytes[..],
+                    opcode,
                 )?))
             }
             (GroupId::VendorReservedA) if UciVendor_A_CommandData::conforms(&bytes[..]) => {
@@ -2386,8 +2505,8 @@ impl UciCommandData {
             UciCommandDataChild::CoreCommand(value) => value.write_to(buffer),
             UciCommandDataChild::SessionCommand(value) => value.write_to(buffer),
             UciCommandDataChild::RangingCommand(value) => value.write_to(buffer),
+            UciCommandDataChild::PicaCommand(value) => value.write_to(buffer),
             UciCommandDataChild::AndroidCommand(value) => value.write_to(buffer),
-            UciCommandDataChild::UciVendor_9_Command(value) => value.write_to(buffer),
             UciCommandDataChild::UciVendor_A_Command(value) => value.write_to(buffer),
             UciCommandDataChild::UciVendor_B_Command(value) => value.write_to(buffer),
             UciCommandDataChild::UciVendor_E_Command(value) => value.write_to(buffer),
@@ -2443,11 +2562,11 @@ impl UciCommandPacket {
             UciCommandDataChild::RangingCommand(_) => UciCommandChild::RangingCommand(
                 RangingCommandPacket::new(self.uci_packet.clone()).unwrap(),
             ),
+            UciCommandDataChild::PicaCommand(_) => UciCommandChild::PicaCommand(
+                PicaCommandPacket::new(self.uci_packet.clone()).unwrap(),
+            ),
             UciCommandDataChild::AndroidCommand(_) => UciCommandChild::AndroidCommand(
                 AndroidCommandPacket::new(self.uci_packet.clone()).unwrap(),
-            ),
-            UciCommandDataChild::UciVendor_9_Command(_) => UciCommandChild::UciVendor_9_Command(
-                UciVendor_9_CommandPacket::new(self.uci_packet.clone()).unwrap(),
             ),
             UciCommandDataChild::UciVendor_A_Command(_) => UciCommandChild::UciVendor_A_Command(
                 UciVendor_A_CommandPacket::new(self.uci_packet.clone()).unwrap(),
@@ -2523,8 +2642,8 @@ enum UciResponseDataChild {
     CoreResponse(Arc<CoreResponseData>),
     SessionResponse(Arc<SessionResponseData>),
     RangingResponse(Arc<RangingResponseData>),
+    PicaResponse(Arc<PicaResponseData>),
     AndroidResponse(Arc<AndroidResponseData>),
-    UciVendor_9_Response(Arc<UciVendor_9_ResponseData>),
     UciVendor_A_Response(Arc<UciVendor_A_ResponseData>),
     UciVendor_B_Response(Arc<UciVendor_B_ResponseData>),
     UciVendor_E_Response(Arc<UciVendor_E_ResponseData>),
@@ -2538,8 +2657,8 @@ impl UciResponseDataChild {
             UciResponseDataChild::CoreResponse(value) => value.get_total_size(),
             UciResponseDataChild::SessionResponse(value) => value.get_total_size(),
             UciResponseDataChild::RangingResponse(value) => value.get_total_size(),
+            UciResponseDataChild::PicaResponse(value) => value.get_total_size(),
             UciResponseDataChild::AndroidResponse(value) => value.get_total_size(),
-            UciResponseDataChild::UciVendor_9_Response(value) => value.get_total_size(),
             UciResponseDataChild::UciVendor_A_Response(value) => value.get_total_size(),
             UciResponseDataChild::UciVendor_B_Response(value) => value.get_total_size(),
             UciResponseDataChild::UciVendor_E_Response(value) => value.get_total_size(),
@@ -2554,8 +2673,8 @@ pub enum UciResponseChild {
     CoreResponse(CoreResponsePacket),
     SessionResponse(SessionResponsePacket),
     RangingResponse(RangingResponsePacket),
+    PicaResponse(PicaResponsePacket),
     AndroidResponse(AndroidResponsePacket),
-    UciVendor_9_Response(UciVendor_9_ResponsePacket),
     UciVendor_A_Response(UciVendor_A_ResponsePacket),
     UciVendor_B_Response(UciVendor_B_ResponsePacket),
     UciVendor_E_Response(UciVendor_E_ResponsePacket),
@@ -2603,16 +2722,17 @@ impl UciResponseData {
                     opcode,
                 )?))
             }
+            (GroupId::VendorPica) if PicaResponseData::conforms(&bytes[..]) => {
+                UciResponseDataChild::PicaResponse(Arc::new(PicaResponseData::parse(
+                    &bytes[..],
+                    opcode,
+                )?))
+            }
             (GroupId::VendorAndroid) if AndroidResponseData::conforms(&bytes[..]) => {
                 UciResponseDataChild::AndroidResponse(Arc::new(AndroidResponseData::parse(
                     &bytes[..],
                     opcode,
                 )?))
-            }
-            (GroupId::VendorReserved9) if UciVendor_9_ResponseData::conforms(&bytes[..]) => {
-                UciResponseDataChild::UciVendor_9_Response(Arc::new(
-                    UciVendor_9_ResponseData::parse(&bytes[..])?,
-                ))
             }
             (GroupId::VendorReservedA) if UciVendor_A_ResponseData::conforms(&bytes[..]) => {
                 UciResponseDataChild::UciVendor_A_Response(Arc::new(
@@ -2643,8 +2763,8 @@ impl UciResponseData {
             UciResponseDataChild::CoreResponse(value) => value.write_to(buffer),
             UciResponseDataChild::SessionResponse(value) => value.write_to(buffer),
             UciResponseDataChild::RangingResponse(value) => value.write_to(buffer),
+            UciResponseDataChild::PicaResponse(value) => value.write_to(buffer),
             UciResponseDataChild::AndroidResponse(value) => value.write_to(buffer),
-            UciResponseDataChild::UciVendor_9_Response(value) => value.write_to(buffer),
             UciResponseDataChild::UciVendor_A_Response(value) => value.write_to(buffer),
             UciResponseDataChild::UciVendor_B_Response(value) => value.write_to(buffer),
             UciResponseDataChild::UciVendor_E_Response(value) => value.write_to(buffer),
@@ -2700,14 +2820,12 @@ impl UciResponsePacket {
             UciResponseDataChild::RangingResponse(_) => UciResponseChild::RangingResponse(
                 RangingResponsePacket::new(self.uci_packet.clone()).unwrap(),
             ),
+            UciResponseDataChild::PicaResponse(_) => UciResponseChild::PicaResponse(
+                PicaResponsePacket::new(self.uci_packet.clone()).unwrap(),
+            ),
             UciResponseDataChild::AndroidResponse(_) => UciResponseChild::AndroidResponse(
                 AndroidResponsePacket::new(self.uci_packet.clone()).unwrap(),
             ),
-            UciResponseDataChild::UciVendor_9_Response(_) => {
-                UciResponseChild::UciVendor_9_Response(
-                    UciVendor_9_ResponsePacket::new(self.uci_packet.clone()).unwrap(),
-                )
-            }
             UciResponseDataChild::UciVendor_A_Response(_) => {
                 UciResponseChild::UciVendor_A_Response(
                     UciVendor_A_ResponsePacket::new(self.uci_packet.clone()).unwrap(),
@@ -2791,7 +2909,6 @@ enum UciNotificationDataChild {
     SessionNotification(Arc<SessionNotificationData>),
     RangingNotification(Arc<RangingNotificationData>),
     AndroidNotification(Arc<AndroidNotificationData>),
-    UciVendor_9_Notification(Arc<UciVendor_9_NotificationData>),
     UciVendor_A_Notification(Arc<UciVendor_A_NotificationData>),
     UciVendor_B_Notification(Arc<UciVendor_B_NotificationData>),
     UciVendor_E_Notification(Arc<UciVendor_E_NotificationData>),
@@ -2806,7 +2923,6 @@ impl UciNotificationDataChild {
             UciNotificationDataChild::SessionNotification(value) => value.get_total_size(),
             UciNotificationDataChild::RangingNotification(value) => value.get_total_size(),
             UciNotificationDataChild::AndroidNotification(value) => value.get_total_size(),
-            UciNotificationDataChild::UciVendor_9_Notification(value) => value.get_total_size(),
             UciNotificationDataChild::UciVendor_A_Notification(value) => value.get_total_size(),
             UciNotificationDataChild::UciVendor_B_Notification(value) => value.get_total_size(),
             UciNotificationDataChild::UciVendor_E_Notification(value) => value.get_total_size(),
@@ -2822,7 +2938,6 @@ pub enum UciNotificationChild {
     SessionNotification(SessionNotificationPacket),
     RangingNotification(RangingNotificationPacket),
     AndroidNotification(AndroidNotificationPacket),
-    UciVendor_9_Notification(UciVendor_9_NotificationPacket),
     UciVendor_A_Notification(UciVendor_A_NotificationPacket),
     UciVendor_B_Notification(UciVendor_B_NotificationPacket),
     UciVendor_E_Notification(UciVendor_E_NotificationPacket),
@@ -2873,11 +2988,6 @@ impl UciNotificationData {
                     AndroidNotificationData::parse(&bytes[..])?,
                 ))
             }
-            (GroupId::VendorReserved9) if UciVendor_9_NotificationData::conforms(&bytes[..]) => {
-                UciNotificationDataChild::UciVendor_9_Notification(Arc::new(
-                    UciVendor_9_NotificationData::parse(&bytes[..])?,
-                ))
-            }
             (GroupId::VendorReservedA) if UciVendor_A_NotificationData::conforms(&bytes[..]) => {
                 UciNotificationDataChild::UciVendor_A_Notification(Arc::new(
                     UciVendor_A_NotificationData::parse(&bytes[..])?,
@@ -2908,7 +3018,6 @@ impl UciNotificationData {
             UciNotificationDataChild::SessionNotification(value) => value.write_to(buffer),
             UciNotificationDataChild::RangingNotification(value) => value.write_to(buffer),
             UciNotificationDataChild::AndroidNotification(value) => value.write_to(buffer),
-            UciNotificationDataChild::UciVendor_9_Notification(value) => value.write_to(buffer),
             UciNotificationDataChild::UciVendor_A_Notification(value) => value.write_to(buffer),
             UciNotificationDataChild::UciVendor_B_Notification(value) => value.write_to(buffer),
             UciNotificationDataChild::UciVendor_E_Notification(value) => value.write_to(buffer),
@@ -2973,11 +3082,6 @@ impl UciNotificationPacket {
             UciNotificationDataChild::AndroidNotification(_) => {
                 UciNotificationChild::AndroidNotification(
                     AndroidNotificationPacket::new(self.uci_packet.clone()).unwrap(),
-                )
-            }
-            UciNotificationDataChild::UciVendor_9_Notification(_) => {
-                UciNotificationChild::UciVendor_9_Notification(
-                    UciVendor_9_NotificationPacket::new(self.uci_packet.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::UciVendor_A_Notification(_) => {
@@ -4888,6 +4992,446 @@ impl Into<UciPacketPacket> for RangingNotificationBuilder {
 }
 impl Into<UciNotificationPacket> for RangingNotificationBuilder {
     fn into(self) -> UciNotificationPacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+enum PicaCommandDataChild {
+    PicaInitDeviceCmd(Arc<PicaInitDeviceCmdData>),
+    PicaSetDevicePositionCmd(Arc<PicaSetDevicePositionCmdData>),
+    PicaCreateBeaconCmd(Arc<PicaCreateBeaconCmdData>),
+    PicaSetBeaconPositionCmd(Arc<PicaSetBeaconPositionCmdData>),
+    PicaDestroyBeaconCmd(Arc<PicaDestroyBeaconCmdData>),
+    None,
+}
+impl PicaCommandDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            PicaCommandDataChild::PicaInitDeviceCmd(value) => value.get_total_size(),
+            PicaCommandDataChild::PicaSetDevicePositionCmd(value) => value.get_total_size(),
+            PicaCommandDataChild::PicaCreateBeaconCmd(value) => value.get_total_size(),
+            PicaCommandDataChild::PicaSetBeaconPositionCmd(value) => value.get_total_size(),
+            PicaCommandDataChild::PicaDestroyBeaconCmd(value) => value.get_total_size(),
+            PicaCommandDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug)]
+pub enum PicaCommandChild {
+    PicaInitDeviceCmd(PicaInitDeviceCmdPacket),
+    PicaSetDevicePositionCmd(PicaSetDevicePositionCmdPacket),
+    PicaCreateBeaconCmd(PicaCreateBeaconCmdPacket),
+    PicaSetBeaconPositionCmd(PicaSetBeaconPositionCmdPacket),
+    PicaDestroyBeaconCmd(PicaDestroyBeaconCmdPacket),
+    None,
+}
+#[derive(Debug)]
+struct PicaCommandData {
+    child: PicaCommandDataChild,
+}
+#[derive(Debug, Clone)]
+pub struct PicaCommandPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_command: Arc<UciCommandData>,
+    pica_command: Arc<PicaCommandData>,
+}
+#[derive(Debug)]
+pub struct PicaCommandBuilder {
+    pub opcode: u8,
+}
+impl PicaCommandData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
+        let child = match (opcode) {
+            (0) if PicaInitDeviceCmdData::conforms(&bytes[..]) => {
+                PicaCommandDataChild::PicaInitDeviceCmd(Arc::new(PicaInitDeviceCmdData::parse(
+                    &bytes[..],
+                )?))
+            }
+            (1) if PicaSetDevicePositionCmdData::conforms(&bytes[..]) => {
+                PicaCommandDataChild::PicaSetDevicePositionCmd(Arc::new(
+                    PicaSetDevicePositionCmdData::parse(&bytes[..])?,
+                ))
+            }
+            (2) if PicaCreateBeaconCmdData::conforms(&bytes[..]) => {
+                PicaCommandDataChild::PicaCreateBeaconCmd(Arc::new(PicaCreateBeaconCmdData::parse(
+                    &bytes[..],
+                )?))
+            }
+            (3) if PicaSetBeaconPositionCmdData::conforms(&bytes[..]) => {
+                PicaCommandDataChild::PicaSetBeaconPositionCmd(Arc::new(
+                    PicaSetBeaconPositionCmdData::parse(&bytes[..])?,
+                ))
+            }
+            (4) if PicaDestroyBeaconCmdData::conforms(&bytes[..]) => {
+                PicaCommandDataChild::PicaDestroyBeaconCmd(Arc::new(
+                    PicaDestroyBeaconCmdData::parse(&bytes[..])?,
+                ))
+            }
+            (_) => return Err(Error::InvalidPacketError),
+        };
+        Ok(Self { child })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        match &self.child {
+            PicaCommandDataChild::PicaInitDeviceCmd(value) => value.write_to(buffer),
+            PicaCommandDataChild::PicaSetDevicePositionCmd(value) => value.write_to(buffer),
+            PicaCommandDataChild::PicaCreateBeaconCmd(value) => value.write_to(buffer),
+            PicaCommandDataChild::PicaSetBeaconPositionCmd(value) => value.write_to(buffer),
+            PicaCommandDataChild::PicaDestroyBeaconCmd(value) => value.write_to(buffer),
+            PicaCommandDataChild::None => {}
+        }
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size() + self.child.get_total_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        ret
+    }
+}
+impl Packet for PicaCommandPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaCommandPacket> for Bytes {
+    fn from(packet: PicaCommandPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaCommandPacket> for Vec<u8> {
+    fn from(packet: PicaCommandPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaCommandPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaCommandPacket {
+    pub fn specialize(&self) -> PicaCommandChild {
+        match &self.pica_command.child {
+            PicaCommandDataChild::PicaInitDeviceCmd(_) => PicaCommandChild::PicaInitDeviceCmd(
+                PicaInitDeviceCmdPacket::new(self.uci_packet.clone()).unwrap(),
+            ),
+            PicaCommandDataChild::PicaSetDevicePositionCmd(_) => {
+                PicaCommandChild::PicaSetDevicePositionCmd(
+                    PicaSetDevicePositionCmdPacket::new(self.uci_packet.clone()).unwrap(),
+                )
+            }
+            PicaCommandDataChild::PicaCreateBeaconCmd(_) => PicaCommandChild::PicaCreateBeaconCmd(
+                PicaCreateBeaconCmdPacket::new(self.uci_packet.clone()).unwrap(),
+            ),
+            PicaCommandDataChild::PicaSetBeaconPositionCmd(_) => {
+                PicaCommandChild::PicaSetBeaconPositionCmd(
+                    PicaSetBeaconPositionCmdPacket::new(self.uci_packet.clone()).unwrap(),
+                )
+            }
+            PicaCommandDataChild::PicaDestroyBeaconCmd(_) => {
+                PicaCommandChild::PicaDestroyBeaconCmd(
+                    PicaDestroyBeaconCmdPacket::new(self.uci_packet.clone()).unwrap(),
+                )
+            }
+            PicaCommandDataChild::None => PicaCommandChild::None,
+        }
+    }
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_command = match &uci_packet.child {
+            UciPacketDataChild::UciCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciCommand"),
+        };
+        let pica_command = match &uci_command.child {
+            UciCommandDataChild::PicaCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCommand"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_command,
+            pica_command,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+}
+impl Into<UciPacketPacket> for PicaCommandPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciCommandPacket> for PicaCommandPacket {
+    fn into(self) -> UciCommandPacket {
+        UciCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaCommandBuilder {
+    pub fn build(self) -> PicaCommandPacket {
+        let pica_command = Arc::new(PicaCommandData {
+            child: PicaCommandDataChild::None,
+        });
+        let uci_command = Arc::new(UciCommandData {
+            child: UciCommandDataChild::PicaCommand(pica_command),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Command,
+            opcode: self.opcode,
+            child: UciPacketDataChild::UciCommand(uci_command),
+        });
+        PicaCommandPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaCommandBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciCommandPacket> for PicaCommandBuilder {
+    fn into(self) -> UciCommandPacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+enum PicaResponseDataChild {
+    PicaInitDeviceRsp(Arc<PicaInitDeviceRspData>),
+    PicaSetDevicePositionRsp(Arc<PicaSetDevicePositionRspData>),
+    PicaCreateBeaconRsp(Arc<PicaCreateBeaconRspData>),
+    PicaSetBeaconPositionRsp(Arc<PicaSetBeaconPositionRspData>),
+    PicaDestroyBeaconRsp(Arc<PicaDestroyBeaconRspData>),
+    None,
+}
+impl PicaResponseDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            PicaResponseDataChild::PicaInitDeviceRsp(value) => value.get_total_size(),
+            PicaResponseDataChild::PicaSetDevicePositionRsp(value) => value.get_total_size(),
+            PicaResponseDataChild::PicaCreateBeaconRsp(value) => value.get_total_size(),
+            PicaResponseDataChild::PicaSetBeaconPositionRsp(value) => value.get_total_size(),
+            PicaResponseDataChild::PicaDestroyBeaconRsp(value) => value.get_total_size(),
+            PicaResponseDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug)]
+pub enum PicaResponseChild {
+    PicaInitDeviceRsp(PicaInitDeviceRspPacket),
+    PicaSetDevicePositionRsp(PicaSetDevicePositionRspPacket),
+    PicaCreateBeaconRsp(PicaCreateBeaconRspPacket),
+    PicaSetBeaconPositionRsp(PicaSetBeaconPositionRspPacket),
+    PicaDestroyBeaconRsp(PicaDestroyBeaconRspPacket),
+    None,
+}
+#[derive(Debug)]
+struct PicaResponseData {
+    child: PicaResponseDataChild,
+}
+#[derive(Debug, Clone)]
+pub struct PicaResponsePacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_response: Arc<UciResponseData>,
+    pica_response: Arc<PicaResponseData>,
+}
+#[derive(Debug)]
+pub struct PicaResponseBuilder {
+    pub opcode: u8,
+}
+impl PicaResponseData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
+        let child = match (opcode) {
+            (0) if PicaInitDeviceRspData::conforms(&bytes[..]) => {
+                PicaResponseDataChild::PicaInitDeviceRsp(Arc::new(PicaInitDeviceRspData::parse(
+                    &bytes[..],
+                )?))
+            }
+            (1) if PicaSetDevicePositionRspData::conforms(&bytes[..]) => {
+                PicaResponseDataChild::PicaSetDevicePositionRsp(Arc::new(
+                    PicaSetDevicePositionRspData::parse(&bytes[..])?,
+                ))
+            }
+            (2) if PicaCreateBeaconRspData::conforms(&bytes[..]) => {
+                PicaResponseDataChild::PicaCreateBeaconRsp(Arc::new(
+                    PicaCreateBeaconRspData::parse(&bytes[..])?,
+                ))
+            }
+            (3) if PicaSetBeaconPositionRspData::conforms(&bytes[..]) => {
+                PicaResponseDataChild::PicaSetBeaconPositionRsp(Arc::new(
+                    PicaSetBeaconPositionRspData::parse(&bytes[..])?,
+                ))
+            }
+            (4) if PicaDestroyBeaconRspData::conforms(&bytes[..]) => {
+                PicaResponseDataChild::PicaDestroyBeaconRsp(Arc::new(
+                    PicaDestroyBeaconRspData::parse(&bytes[..])?,
+                ))
+            }
+            (_) => return Err(Error::InvalidPacketError),
+        };
+        Ok(Self { child })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        match &self.child {
+            PicaResponseDataChild::PicaInitDeviceRsp(value) => value.write_to(buffer),
+            PicaResponseDataChild::PicaSetDevicePositionRsp(value) => value.write_to(buffer),
+            PicaResponseDataChild::PicaCreateBeaconRsp(value) => value.write_to(buffer),
+            PicaResponseDataChild::PicaSetBeaconPositionRsp(value) => value.write_to(buffer),
+            PicaResponseDataChild::PicaDestroyBeaconRsp(value) => value.write_to(buffer),
+            PicaResponseDataChild::None => {}
+        }
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size() + self.child.get_total_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        ret
+    }
+}
+impl Packet for PicaResponsePacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaResponsePacket> for Bytes {
+    fn from(packet: PicaResponsePacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaResponsePacket> for Vec<u8> {
+    fn from(packet: PicaResponsePacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaResponsePacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaResponsePacket {
+    pub fn specialize(&self) -> PicaResponseChild {
+        match &self.pica_response.child {
+            PicaResponseDataChild::PicaInitDeviceRsp(_) => PicaResponseChild::PicaInitDeviceRsp(
+                PicaInitDeviceRspPacket::new(self.uci_packet.clone()).unwrap(),
+            ),
+            PicaResponseDataChild::PicaSetDevicePositionRsp(_) => {
+                PicaResponseChild::PicaSetDevicePositionRsp(
+                    PicaSetDevicePositionRspPacket::new(self.uci_packet.clone()).unwrap(),
+                )
+            }
+            PicaResponseDataChild::PicaCreateBeaconRsp(_) => {
+                PicaResponseChild::PicaCreateBeaconRsp(
+                    PicaCreateBeaconRspPacket::new(self.uci_packet.clone()).unwrap(),
+                )
+            }
+            PicaResponseDataChild::PicaSetBeaconPositionRsp(_) => {
+                PicaResponseChild::PicaSetBeaconPositionRsp(
+                    PicaSetBeaconPositionRspPacket::new(self.uci_packet.clone()).unwrap(),
+                )
+            }
+            PicaResponseDataChild::PicaDestroyBeaconRsp(_) => {
+                PicaResponseChild::PicaDestroyBeaconRsp(
+                    PicaDestroyBeaconRspPacket::new(self.uci_packet.clone()).unwrap(),
+                )
+            }
+            PicaResponseDataChild::None => PicaResponseChild::None,
+        }
+    }
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_response = match &uci_packet.child {
+            UciPacketDataChild::UciResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciResponse"),
+        };
+        let pica_response = match &uci_response.child {
+            UciResponseDataChild::PicaResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaResponse"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_response,
+            pica_response,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+}
+impl Into<UciPacketPacket> for PicaResponsePacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciResponsePacket> for PicaResponsePacket {
+    fn into(self) -> UciResponsePacket {
+        UciResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaResponseBuilder {
+    pub fn build(self) -> PicaResponsePacket {
+        let pica_response = Arc::new(PicaResponseData {
+            child: PicaResponseDataChild::None,
+        });
+        let uci_response = Arc::new(UciResponseData {
+            child: UciResponseDataChild::PicaResponse(pica_response),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Response,
+            opcode: self.opcode,
+            child: UciPacketDataChild::UciResponse(uci_response),
+        });
+        PicaResponsePacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaResponseBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciResponsePacket> for PicaResponseBuilder {
+    fn into(self) -> UciResponsePacket {
         self.build().into()
     }
 }
@@ -12729,6 +13273,1694 @@ RangingResponseChild::RangeGetRangingCountRsp(packet) => {let rebuilder = RangeG
 range_get_ranging_count_rsp_builder_tests! { range_get_ranging_count_rsp_builder_test_00: b"\x42\x03\x00\x05\x00\x02\x03\x04\x05",}
 
 #[derive(Debug)]
+struct PicaInitDeviceCmdData {
+    mac_address: u64,
+    position: PicaPosition,
+}
+#[derive(Debug, Clone)]
+pub struct PicaInitDeviceCmdPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_command: Arc<UciCommandData>,
+    pica_command: Arc<PicaCommandData>,
+    pica_init_device_cmd: Arc<PicaInitDeviceCmdData>,
+}
+#[derive(Debug)]
+pub struct PicaInitDeviceCmdBuilder {
+    pub mac_address: u64,
+    pub position: PicaPosition,
+}
+impl PicaInitDeviceCmdData {
+    fn conforms(bytes: &[u8]) -> bool {
+        if !PicaPosition::conforms(&bytes[12..21]) {
+            return false;
+        }
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 12 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaInitDeviceCmd".to_string(),
+                field: "mac_address".to_string(),
+                wanted: 12,
+                got: bytes.len(),
+            });
+        }
+        let mac_address = u64::from_le_bytes([
+            bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
+        ]);
+        let position = PicaPosition::parse(&bytes[12..21])?;
+        Ok(Self {
+            mac_address,
+            position,
+        })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let mac_address = self.mac_address;
+        buffer[4..12].copy_from_slice(&mac_address.to_le_bytes()[0..8]);
+        let position = &mut buffer[12..21];
+        self.position.write_to(position);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 17;
+        ret
+    }
+}
+impl Packet for PicaInitDeviceCmdPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaInitDeviceCmdPacket> for Bytes {
+    fn from(packet: PicaInitDeviceCmdPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaInitDeviceCmdPacket> for Vec<u8> {
+    fn from(packet: PicaInitDeviceCmdPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaInitDeviceCmdPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaInitDeviceCmdPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_command = match &uci_packet.child {
+            UciPacketDataChild::UciCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciCommand"),
+        };
+        let pica_command = match &uci_command.child {
+            UciCommandDataChild::PicaCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCommand"),
+        };
+        let pica_init_device_cmd = match &pica_command.child {
+            PicaCommandDataChild::PicaInitDeviceCmd(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaInitDeviceCmd"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_command,
+            pica_command,
+            pica_init_device_cmd,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_mac_address(&self) -> u64 {
+        self.pica_init_device_cmd.as_ref().mac_address
+    }
+    pub fn get_position(&self) -> &PicaPosition {
+        &self.pica_init_device_cmd.as_ref().position
+    }
+}
+impl Into<UciPacketPacket> for PicaInitDeviceCmdPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciCommandPacket> for PicaInitDeviceCmdPacket {
+    fn into(self) -> UciCommandPacket {
+        UciCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaCommandPacket> for PicaInitDeviceCmdPacket {
+    fn into(self) -> PicaCommandPacket {
+        PicaCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaInitDeviceCmdBuilder {
+    pub fn build(self) -> PicaInitDeviceCmdPacket {
+        let pica_init_device_cmd = Arc::new(PicaInitDeviceCmdData {
+            mac_address: self.mac_address,
+            position: self.position,
+        });
+        let pica_command = Arc::new(PicaCommandData {
+            child: PicaCommandDataChild::PicaInitDeviceCmd(pica_init_device_cmd),
+        });
+        let uci_command = Arc::new(UciCommandData {
+            child: UciCommandDataChild::PicaCommand(pica_command),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Command,
+            opcode: 0,
+            child: UciPacketDataChild::UciCommand(uci_command),
+        });
+        PicaInitDeviceCmdPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaInitDeviceCmdBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciCommandPacket> for PicaInitDeviceCmdBuilder {
+    fn into(self) -> UciCommandPacket {
+        self.build().into()
+    }
+}
+impl Into<PicaCommandPacket> for PicaInitDeviceCmdBuilder {
+    fn into(self) -> PicaCommandPacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaInitDeviceRspData {
+    status: StatusCode,
+}
+#[derive(Debug, Clone)]
+pub struct PicaInitDeviceRspPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_response: Arc<UciResponseData>,
+    pica_response: Arc<PicaResponseData>,
+    pica_init_device_rsp: Arc<PicaInitDeviceRspData>,
+}
+#[derive(Debug)]
+pub struct PicaInitDeviceRspBuilder {
+    pub status: StatusCode,
+}
+impl PicaInitDeviceRspData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 5 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaInitDeviceRsp".to_string(),
+                field: "status".to_string(),
+                wanted: 5,
+                got: bytes.len(),
+            });
+        }
+        let status = u8::from_le_bytes([bytes[4]]);
+        let status = StatusCode::from_u8(status).ok_or_else(|| Error::InvalidEnumValueError {
+            obj: "PicaInitDeviceRsp".to_string(),
+            field: "status".to_string(),
+            value: status as u64,
+            type_: "StatusCode".to_string(),
+        })?;
+        Ok(Self { status })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let status = self.status.to_u8().unwrap();
+        buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 1;
+        ret
+    }
+}
+impl Packet for PicaInitDeviceRspPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaInitDeviceRspPacket> for Bytes {
+    fn from(packet: PicaInitDeviceRspPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaInitDeviceRspPacket> for Vec<u8> {
+    fn from(packet: PicaInitDeviceRspPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaInitDeviceRspPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaInitDeviceRspPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_response = match &uci_packet.child {
+            UciPacketDataChild::UciResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciResponse"),
+        };
+        let pica_response = match &uci_response.child {
+            UciResponseDataChild::PicaResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaResponse"),
+        };
+        let pica_init_device_rsp = match &pica_response.child {
+            PicaResponseDataChild::PicaInitDeviceRsp(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaInitDeviceRsp"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_response,
+            pica_response,
+            pica_init_device_rsp,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_status(&self) -> StatusCode {
+        self.pica_init_device_rsp.as_ref().status
+    }
+}
+impl Into<UciPacketPacket> for PicaInitDeviceRspPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciResponsePacket> for PicaInitDeviceRspPacket {
+    fn into(self) -> UciResponsePacket {
+        UciResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaResponsePacket> for PicaInitDeviceRspPacket {
+    fn into(self) -> PicaResponsePacket {
+        PicaResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaInitDeviceRspBuilder {
+    pub fn build(self) -> PicaInitDeviceRspPacket {
+        let pica_init_device_rsp = Arc::new(PicaInitDeviceRspData {
+            status: self.status,
+        });
+        let pica_response = Arc::new(PicaResponseData {
+            child: PicaResponseDataChild::PicaInitDeviceRsp(pica_init_device_rsp),
+        });
+        let uci_response = Arc::new(UciResponseData {
+            child: UciResponseDataChild::PicaResponse(pica_response),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Response,
+            opcode: 0,
+            child: UciPacketDataChild::UciResponse(uci_response),
+        });
+        PicaInitDeviceRspPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaInitDeviceRspBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciResponsePacket> for PicaInitDeviceRspBuilder {
+    fn into(self) -> UciResponsePacket {
+        self.build().into()
+    }
+}
+impl Into<PicaResponsePacket> for PicaInitDeviceRspBuilder {
+    fn into(self) -> PicaResponsePacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaSetDevicePositionCmdData {
+    position: PicaPosition,
+}
+#[derive(Debug, Clone)]
+pub struct PicaSetDevicePositionCmdPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_command: Arc<UciCommandData>,
+    pica_command: Arc<PicaCommandData>,
+    pica_set_device_position_cmd: Arc<PicaSetDevicePositionCmdData>,
+}
+#[derive(Debug)]
+pub struct PicaSetDevicePositionCmdBuilder {
+    pub position: PicaPosition,
+}
+impl PicaSetDevicePositionCmdData {
+    fn conforms(bytes: &[u8]) -> bool {
+        if !PicaPosition::conforms(&bytes[4..13]) {
+            return false;
+        }
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let position = PicaPosition::parse(&bytes[4..13])?;
+        Ok(Self { position })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let position = &mut buffer[4..13];
+        self.position.write_to(position);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 9;
+        ret
+    }
+}
+impl Packet for PicaSetDevicePositionCmdPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaSetDevicePositionCmdPacket> for Bytes {
+    fn from(packet: PicaSetDevicePositionCmdPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaSetDevicePositionCmdPacket> for Vec<u8> {
+    fn from(packet: PicaSetDevicePositionCmdPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaSetDevicePositionCmdPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaSetDevicePositionCmdPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_command = match &uci_packet.child {
+            UciPacketDataChild::UciCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciCommand"),
+        };
+        let pica_command = match &uci_command.child {
+            UciCommandDataChild::PicaCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCommand"),
+        };
+        let pica_set_device_position_cmd = match &pica_command.child {
+            PicaCommandDataChild::PicaSetDevicePositionCmd(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaSetDevicePositionCmd"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_command,
+            pica_command,
+            pica_set_device_position_cmd,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_position(&self) -> &PicaPosition {
+        &self.pica_set_device_position_cmd.as_ref().position
+    }
+}
+impl Into<UciPacketPacket> for PicaSetDevicePositionCmdPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciCommandPacket> for PicaSetDevicePositionCmdPacket {
+    fn into(self) -> UciCommandPacket {
+        UciCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaCommandPacket> for PicaSetDevicePositionCmdPacket {
+    fn into(self) -> PicaCommandPacket {
+        PicaCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaSetDevicePositionCmdBuilder {
+    pub fn build(self) -> PicaSetDevicePositionCmdPacket {
+        let pica_set_device_position_cmd = Arc::new(PicaSetDevicePositionCmdData {
+            position: self.position,
+        });
+        let pica_command = Arc::new(PicaCommandData {
+            child: PicaCommandDataChild::PicaSetDevicePositionCmd(pica_set_device_position_cmd),
+        });
+        let uci_command = Arc::new(UciCommandData {
+            child: UciCommandDataChild::PicaCommand(pica_command),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Command,
+            opcode: 1,
+            child: UciPacketDataChild::UciCommand(uci_command),
+        });
+        PicaSetDevicePositionCmdPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaSetDevicePositionCmdBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciCommandPacket> for PicaSetDevicePositionCmdBuilder {
+    fn into(self) -> UciCommandPacket {
+        self.build().into()
+    }
+}
+impl Into<PicaCommandPacket> for PicaSetDevicePositionCmdBuilder {
+    fn into(self) -> PicaCommandPacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaSetDevicePositionRspData {
+    status: StatusCode,
+}
+#[derive(Debug, Clone)]
+pub struct PicaSetDevicePositionRspPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_response: Arc<UciResponseData>,
+    pica_response: Arc<PicaResponseData>,
+    pica_set_device_position_rsp: Arc<PicaSetDevicePositionRspData>,
+}
+#[derive(Debug)]
+pub struct PicaSetDevicePositionRspBuilder {
+    pub status: StatusCode,
+}
+impl PicaSetDevicePositionRspData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 5 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaSetDevicePositionRsp".to_string(),
+                field: "status".to_string(),
+                wanted: 5,
+                got: bytes.len(),
+            });
+        }
+        let status = u8::from_le_bytes([bytes[4]]);
+        let status = StatusCode::from_u8(status).ok_or_else(|| Error::InvalidEnumValueError {
+            obj: "PicaSetDevicePositionRsp".to_string(),
+            field: "status".to_string(),
+            value: status as u64,
+            type_: "StatusCode".to_string(),
+        })?;
+        Ok(Self { status })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let status = self.status.to_u8().unwrap();
+        buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 1;
+        ret
+    }
+}
+impl Packet for PicaSetDevicePositionRspPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaSetDevicePositionRspPacket> for Bytes {
+    fn from(packet: PicaSetDevicePositionRspPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaSetDevicePositionRspPacket> for Vec<u8> {
+    fn from(packet: PicaSetDevicePositionRspPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaSetDevicePositionRspPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaSetDevicePositionRspPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_response = match &uci_packet.child {
+            UciPacketDataChild::UciResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciResponse"),
+        };
+        let pica_response = match &uci_response.child {
+            UciResponseDataChild::PicaResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaResponse"),
+        };
+        let pica_set_device_position_rsp = match &pica_response.child {
+            PicaResponseDataChild::PicaSetDevicePositionRsp(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaSetDevicePositionRsp"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_response,
+            pica_response,
+            pica_set_device_position_rsp,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_status(&self) -> StatusCode {
+        self.pica_set_device_position_rsp.as_ref().status
+    }
+}
+impl Into<UciPacketPacket> for PicaSetDevicePositionRspPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciResponsePacket> for PicaSetDevicePositionRspPacket {
+    fn into(self) -> UciResponsePacket {
+        UciResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaResponsePacket> for PicaSetDevicePositionRspPacket {
+    fn into(self) -> PicaResponsePacket {
+        PicaResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaSetDevicePositionRspBuilder {
+    pub fn build(self) -> PicaSetDevicePositionRspPacket {
+        let pica_set_device_position_rsp = Arc::new(PicaSetDevicePositionRspData {
+            status: self.status,
+        });
+        let pica_response = Arc::new(PicaResponseData {
+            child: PicaResponseDataChild::PicaSetDevicePositionRsp(pica_set_device_position_rsp),
+        });
+        let uci_response = Arc::new(UciResponseData {
+            child: UciResponseDataChild::PicaResponse(pica_response),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Response,
+            opcode: 1,
+            child: UciPacketDataChild::UciResponse(uci_response),
+        });
+        PicaSetDevicePositionRspPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaSetDevicePositionRspBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciResponsePacket> for PicaSetDevicePositionRspBuilder {
+    fn into(self) -> UciResponsePacket {
+        self.build().into()
+    }
+}
+impl Into<PicaResponsePacket> for PicaSetDevicePositionRspBuilder {
+    fn into(self) -> PicaResponsePacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaCreateBeaconCmdData {
+    mac_address: u64,
+    position: PicaPosition,
+}
+#[derive(Debug, Clone)]
+pub struct PicaCreateBeaconCmdPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_command: Arc<UciCommandData>,
+    pica_command: Arc<PicaCommandData>,
+    pica_create_beacon_cmd: Arc<PicaCreateBeaconCmdData>,
+}
+#[derive(Debug)]
+pub struct PicaCreateBeaconCmdBuilder {
+    pub mac_address: u64,
+    pub position: PicaPosition,
+}
+impl PicaCreateBeaconCmdData {
+    fn conforms(bytes: &[u8]) -> bool {
+        if !PicaPosition::conforms(&bytes[12..21]) {
+            return false;
+        }
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 12 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaCreateBeaconCmd".to_string(),
+                field: "mac_address".to_string(),
+                wanted: 12,
+                got: bytes.len(),
+            });
+        }
+        let mac_address = u64::from_le_bytes([
+            bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
+        ]);
+        let position = PicaPosition::parse(&bytes[12..21])?;
+        Ok(Self {
+            mac_address,
+            position,
+        })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let mac_address = self.mac_address;
+        buffer[4..12].copy_from_slice(&mac_address.to_le_bytes()[0..8]);
+        let position = &mut buffer[12..21];
+        self.position.write_to(position);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 17;
+        ret
+    }
+}
+impl Packet for PicaCreateBeaconCmdPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaCreateBeaconCmdPacket> for Bytes {
+    fn from(packet: PicaCreateBeaconCmdPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaCreateBeaconCmdPacket> for Vec<u8> {
+    fn from(packet: PicaCreateBeaconCmdPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaCreateBeaconCmdPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaCreateBeaconCmdPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_command = match &uci_packet.child {
+            UciPacketDataChild::UciCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciCommand"),
+        };
+        let pica_command = match &uci_command.child {
+            UciCommandDataChild::PicaCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCommand"),
+        };
+        let pica_create_beacon_cmd = match &pica_command.child {
+            PicaCommandDataChild::PicaCreateBeaconCmd(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCreateBeaconCmd"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_command,
+            pica_command,
+            pica_create_beacon_cmd,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_mac_address(&self) -> u64 {
+        self.pica_create_beacon_cmd.as_ref().mac_address
+    }
+    pub fn get_position(&self) -> &PicaPosition {
+        &self.pica_create_beacon_cmd.as_ref().position
+    }
+}
+impl Into<UciPacketPacket> for PicaCreateBeaconCmdPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciCommandPacket> for PicaCreateBeaconCmdPacket {
+    fn into(self) -> UciCommandPacket {
+        UciCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaCommandPacket> for PicaCreateBeaconCmdPacket {
+    fn into(self) -> PicaCommandPacket {
+        PicaCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaCreateBeaconCmdBuilder {
+    pub fn build(self) -> PicaCreateBeaconCmdPacket {
+        let pica_create_beacon_cmd = Arc::new(PicaCreateBeaconCmdData {
+            mac_address: self.mac_address,
+            position: self.position,
+        });
+        let pica_command = Arc::new(PicaCommandData {
+            child: PicaCommandDataChild::PicaCreateBeaconCmd(pica_create_beacon_cmd),
+        });
+        let uci_command = Arc::new(UciCommandData {
+            child: UciCommandDataChild::PicaCommand(pica_command),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Command,
+            opcode: 2,
+            child: UciPacketDataChild::UciCommand(uci_command),
+        });
+        PicaCreateBeaconCmdPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaCreateBeaconCmdBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciCommandPacket> for PicaCreateBeaconCmdBuilder {
+    fn into(self) -> UciCommandPacket {
+        self.build().into()
+    }
+}
+impl Into<PicaCommandPacket> for PicaCreateBeaconCmdBuilder {
+    fn into(self) -> PicaCommandPacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaCreateBeaconRspData {
+    status: StatusCode,
+}
+#[derive(Debug, Clone)]
+pub struct PicaCreateBeaconRspPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_response: Arc<UciResponseData>,
+    pica_response: Arc<PicaResponseData>,
+    pica_create_beacon_rsp: Arc<PicaCreateBeaconRspData>,
+}
+#[derive(Debug)]
+pub struct PicaCreateBeaconRspBuilder {
+    pub status: StatusCode,
+}
+impl PicaCreateBeaconRspData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 5 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaCreateBeaconRsp".to_string(),
+                field: "status".to_string(),
+                wanted: 5,
+                got: bytes.len(),
+            });
+        }
+        let status = u8::from_le_bytes([bytes[4]]);
+        let status = StatusCode::from_u8(status).ok_or_else(|| Error::InvalidEnumValueError {
+            obj: "PicaCreateBeaconRsp".to_string(),
+            field: "status".to_string(),
+            value: status as u64,
+            type_: "StatusCode".to_string(),
+        })?;
+        Ok(Self { status })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let status = self.status.to_u8().unwrap();
+        buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 1;
+        ret
+    }
+}
+impl Packet for PicaCreateBeaconRspPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaCreateBeaconRspPacket> for Bytes {
+    fn from(packet: PicaCreateBeaconRspPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaCreateBeaconRspPacket> for Vec<u8> {
+    fn from(packet: PicaCreateBeaconRspPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaCreateBeaconRspPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaCreateBeaconRspPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_response = match &uci_packet.child {
+            UciPacketDataChild::UciResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciResponse"),
+        };
+        let pica_response = match &uci_response.child {
+            UciResponseDataChild::PicaResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaResponse"),
+        };
+        let pica_create_beacon_rsp = match &pica_response.child {
+            PicaResponseDataChild::PicaCreateBeaconRsp(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCreateBeaconRsp"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_response,
+            pica_response,
+            pica_create_beacon_rsp,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_status(&self) -> StatusCode {
+        self.pica_create_beacon_rsp.as_ref().status
+    }
+}
+impl Into<UciPacketPacket> for PicaCreateBeaconRspPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciResponsePacket> for PicaCreateBeaconRspPacket {
+    fn into(self) -> UciResponsePacket {
+        UciResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaResponsePacket> for PicaCreateBeaconRspPacket {
+    fn into(self) -> PicaResponsePacket {
+        PicaResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaCreateBeaconRspBuilder {
+    pub fn build(self) -> PicaCreateBeaconRspPacket {
+        let pica_create_beacon_rsp = Arc::new(PicaCreateBeaconRspData {
+            status: self.status,
+        });
+        let pica_response = Arc::new(PicaResponseData {
+            child: PicaResponseDataChild::PicaCreateBeaconRsp(pica_create_beacon_rsp),
+        });
+        let uci_response = Arc::new(UciResponseData {
+            child: UciResponseDataChild::PicaResponse(pica_response),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Response,
+            opcode: 2,
+            child: UciPacketDataChild::UciResponse(uci_response),
+        });
+        PicaCreateBeaconRspPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaCreateBeaconRspBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciResponsePacket> for PicaCreateBeaconRspBuilder {
+    fn into(self) -> UciResponsePacket {
+        self.build().into()
+    }
+}
+impl Into<PicaResponsePacket> for PicaCreateBeaconRspBuilder {
+    fn into(self) -> PicaResponsePacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaSetBeaconPositionCmdData {
+    mac_address: u64,
+    position: PicaPosition,
+}
+#[derive(Debug, Clone)]
+pub struct PicaSetBeaconPositionCmdPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_command: Arc<UciCommandData>,
+    pica_command: Arc<PicaCommandData>,
+    pica_set_beacon_position_cmd: Arc<PicaSetBeaconPositionCmdData>,
+}
+#[derive(Debug)]
+pub struct PicaSetBeaconPositionCmdBuilder {
+    pub mac_address: u64,
+    pub position: PicaPosition,
+}
+impl PicaSetBeaconPositionCmdData {
+    fn conforms(bytes: &[u8]) -> bool {
+        if !PicaPosition::conforms(&bytes[12..21]) {
+            return false;
+        }
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 12 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaSetBeaconPositionCmd".to_string(),
+                field: "mac_address".to_string(),
+                wanted: 12,
+                got: bytes.len(),
+            });
+        }
+        let mac_address = u64::from_le_bytes([
+            bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
+        ]);
+        let position = PicaPosition::parse(&bytes[12..21])?;
+        Ok(Self {
+            mac_address,
+            position,
+        })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let mac_address = self.mac_address;
+        buffer[4..12].copy_from_slice(&mac_address.to_le_bytes()[0..8]);
+        let position = &mut buffer[12..21];
+        self.position.write_to(position);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 17;
+        ret
+    }
+}
+impl Packet for PicaSetBeaconPositionCmdPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaSetBeaconPositionCmdPacket> for Bytes {
+    fn from(packet: PicaSetBeaconPositionCmdPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaSetBeaconPositionCmdPacket> for Vec<u8> {
+    fn from(packet: PicaSetBeaconPositionCmdPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaSetBeaconPositionCmdPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaSetBeaconPositionCmdPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_command = match &uci_packet.child {
+            UciPacketDataChild::UciCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciCommand"),
+        };
+        let pica_command = match &uci_command.child {
+            UciCommandDataChild::PicaCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCommand"),
+        };
+        let pica_set_beacon_position_cmd = match &pica_command.child {
+            PicaCommandDataChild::PicaSetBeaconPositionCmd(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaSetBeaconPositionCmd"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_command,
+            pica_command,
+            pica_set_beacon_position_cmd,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_mac_address(&self) -> u64 {
+        self.pica_set_beacon_position_cmd.as_ref().mac_address
+    }
+    pub fn get_position(&self) -> &PicaPosition {
+        &self.pica_set_beacon_position_cmd.as_ref().position
+    }
+}
+impl Into<UciPacketPacket> for PicaSetBeaconPositionCmdPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciCommandPacket> for PicaSetBeaconPositionCmdPacket {
+    fn into(self) -> UciCommandPacket {
+        UciCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaCommandPacket> for PicaSetBeaconPositionCmdPacket {
+    fn into(self) -> PicaCommandPacket {
+        PicaCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaSetBeaconPositionCmdBuilder {
+    pub fn build(self) -> PicaSetBeaconPositionCmdPacket {
+        let pica_set_beacon_position_cmd = Arc::new(PicaSetBeaconPositionCmdData {
+            mac_address: self.mac_address,
+            position: self.position,
+        });
+        let pica_command = Arc::new(PicaCommandData {
+            child: PicaCommandDataChild::PicaSetBeaconPositionCmd(pica_set_beacon_position_cmd),
+        });
+        let uci_command = Arc::new(UciCommandData {
+            child: UciCommandDataChild::PicaCommand(pica_command),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Command,
+            opcode: 3,
+            child: UciPacketDataChild::UciCommand(uci_command),
+        });
+        PicaSetBeaconPositionCmdPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaSetBeaconPositionCmdBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciCommandPacket> for PicaSetBeaconPositionCmdBuilder {
+    fn into(self) -> UciCommandPacket {
+        self.build().into()
+    }
+}
+impl Into<PicaCommandPacket> for PicaSetBeaconPositionCmdBuilder {
+    fn into(self) -> PicaCommandPacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaSetBeaconPositionRspData {
+    status: StatusCode,
+}
+#[derive(Debug, Clone)]
+pub struct PicaSetBeaconPositionRspPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_response: Arc<UciResponseData>,
+    pica_response: Arc<PicaResponseData>,
+    pica_set_beacon_position_rsp: Arc<PicaSetBeaconPositionRspData>,
+}
+#[derive(Debug)]
+pub struct PicaSetBeaconPositionRspBuilder {
+    pub status: StatusCode,
+}
+impl PicaSetBeaconPositionRspData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 5 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaSetBeaconPositionRsp".to_string(),
+                field: "status".to_string(),
+                wanted: 5,
+                got: bytes.len(),
+            });
+        }
+        let status = u8::from_le_bytes([bytes[4]]);
+        let status = StatusCode::from_u8(status).ok_or_else(|| Error::InvalidEnumValueError {
+            obj: "PicaSetBeaconPositionRsp".to_string(),
+            field: "status".to_string(),
+            value: status as u64,
+            type_: "StatusCode".to_string(),
+        })?;
+        Ok(Self { status })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let status = self.status.to_u8().unwrap();
+        buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 1;
+        ret
+    }
+}
+impl Packet for PicaSetBeaconPositionRspPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaSetBeaconPositionRspPacket> for Bytes {
+    fn from(packet: PicaSetBeaconPositionRspPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaSetBeaconPositionRspPacket> for Vec<u8> {
+    fn from(packet: PicaSetBeaconPositionRspPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaSetBeaconPositionRspPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaSetBeaconPositionRspPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_response = match &uci_packet.child {
+            UciPacketDataChild::UciResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciResponse"),
+        };
+        let pica_response = match &uci_response.child {
+            UciResponseDataChild::PicaResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaResponse"),
+        };
+        let pica_set_beacon_position_rsp = match &pica_response.child {
+            PicaResponseDataChild::PicaSetBeaconPositionRsp(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaSetBeaconPositionRsp"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_response,
+            pica_response,
+            pica_set_beacon_position_rsp,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_status(&self) -> StatusCode {
+        self.pica_set_beacon_position_rsp.as_ref().status
+    }
+}
+impl Into<UciPacketPacket> for PicaSetBeaconPositionRspPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciResponsePacket> for PicaSetBeaconPositionRspPacket {
+    fn into(self) -> UciResponsePacket {
+        UciResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaResponsePacket> for PicaSetBeaconPositionRspPacket {
+    fn into(self) -> PicaResponsePacket {
+        PicaResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaSetBeaconPositionRspBuilder {
+    pub fn build(self) -> PicaSetBeaconPositionRspPacket {
+        let pica_set_beacon_position_rsp = Arc::new(PicaSetBeaconPositionRspData {
+            status: self.status,
+        });
+        let pica_response = Arc::new(PicaResponseData {
+            child: PicaResponseDataChild::PicaSetBeaconPositionRsp(pica_set_beacon_position_rsp),
+        });
+        let uci_response = Arc::new(UciResponseData {
+            child: UciResponseDataChild::PicaResponse(pica_response),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Response,
+            opcode: 3,
+            child: UciPacketDataChild::UciResponse(uci_response),
+        });
+        PicaSetBeaconPositionRspPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaSetBeaconPositionRspBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciResponsePacket> for PicaSetBeaconPositionRspBuilder {
+    fn into(self) -> UciResponsePacket {
+        self.build().into()
+    }
+}
+impl Into<PicaResponsePacket> for PicaSetBeaconPositionRspBuilder {
+    fn into(self) -> PicaResponsePacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaDestroyBeaconCmdData {
+    mac_address: u64,
+}
+#[derive(Debug, Clone)]
+pub struct PicaDestroyBeaconCmdPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_command: Arc<UciCommandData>,
+    pica_command: Arc<PicaCommandData>,
+    pica_destroy_beacon_cmd: Arc<PicaDestroyBeaconCmdData>,
+}
+#[derive(Debug)]
+pub struct PicaDestroyBeaconCmdBuilder {
+    pub mac_address: u64,
+}
+impl PicaDestroyBeaconCmdData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 12 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaDestroyBeaconCmd".to_string(),
+                field: "mac_address".to_string(),
+                wanted: 12,
+                got: bytes.len(),
+            });
+        }
+        let mac_address = u64::from_le_bytes([
+            bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
+        ]);
+        Ok(Self { mac_address })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let mac_address = self.mac_address;
+        buffer[4..12].copy_from_slice(&mac_address.to_le_bytes()[0..8]);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 8;
+        ret
+    }
+}
+impl Packet for PicaDestroyBeaconCmdPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaDestroyBeaconCmdPacket> for Bytes {
+    fn from(packet: PicaDestroyBeaconCmdPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaDestroyBeaconCmdPacket> for Vec<u8> {
+    fn from(packet: PicaDestroyBeaconCmdPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaDestroyBeaconCmdPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaDestroyBeaconCmdPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_command = match &uci_packet.child {
+            UciPacketDataChild::UciCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciCommand"),
+        };
+        let pica_command = match &uci_command.child {
+            UciCommandDataChild::PicaCommand(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaCommand"),
+        };
+        let pica_destroy_beacon_cmd = match &pica_command.child {
+            PicaCommandDataChild::PicaDestroyBeaconCmd(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaDestroyBeaconCmd"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_command,
+            pica_command,
+            pica_destroy_beacon_cmd,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_mac_address(&self) -> u64 {
+        self.pica_destroy_beacon_cmd.as_ref().mac_address
+    }
+}
+impl Into<UciPacketPacket> for PicaDestroyBeaconCmdPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciCommandPacket> for PicaDestroyBeaconCmdPacket {
+    fn into(self) -> UciCommandPacket {
+        UciCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaCommandPacket> for PicaDestroyBeaconCmdPacket {
+    fn into(self) -> PicaCommandPacket {
+        PicaCommandPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaDestroyBeaconCmdBuilder {
+    pub fn build(self) -> PicaDestroyBeaconCmdPacket {
+        let pica_destroy_beacon_cmd = Arc::new(PicaDestroyBeaconCmdData {
+            mac_address: self.mac_address,
+        });
+        let pica_command = Arc::new(PicaCommandData {
+            child: PicaCommandDataChild::PicaDestroyBeaconCmd(pica_destroy_beacon_cmd),
+        });
+        let uci_command = Arc::new(UciCommandData {
+            child: UciCommandDataChild::PicaCommand(pica_command),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Command,
+            opcode: 4,
+            child: UciPacketDataChild::UciCommand(uci_command),
+        });
+        PicaDestroyBeaconCmdPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaDestroyBeaconCmdBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciCommandPacket> for PicaDestroyBeaconCmdBuilder {
+    fn into(self) -> UciCommandPacket {
+        self.build().into()
+    }
+}
+impl Into<PicaCommandPacket> for PicaDestroyBeaconCmdBuilder {
+    fn into(self) -> PicaCommandPacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
+struct PicaDestroyBeaconRspData {
+    status: StatusCode,
+}
+#[derive(Debug, Clone)]
+pub struct PicaDestroyBeaconRspPacket {
+    uci_packet: Arc<UciPacketData>,
+    uci_response: Arc<UciResponseData>,
+    pica_response: Arc<PicaResponseData>,
+    pica_destroy_beacon_rsp: Arc<PicaDestroyBeaconRspData>,
+}
+#[derive(Debug)]
+pub struct PicaDestroyBeaconRspBuilder {
+    pub status: StatusCode,
+}
+impl PicaDestroyBeaconRspData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 5 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaDestroyBeaconRsp".to_string(),
+                field: "status".to_string(),
+                wanted: 5,
+                got: bytes.len(),
+            });
+        }
+        let status = u8::from_le_bytes([bytes[4]]);
+        let status = StatusCode::from_u8(status).ok_or_else(|| Error::InvalidEnumValueError {
+            obj: "PicaDestroyBeaconRsp".to_string(),
+            field: "status".to_string(),
+            value: status as u64,
+            type_: "StatusCode".to_string(),
+        })?;
+        Ok(Self { status })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let status = self.status.to_u8().unwrap();
+        buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        let ret = 0;
+        let ret = ret + 1;
+        ret
+    }
+}
+impl Packet for PicaDestroyBeaconRspPacket {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::new();
+        buffer.resize(self.uci_packet.get_total_size(), 0);
+        self.uci_packet.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PicaDestroyBeaconRspPacket> for Bytes {
+    fn from(packet: PicaDestroyBeaconRspPacket) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PicaDestroyBeaconRspPacket> for Vec<u8> {
+    fn from(packet: PicaDestroyBeaconRspPacket) -> Self {
+        packet.to_vec()
+    }
+}
+impl TryFrom<UciPacketPacket> for PicaDestroyBeaconRspPacket {
+    type Error = TryFromError;
+    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.uci_packet).map_err(TryFromError)
+    }
+}
+impl PicaDestroyBeaconRspPacket {
+    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
+        let uci_packet = root;
+        let uci_response = match &uci_packet.child {
+            UciPacketDataChild::UciResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not UciResponse"),
+        };
+        let pica_response = match &uci_response.child {
+            UciResponseDataChild::PicaResponse(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaResponse"),
+        };
+        let pica_destroy_beacon_rsp = match &pica_response.child {
+            PicaResponseDataChild::PicaDestroyBeaconRsp(value) => (*value).clone(),
+            _ => return Err("inconsistent state - child was not PicaDestroyBeaconRsp"),
+        };
+        Ok(Self {
+            uci_packet,
+            uci_response,
+            pica_response,
+            pica_destroy_beacon_rsp,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.uci_packet.as_ref().group_id
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.uci_packet.as_ref().packet_boundary_flag
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.uci_packet.as_ref().message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.uci_packet.as_ref().opcode
+    }
+    pub fn get_status(&self) -> StatusCode {
+        self.pica_destroy_beacon_rsp.as_ref().status
+    }
+}
+impl Into<UciPacketPacket> for PicaDestroyBeaconRspPacket {
+    fn into(self) -> UciPacketPacket {
+        UciPacketPacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<UciResponsePacket> for PicaDestroyBeaconRspPacket {
+    fn into(self) -> UciResponsePacket {
+        UciResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl Into<PicaResponsePacket> for PicaDestroyBeaconRspPacket {
+    fn into(self) -> PicaResponsePacket {
+        PicaResponsePacket::new(self.uci_packet).unwrap()
+    }
+}
+impl PicaDestroyBeaconRspBuilder {
+    pub fn build(self) -> PicaDestroyBeaconRspPacket {
+        let pica_destroy_beacon_rsp = Arc::new(PicaDestroyBeaconRspData {
+            status: self.status,
+        });
+        let pica_response = Arc::new(PicaResponseData {
+            child: PicaResponseDataChild::PicaDestroyBeaconRsp(pica_destroy_beacon_rsp),
+        });
+        let uci_response = Arc::new(UciResponseData {
+            child: UciResponseDataChild::PicaResponse(pica_response),
+        });
+        let uci_packet = Arc::new(UciPacketData {
+            group_id: GroupId::VendorPica,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            message_type: MessageType::Response,
+            opcode: 4,
+            child: UciPacketDataChild::UciResponse(uci_response),
+        });
+        PicaDestroyBeaconRspPacket::new(uci_packet).unwrap()
+    }
+}
+impl Into<UciPacketPacket> for PicaDestroyBeaconRspBuilder {
+    fn into(self) -> UciPacketPacket {
+        self.build().into()
+    }
+}
+impl Into<UciResponsePacket> for PicaDestroyBeaconRspBuilder {
+    fn into(self) -> UciResponsePacket {
+        self.build().into()
+    }
+}
+impl Into<PicaResponsePacket> for PicaDestroyBeaconRspBuilder {
+    fn into(self) -> PicaResponsePacket {
+        self.build().into()
+    }
+}
+
+#[derive(Debug)]
 struct AndroidGetPowerStatsCmdData {}
 #[derive(Debug, Clone)]
 pub struct AndroidGetPowerStatsCmdPacket {
@@ -13382,173 +15614,6 @@ UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.s
 UciResponseChild::AndroidResponse(android_response_packet) => {match android_response_packet.specialize() {/* (3) */
 AndroidResponseChild::AndroidSetCountryCodeRsp(packet) => {let rebuilder = AndroidSetCountryCodeRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse android_set_country_code_rsp{:02x?}", android_response_packet); }}}_ => {println!("Couldn't parse android_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 android_set_country_code_rsp_builder_tests! { android_set_country_code_rsp_builder_test_00: b"\x4e\x01\x00\x01\x00",}
-
-#[derive(Debug)]
-enum UciVendor_9_CommandDataChild {
-    Payload(Bytes),
-    None,
-}
-impl UciVendor_9_CommandDataChild {
-    fn get_total_size(&self) -> usize {
-        match self {
-            UciVendor_9_CommandDataChild::Payload(p) => p.len(),
-            UciVendor_9_CommandDataChild::None => 0,
-        }
-    }
-}
-#[derive(Debug)]
-pub enum UciVendor_9_CommandChild {
-    Payload(Bytes),
-    None,
-}
-#[derive(Debug)]
-struct UciVendor_9_CommandData {
-    child: UciVendor_9_CommandDataChild,
-}
-#[derive(Debug, Clone)]
-pub struct UciVendor_9_CommandPacket {
-    uci_packet: Arc<UciPacketData>,
-    uci_command: Arc<UciCommandData>,
-    uci_vendor__9_command: Arc<UciVendor_9_CommandData>,
-}
-#[derive(Debug)]
-pub struct UciVendor_9_CommandBuilder {
-    pub opcode: u8,
-    pub payload: Option<Bytes>,
-}
-impl UciVendor_9_CommandData {
-    fn conforms(bytes: &[u8]) -> bool {
-        true
-    }
-    fn parse(bytes: &[u8]) -> Result<Self> {
-        let payload: Vec<u8> = bytes[4..].into();
-        let child = if payload.len() > 0 {
-            UciVendor_9_CommandDataChild::Payload(Bytes::from(payload))
-        } else {
-            UciVendor_9_CommandDataChild::None
-        };
-        Ok(Self { child })
-    }
-    fn write_to(&self, buffer: &mut BytesMut) {
-        match &self.child {
-            UciVendor_9_CommandDataChild::Payload(p) => buffer[4..].copy_from_slice(&p[..]),
-            UciVendor_9_CommandDataChild::None => {}
-        }
-    }
-    fn get_total_size(&self) -> usize {
-        self.get_size() + self.child.get_total_size()
-    }
-    fn get_size(&self) -> usize {
-        let ret = 0;
-        ret
-    }
-}
-impl Packet for UciVendor_9_CommandPacket {
-    fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::new();
-        buffer.resize(self.uci_packet.get_total_size(), 0);
-        self.uci_packet.write_to(&mut buffer);
-        buffer.freeze()
-    }
-    fn to_vec(self) -> Vec<u8> {
-        self.to_bytes().to_vec()
-    }
-}
-impl From<UciVendor_9_CommandPacket> for Bytes {
-    fn from(packet: UciVendor_9_CommandPacket) -> Self {
-        packet.to_bytes()
-    }
-}
-impl From<UciVendor_9_CommandPacket> for Vec<u8> {
-    fn from(packet: UciVendor_9_CommandPacket) -> Self {
-        packet.to_vec()
-    }
-}
-impl TryFrom<UciPacketPacket> for UciVendor_9_CommandPacket {
-    type Error = TryFromError;
-    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
-        Self::new(value.uci_packet).map_err(TryFromError)
-    }
-}
-impl UciVendor_9_CommandPacket {
-    pub fn specialize(&self) -> UciVendor_9_CommandChild {
-        match &self.uci_vendor__9_command.child {
-            UciVendor_9_CommandDataChild::Payload(p) => {
-                UciVendor_9_CommandChild::Payload(p.clone())
-            }
-            UciVendor_9_CommandDataChild::None => UciVendor_9_CommandChild::None,
-        }
-    }
-    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
-        let uci_packet = root;
-        let uci_command = match &uci_packet.child {
-            UciPacketDataChild::UciCommand(value) => (*value).clone(),
-            _ => return Err("inconsistent state - child was not UciCommand"),
-        };
-        let uci_vendor__9_command = match &uci_command.child {
-            UciCommandDataChild::UciVendor_9_Command(value) => (*value).clone(),
-            _ => return Err("inconsistent state - child was not UciVendor_9_Command"),
-        };
-        Ok(Self {
-            uci_packet,
-            uci_command,
-            uci_vendor__9_command,
-        })
-    }
-    pub fn get_group_id(&self) -> GroupId {
-        self.uci_packet.as_ref().group_id
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.uci_packet.as_ref().packet_boundary_flag
-    }
-    pub fn get_message_type(&self) -> MessageType {
-        self.uci_packet.as_ref().message_type
-    }
-    pub fn get_opcode(&self) -> u8 {
-        self.uci_packet.as_ref().opcode
-    }
-}
-impl Into<UciPacketPacket> for UciVendor_9_CommandPacket {
-    fn into(self) -> UciPacketPacket {
-        UciPacketPacket::new(self.uci_packet).unwrap()
-    }
-}
-impl Into<UciCommandPacket> for UciVendor_9_CommandPacket {
-    fn into(self) -> UciCommandPacket {
-        UciCommandPacket::new(self.uci_packet).unwrap()
-    }
-}
-impl UciVendor_9_CommandBuilder {
-    pub fn build(self) -> UciVendor_9_CommandPacket {
-        let uci_vendor__9_command = Arc::new(UciVendor_9_CommandData {
-            child: match self.payload {
-                None => UciVendor_9_CommandDataChild::None,
-                Some(bytes) => UciVendor_9_CommandDataChild::Payload(bytes),
-            },
-        });
-        let uci_command = Arc::new(UciCommandData {
-            child: UciCommandDataChild::UciVendor_9_Command(uci_vendor__9_command),
-        });
-        let uci_packet = Arc::new(UciPacketData {
-            group_id: GroupId::VendorReserved9,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            message_type: MessageType::Command,
-            opcode: self.opcode,
-            child: UciPacketDataChild::UciCommand(uci_command),
-        });
-        UciVendor_9_CommandPacket::new(uci_packet).unwrap()
-    }
-}
-impl Into<UciPacketPacket> for UciVendor_9_CommandBuilder {
-    fn into(self) -> UciPacketPacket {
-        self.build().into()
-    }
-}
-impl Into<UciCommandPacket> for UciVendor_9_CommandBuilder {
-    fn into(self) -> UciCommandPacket {
-        self.build().into()
-    }
-}
 
 #[derive(Debug)]
 enum UciVendor_A_CommandDataChild {
@@ -14219,173 +16284,6 @@ impl Into<UciCommandPacket> for UciVendor_F_CommandBuilder {
 }
 
 #[derive(Debug)]
-enum UciVendor_9_ResponseDataChild {
-    Payload(Bytes),
-    None,
-}
-impl UciVendor_9_ResponseDataChild {
-    fn get_total_size(&self) -> usize {
-        match self {
-            UciVendor_9_ResponseDataChild::Payload(p) => p.len(),
-            UciVendor_9_ResponseDataChild::None => 0,
-        }
-    }
-}
-#[derive(Debug)]
-pub enum UciVendor_9_ResponseChild {
-    Payload(Bytes),
-    None,
-}
-#[derive(Debug)]
-struct UciVendor_9_ResponseData {
-    child: UciVendor_9_ResponseDataChild,
-}
-#[derive(Debug, Clone)]
-pub struct UciVendor_9_ResponsePacket {
-    uci_packet: Arc<UciPacketData>,
-    uci_response: Arc<UciResponseData>,
-    uci_vendor__9_response: Arc<UciVendor_9_ResponseData>,
-}
-#[derive(Debug)]
-pub struct UciVendor_9_ResponseBuilder {
-    pub opcode: u8,
-    pub payload: Option<Bytes>,
-}
-impl UciVendor_9_ResponseData {
-    fn conforms(bytes: &[u8]) -> bool {
-        true
-    }
-    fn parse(bytes: &[u8]) -> Result<Self> {
-        let payload: Vec<u8> = bytes[4..].into();
-        let child = if payload.len() > 0 {
-            UciVendor_9_ResponseDataChild::Payload(Bytes::from(payload))
-        } else {
-            UciVendor_9_ResponseDataChild::None
-        };
-        Ok(Self { child })
-    }
-    fn write_to(&self, buffer: &mut BytesMut) {
-        match &self.child {
-            UciVendor_9_ResponseDataChild::Payload(p) => buffer[4..].copy_from_slice(&p[..]),
-            UciVendor_9_ResponseDataChild::None => {}
-        }
-    }
-    fn get_total_size(&self) -> usize {
-        self.get_size() + self.child.get_total_size()
-    }
-    fn get_size(&self) -> usize {
-        let ret = 0;
-        ret
-    }
-}
-impl Packet for UciVendor_9_ResponsePacket {
-    fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::new();
-        buffer.resize(self.uci_packet.get_total_size(), 0);
-        self.uci_packet.write_to(&mut buffer);
-        buffer.freeze()
-    }
-    fn to_vec(self) -> Vec<u8> {
-        self.to_bytes().to_vec()
-    }
-}
-impl From<UciVendor_9_ResponsePacket> for Bytes {
-    fn from(packet: UciVendor_9_ResponsePacket) -> Self {
-        packet.to_bytes()
-    }
-}
-impl From<UciVendor_9_ResponsePacket> for Vec<u8> {
-    fn from(packet: UciVendor_9_ResponsePacket) -> Self {
-        packet.to_vec()
-    }
-}
-impl TryFrom<UciPacketPacket> for UciVendor_9_ResponsePacket {
-    type Error = TryFromError;
-    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
-        Self::new(value.uci_packet).map_err(TryFromError)
-    }
-}
-impl UciVendor_9_ResponsePacket {
-    pub fn specialize(&self) -> UciVendor_9_ResponseChild {
-        match &self.uci_vendor__9_response.child {
-            UciVendor_9_ResponseDataChild::Payload(p) => {
-                UciVendor_9_ResponseChild::Payload(p.clone())
-            }
-            UciVendor_9_ResponseDataChild::None => UciVendor_9_ResponseChild::None,
-        }
-    }
-    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
-        let uci_packet = root;
-        let uci_response = match &uci_packet.child {
-            UciPacketDataChild::UciResponse(value) => (*value).clone(),
-            _ => return Err("inconsistent state - child was not UciResponse"),
-        };
-        let uci_vendor__9_response = match &uci_response.child {
-            UciResponseDataChild::UciVendor_9_Response(value) => (*value).clone(),
-            _ => return Err("inconsistent state - child was not UciVendor_9_Response"),
-        };
-        Ok(Self {
-            uci_packet,
-            uci_response,
-            uci_vendor__9_response,
-        })
-    }
-    pub fn get_group_id(&self) -> GroupId {
-        self.uci_packet.as_ref().group_id
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.uci_packet.as_ref().packet_boundary_flag
-    }
-    pub fn get_message_type(&self) -> MessageType {
-        self.uci_packet.as_ref().message_type
-    }
-    pub fn get_opcode(&self) -> u8 {
-        self.uci_packet.as_ref().opcode
-    }
-}
-impl Into<UciPacketPacket> for UciVendor_9_ResponsePacket {
-    fn into(self) -> UciPacketPacket {
-        UciPacketPacket::new(self.uci_packet).unwrap()
-    }
-}
-impl Into<UciResponsePacket> for UciVendor_9_ResponsePacket {
-    fn into(self) -> UciResponsePacket {
-        UciResponsePacket::new(self.uci_packet).unwrap()
-    }
-}
-impl UciVendor_9_ResponseBuilder {
-    pub fn build(self) -> UciVendor_9_ResponsePacket {
-        let uci_vendor__9_response = Arc::new(UciVendor_9_ResponseData {
-            child: match self.payload {
-                None => UciVendor_9_ResponseDataChild::None,
-                Some(bytes) => UciVendor_9_ResponseDataChild::Payload(bytes),
-            },
-        });
-        let uci_response = Arc::new(UciResponseData {
-            child: UciResponseDataChild::UciVendor_9_Response(uci_vendor__9_response),
-        });
-        let uci_packet = Arc::new(UciPacketData {
-            group_id: GroupId::VendorReserved9,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            message_type: MessageType::Response,
-            opcode: self.opcode,
-            child: UciPacketDataChild::UciResponse(uci_response),
-        });
-        UciVendor_9_ResponsePacket::new(uci_packet).unwrap()
-    }
-}
-impl Into<UciPacketPacket> for UciVendor_9_ResponseBuilder {
-    fn into(self) -> UciPacketPacket {
-        self.build().into()
-    }
-}
-impl Into<UciResponsePacket> for UciVendor_9_ResponseBuilder {
-    fn into(self) -> UciResponsePacket {
-        self.build().into()
-    }
-}
-
-#[derive(Debug)]
 enum UciVendor_A_ResponseDataChild {
     Payload(Bytes),
     None,
@@ -15049,173 +16947,6 @@ impl Into<UciPacketPacket> for UciVendor_F_ResponseBuilder {
 }
 impl Into<UciResponsePacket> for UciVendor_F_ResponseBuilder {
     fn into(self) -> UciResponsePacket {
-        self.build().into()
-    }
-}
-
-#[derive(Debug)]
-enum UciVendor_9_NotificationDataChild {
-    Payload(Bytes),
-    None,
-}
-impl UciVendor_9_NotificationDataChild {
-    fn get_total_size(&self) -> usize {
-        match self {
-            UciVendor_9_NotificationDataChild::Payload(p) => p.len(),
-            UciVendor_9_NotificationDataChild::None => 0,
-        }
-    }
-}
-#[derive(Debug)]
-pub enum UciVendor_9_NotificationChild {
-    Payload(Bytes),
-    None,
-}
-#[derive(Debug)]
-struct UciVendor_9_NotificationData {
-    child: UciVendor_9_NotificationDataChild,
-}
-#[derive(Debug, Clone)]
-pub struct UciVendor_9_NotificationPacket {
-    uci_packet: Arc<UciPacketData>,
-    uci_notification: Arc<UciNotificationData>,
-    uci_vendor__9_notification: Arc<UciVendor_9_NotificationData>,
-}
-#[derive(Debug)]
-pub struct UciVendor_9_NotificationBuilder {
-    pub opcode: u8,
-    pub payload: Option<Bytes>,
-}
-impl UciVendor_9_NotificationData {
-    fn conforms(bytes: &[u8]) -> bool {
-        true
-    }
-    fn parse(bytes: &[u8]) -> Result<Self> {
-        let payload: Vec<u8> = bytes[4..].into();
-        let child = if payload.len() > 0 {
-            UciVendor_9_NotificationDataChild::Payload(Bytes::from(payload))
-        } else {
-            UciVendor_9_NotificationDataChild::None
-        };
-        Ok(Self { child })
-    }
-    fn write_to(&self, buffer: &mut BytesMut) {
-        match &self.child {
-            UciVendor_9_NotificationDataChild::Payload(p) => buffer[4..].copy_from_slice(&p[..]),
-            UciVendor_9_NotificationDataChild::None => {}
-        }
-    }
-    fn get_total_size(&self) -> usize {
-        self.get_size() + self.child.get_total_size()
-    }
-    fn get_size(&self) -> usize {
-        let ret = 0;
-        ret
-    }
-}
-impl Packet for UciVendor_9_NotificationPacket {
-    fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::new();
-        buffer.resize(self.uci_packet.get_total_size(), 0);
-        self.uci_packet.write_to(&mut buffer);
-        buffer.freeze()
-    }
-    fn to_vec(self) -> Vec<u8> {
-        self.to_bytes().to_vec()
-    }
-}
-impl From<UciVendor_9_NotificationPacket> for Bytes {
-    fn from(packet: UciVendor_9_NotificationPacket) -> Self {
-        packet.to_bytes()
-    }
-}
-impl From<UciVendor_9_NotificationPacket> for Vec<u8> {
-    fn from(packet: UciVendor_9_NotificationPacket) -> Self {
-        packet.to_vec()
-    }
-}
-impl TryFrom<UciPacketPacket> for UciVendor_9_NotificationPacket {
-    type Error = TryFromError;
-    fn try_from(value: UciPacketPacket) -> std::result::Result<Self, Self::Error> {
-        Self::new(value.uci_packet).map_err(TryFromError)
-    }
-}
-impl UciVendor_9_NotificationPacket {
-    pub fn specialize(&self) -> UciVendor_9_NotificationChild {
-        match &self.uci_vendor__9_notification.child {
-            UciVendor_9_NotificationDataChild::Payload(p) => {
-                UciVendor_9_NotificationChild::Payload(p.clone())
-            }
-            UciVendor_9_NotificationDataChild::None => UciVendor_9_NotificationChild::None,
-        }
-    }
-    fn new(root: Arc<UciPacketData>) -> std::result::Result<Self, &'static str> {
-        let uci_packet = root;
-        let uci_notification = match &uci_packet.child {
-            UciPacketDataChild::UciNotification(value) => (*value).clone(),
-            _ => return Err("inconsistent state - child was not UciNotification"),
-        };
-        let uci_vendor__9_notification = match &uci_notification.child {
-            UciNotificationDataChild::UciVendor_9_Notification(value) => (*value).clone(),
-            _ => return Err("inconsistent state - child was not UciVendor_9_Notification"),
-        };
-        Ok(Self {
-            uci_packet,
-            uci_notification,
-            uci_vendor__9_notification,
-        })
-    }
-    pub fn get_group_id(&self) -> GroupId {
-        self.uci_packet.as_ref().group_id
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.uci_packet.as_ref().packet_boundary_flag
-    }
-    pub fn get_message_type(&self) -> MessageType {
-        self.uci_packet.as_ref().message_type
-    }
-    pub fn get_opcode(&self) -> u8 {
-        self.uci_packet.as_ref().opcode
-    }
-}
-impl Into<UciPacketPacket> for UciVendor_9_NotificationPacket {
-    fn into(self) -> UciPacketPacket {
-        UciPacketPacket::new(self.uci_packet).unwrap()
-    }
-}
-impl Into<UciNotificationPacket> for UciVendor_9_NotificationPacket {
-    fn into(self) -> UciNotificationPacket {
-        UciNotificationPacket::new(self.uci_packet).unwrap()
-    }
-}
-impl UciVendor_9_NotificationBuilder {
-    pub fn build(self) -> UciVendor_9_NotificationPacket {
-        let uci_vendor__9_notification = Arc::new(UciVendor_9_NotificationData {
-            child: match self.payload {
-                None => UciVendor_9_NotificationDataChild::None,
-                Some(bytes) => UciVendor_9_NotificationDataChild::Payload(bytes),
-            },
-        });
-        let uci_notification = Arc::new(UciNotificationData {
-            child: UciNotificationDataChild::UciVendor_9_Notification(uci_vendor__9_notification),
-        });
-        let uci_packet = Arc::new(UciPacketData {
-            group_id: GroupId::VendorReserved9,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            message_type: MessageType::Notification,
-            opcode: self.opcode,
-            child: UciPacketDataChild::UciNotification(uci_notification),
-        });
-        UciVendor_9_NotificationPacket::new(uci_packet).unwrap()
-    }
-}
-impl Into<UciPacketPacket> for UciVendor_9_NotificationBuilder {
-    fn into(self) -> UciPacketPacket {
-        self.build().into()
-    }
-}
-impl Into<UciNotificationPacket> for UciVendor_9_NotificationBuilder {
-    fn into(self) -> UciNotificationPacket {
         self.build().into()
     }
 }

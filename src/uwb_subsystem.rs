@@ -6,11 +6,14 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::position::*;
 use crate::uci_packets::*;
 
 const MAX_DEVICE: usize = 4;
 const MAX_SESSION: usize = 4;
 const MAX_PAYLOAD_SIZE: usize = 4096;
+
+type MacAddress = u64;
 
 #[derive(Copy, Clone)]
 enum DeviceState {
@@ -105,8 +108,14 @@ pub enum PicaCommand {
     Command(usize, UciCommandPacket),
 }
 
+struct Beacon {
+    position: Position,
+    mac_address: MacAddress,
+}
+
 pub struct Pica {
     devices: HashMap<usize, Device>,
+    beacons: HashMap<MacAddress, Beacon>,
     counter: usize,
     rx: mpsc::Receiver<PicaCommand>,
     tx: mpsc::Sender<PicaCommand>,
@@ -117,6 +126,7 @@ impl Pica {
         let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
         Pica {
             devices: HashMap::new(),
+            beacons: HashMap::new(),
             counter: 0,
             rx,
             tx,
@@ -229,7 +239,7 @@ impl Pica {
                     }
                     SessionCommandChild::None => anyhow::bail!("Unsupported session command"),
                 }
-            }
+            },
             UciCommandChild::RangingCommand(ranging_command) => {
                 match ranging_command.specialize() {
                     RangingCommandChild::RangeStartCmd(cmd) => {
@@ -242,6 +252,16 @@ impl Pica {
                         self.range_get_ranging_count(device_handle, cmd).await
                     }
                     RangingCommandChild::None => anyhow::bail!("Unsupported ranging command"),
+                }
+            }
+            UciCommandChild::PicaCommand(pica_command) => {
+                match pica_command.specialize() {
+                    PicaCommandChild::PicaInitDeviceCmd(cmd) => self.init_device(device_handle, cmd).await,
+                    PicaCommandChild::PicaSetDevicePositionCmd(cmd) => self.set_device_position(device_handle, cmd).await,
+                    PicaCommandChild::PicaCreateBeaconCmd(cmd) => self.create_beacon(cmd).await,
+                    PicaCommandChild::PicaSetBeaconPositionCmd(cmd) => self.set_beacon_position(cmd).await,
+                    PicaCommandChild::PicaDestroyBeaconCmd(cmd) => self.destroy_beacon(cmd).await,
+                    PicaCommandChild::None => anyhow::bail!("Unsupported Pica command"),
                 }
             }
             _ => anyhow::bail!("Unsupported command type"),
@@ -381,6 +401,26 @@ impl Pica {
         _device_handle: usize,
         _cmd: RangeGetRangingCountCmdPacket,
     ) -> Result<()> {
+        todo!()
+    }
+
+    async fn init_device(&mut self, _device_handle: usize, _cmd: PicaInitDeviceCmdPacket) -> Result<()> {
+        todo!()
+    }
+
+    async fn set_device_position(&mut self, _device_handle: usize, _cmd: PicaSetDevicePositionCmdPacket) -> Result<()> {
+        todo!()
+    }
+
+    async fn create_beacon(&mut self, _cmd: PicaCreateBeaconCmdPacket) -> Result<()> {
+        todo!()
+    }
+
+    async fn set_beacon_position(&mut self, _cmd: PicaSetBeaconPositionCmdPacket) -> Result<()> {
+        todo!()
+    }
+
+    async fn destroy_beacon(&mut self, _cmd: PicaDestroyBeaconCmdPacket) -> Result<()> {
         todo!()
     }
 }

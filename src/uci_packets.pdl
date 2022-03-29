@@ -11,7 +11,7 @@ enum GroupId : 4 {
     RANGING_SESSION_CONTROL = 0x02,
     DATA_CONTROL = 0x03,
     TEST = 0x0d,
-    VENDOR_RESERVED_9 = 0x09,
+    VENDOR_PICA = 0x09,
     VENDOR_RESERVED_A = 0x0a,
     VENDOR_RESERVED_B = 0x0b,
     // TODO(b/218883784): Temp switch of GID till qorvo switches over.
@@ -52,6 +52,14 @@ enum RangeOpCode : 6 {
 enum AppDataOpCode : 6 {
     APP_DATA_TX = 0x00,
     APP_DATA_RX = 0x01,
+}
+
+enum PicaOpCode : 6 {
+    PICA_INIT_DEVICE = 0x00,
+    PICA_SET_DEVICE_POSITION = 0x01,
+    PICA_CREATE_BEACON = 0x02,
+    PICA_SET_BEACON_POSITION = 0x03,
+    PICA_DESTROY_BEACON = 0x04,
 }
 
 // Android vendor commands
@@ -320,6 +328,14 @@ packet RangingResponse : UciResponse (group_id = RANGING_SESSION_CONTROL) {
 }
 
 packet RangingNotification : UciNotification (group_id = RANGING_SESSION_CONTROL) {
+    _body_,
+}
+
+packet PicaCommand : UciCommand (group_id = VENDOR_PICA) {
+    _body_,
+}
+
+packet PicaResponse : UciResponse (group_id = VENDOR_PICA) {
     _body_,
 }
 
@@ -749,6 +765,57 @@ test RangeGetRangingCountRsp {
     "\x42\x03\x00\x05\x00\x02\x03\x04\x05",
 }
 
+struct PicaPosition {
+    x: 16,
+    y: 16,
+    z: 16,
+    azimuth: 16,
+    elevation: 8,
+}
+
+packet PicaInitDeviceCmd: PicaCommand (opcode = 0x0) { // PICA_INIT_DEVICE
+    mac_address: 64,
+    position: PicaPosition,
+}
+
+packet PicaInitDeviceRsp: PicaResponse (opcode = 0x0) { // PICA_INIT_DEVICE
+    status: StatusCode,
+}
+
+packet PicaSetDevicePositionCmd: PicaCommand (opcode = 0x1) { // PICA_SET_DEVICE_POSITION
+    position: PicaPosition,
+}
+
+packet PicaSetDevicePositionRsp: PicaResponse (opcode = 0x1) { // PICA_SET_DEVICE_POSITION
+    status: StatusCode,
+}
+
+packet PicaCreateBeaconCmd: PicaCommand (opcode = 0x2) { // PICA_CREATE_BEACON
+    mac_address: 64,
+    position: PicaPosition,
+}
+
+packet PicaCreateBeaconRsp: PicaResponse (opcode = 0x2) { // PICA_CREATE_BEACON
+    status: StatusCode,
+}
+
+packet PicaSetBeaconPositionCmd: PicaCommand (opcode = 0x3) { // PICA_SET_BEACON_POSITION
+    mac_address: 64,
+    position: PicaPosition,
+}
+
+packet PicaSetBeaconPositionRsp: PicaResponse (opcode = 0x3) { // PICA_SET_BEACON_POSITION
+    status: StatusCode,
+}
+
+packet PicaDestroyBeaconCmd: PicaCommand (opcode = 0x4) { // PICA_DESTROY_BEACON
+    mac_address: 64,
+}
+
+packet PicaDestroyBeaconRsp: PicaResponse (opcode = 0x4) { // PICA_DESTROY_BEACON
+    status: StatusCode,
+}
+
 packet AndroidGetPowerStatsCmd: AndroidCommand (opcode = 0x0) { //ANDROID_GET_POWER_STATS
 }
 
@@ -789,10 +856,6 @@ test AndroidSetCountryCodeRsp {
     "\x4e\x01\x00\x01\x00",
 }
 
-packet UciVendor_9_Command : UciCommand (group_id = VENDOR_RESERVED_9) {
-    _payload_,
-}
-
 packet UciVendor_A_Command : UciCommand (group_id = VENDOR_RESERVED_A) {
     _payload_,
 }
@@ -809,10 +872,6 @@ packet UciVendor_F_Command :  UciCommand (group_id = VENDOR_RESERVED_F) {
     _payload_,
 }
 
-packet UciVendor_9_Response : UciResponse (group_id = VENDOR_RESERVED_9) {
-    _payload_,
-}
-
 packet UciVendor_A_Response : UciResponse (group_id = VENDOR_RESERVED_A) {
     _payload_,
 }
@@ -826,10 +885,6 @@ packet UciVendor_E_Response : UciResponse (group_id = VENDOR_RESERVED_E) {
 }
 
 packet UciVendor_F_Response : UciResponse (group_id = VENDOR_RESERVED_F) {
-    _payload_,
-}
-
-packet UciVendor_9_Notification : UciNotification (group_id = VENDOR_RESERVED_9) {
     _payload_,
 }
 
