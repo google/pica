@@ -15,7 +15,7 @@ const MAX_PAYLOAD_SIZE: usize = 4096;
 
 type MacAddress = u64;
 
-#[derive(Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum DeviceState {
     Ready,
     Active,
@@ -42,6 +42,7 @@ pub struct Device {
     state: DeviceState,
     sessions: [Session; MAX_SESSION],
     tx: mpsc::Sender<UciPacketPacket>,
+    country_code: [u8; 2],
 }
 
 impl Default for Session {
@@ -62,6 +63,7 @@ impl Device {
             state: DeviceState::Ready,
             sessions: Default::default(),
             tx,
+            country_code: [0; 2],
         }
     }
 }
@@ -264,6 +266,15 @@ impl Pica {
                     PicaCommandChild::None => anyhow::bail!("Unsupported Pica command"),
                 }
             }
+            UciCommandChild::AndroidCommand(android_command) => {
+                match android_command.specialize() {
+                    AndroidCommandChild::AndroidSetCountryCodeCmd(cmd) => {
+                        self.set_country_code(device_handle, cmd).await
+                    }
+                    AndroidCommandChild::AndroidGetPowerStatsCmd(cmd) => todo!(),
+                    AndroidCommandChild::None => anyhow::bail!("Unsupported ranging command"),
+                }
+            }
             _ => anyhow::bail!("Unsupported command type"),
         }
     }
@@ -291,8 +302,9 @@ impl Pica {
         let reset_config = cmd.get_reset_config();
         println!("[{}] Device Reset", device_handle);
         println!("  reset_config={}", reset_config);
-        Ok(self
-            .get_device(device_handle)
+        let device = self.get_device(device_handle);
+        device.state = DeviceState::Ready;
+        Ok(device
             .tx
             .send(
                 DeviceResetRspBuilder {
@@ -306,10 +318,27 @@ impl Pica {
 
     async fn get_device_info(
         &mut self,
-        _device_handle: usize,
+        device_handle: usize,
         _cmd: GetDeviceInfoCmdPacket,
     ) -> Result<()> {
-        todo!()
+        // TODO: Implement a fancy build time state machine instead of crash at runtime
+        let device = self.get_device(device_handle);
+        assert_eq!(device.state, DeviceState::Ready);
+        Ok(device
+            .tx
+            .send(
+                GetDeviceInfoRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                    uci_version: 1,
+                    mac_version: 1,
+                    phy_version: 1,
+                    uci_test_version: 1,
+                    vendor_spec_info: Vec::new(),
+                }
+               .build()
+                .into(),
+            )
+            .await?)
     }
 
     async fn get_caps_info(
@@ -320,8 +349,22 @@ impl Pica {
         todo!()
     }
 
-    async fn set_config(&mut self, _device_handle: usize, _cmd: SetConfigCmdPacket) -> Result<()> {
-        todo!()
+    async fn set_config(&mut self, device_handle: usize, _cmd: SetConfigCmdPacket) -> Result<()> {
+        let device = self.get_device(device_handle);
+        assert_eq!(device.state, DeviceState::Ready);
+        // TODO: Check if the config is supported
+        // Currently we are saying we support everything
+        Ok(device
+            .tx
+            .send(
+                SetConfigRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                    cfg_status: Vec::new(),
+                }
+                .build()
+                .into(),
+            )
+            .await?)
     }
 
     async fn get_config(&mut self, _device_handle: usize, _cmd: GetConfigCmdPacket) -> Result<()> {
@@ -422,5 +465,21 @@ impl Pica {
 
     async fn destroy_beacon(&mut self, _cmd: PicaDestroyBeaconCmdPacket) -> Result<()> {
         todo!()
+    }
+
+    async fn set_country_code(&mut self, device_handle: usize, command: AndroidSetCountryCodeCmdPacket) -> Result<()> {
+        let device = self.get_device(device_handle);
+        device.country_code = *command.get_country_code();
+        println!("android command: set_country_code");
+        Ok(device
+            .tx
+            .send(
+                AndroidSetCountryCodeRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                }
+                .build()
+                .into(),
+            )
+            .await?)
     }
 }
