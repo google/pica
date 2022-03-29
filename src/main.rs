@@ -12,6 +12,9 @@ use tokio::net::TcpListener;
 
 use uwb_subsystem::*;
 
+mod position;
+use position::Position;
+
 const UCI_PORT: u16 = 7000;
 
 #[tokio::main]
