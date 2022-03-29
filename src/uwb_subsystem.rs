@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bytes::BytesMut;
 use std::collections::HashMap;
 use tokio::io::AsyncReadExt;
@@ -22,16 +22,10 @@ enum DeviceState {
     Error,
 }
 
-#[derive(Copy, Clone)]
-enum SessionState {
-    Init,
-    Idle,
-    Active,
-    Deinit,
-}
-
-struct Session {
+pub struct Session {
     state: SessionState,
+    id: u32,
+    session_type: SessionType,
     sequence_number: usize,
     ranging_interval: usize,
     ranging_task: Option<JoinHandle<()>>,
@@ -48,7 +42,9 @@ pub struct Device {
 impl Default for Session {
     fn default() -> Self {
         Session {
-            state: SessionState::Init,
+            state: SessionState::SessionStateDeinit,
+            id: 0,
+            session_type: SessionType::FiraRangingSession,
             sequence_number: 0,
             ranging_interval: 0,
             ranging_task: None,
@@ -65,6 +61,35 @@ impl Device {
             tx,
             country_code: [0; 2],
         }
+    }
+
+    pub fn add_session(&mut self, session: Session) -> Result<()> {
+        match self
+            .sessions
+            .iter_mut()
+            .filter(|session| session.state == SessionState::SessionStateDeinit)
+            .next()
+        {
+            Some(s) => {
+                *s = session;
+                Ok(())
+            }
+            None => Err(anyhow!("Maximum number of sessions reached")),
+        }
+    }
+
+    pub fn get_session(&self, session_id: u32) -> Result<&Session> {
+        self.sessions
+            .iter()
+            .find(|session| session.id == session_id)
+            .ok_or(anyhow!("Session not found"))
+    }
+
+    pub fn get_mut_session(&mut self, session_id: u32) -> Result<&mut Session> {
+        self.sessions
+            .iter_mut()
+            .find(|session| session.id == session_id)
+            .ok_or(anyhow!("Session not found"))
     }
 }
 
@@ -241,7 +266,7 @@ impl Pica {
                     }
                     SessionCommandChild::None => anyhow::bail!("Unsupported session command"),
                 }
-            },
+            }
             UciCommandChild::RangingCommand(ranging_command) => {
                 match ranging_command.specialize() {
                     RangingCommandChild::RangeStartCmd(cmd) => {
@@ -256,16 +281,20 @@ impl Pica {
                     RangingCommandChild::None => anyhow::bail!("Unsupported ranging command"),
                 }
             }
-            UciCommandChild::PicaCommand(pica_command) => {
-                match pica_command.specialize() {
-                    PicaCommandChild::PicaInitDeviceCmd(cmd) => self.init_device(device_handle, cmd).await,
-                    PicaCommandChild::PicaSetDevicePositionCmd(cmd) => self.set_device_position(device_handle, cmd).await,
-                    PicaCommandChild::PicaCreateBeaconCmd(cmd) => self.create_beacon(cmd).await,
-                    PicaCommandChild::PicaSetBeaconPositionCmd(cmd) => self.set_beacon_position(cmd).await,
-                    PicaCommandChild::PicaDestroyBeaconCmd(cmd) => self.destroy_beacon(cmd).await,
-                    PicaCommandChild::None => anyhow::bail!("Unsupported Pica command"),
+            UciCommandChild::PicaCommand(pica_command) => match pica_command.specialize() {
+                PicaCommandChild::PicaInitDeviceCmd(cmd) => {
+                    self.init_device(device_handle, cmd).await
                 }
-            }
+                PicaCommandChild::PicaSetDevicePositionCmd(cmd) => {
+                    self.set_device_position(device_handle, cmd).await
+                }
+                PicaCommandChild::PicaCreateBeaconCmd(cmd) => self.create_beacon(cmd).await,
+                PicaCommandChild::PicaSetBeaconPositionCmd(cmd) => {
+                    self.set_beacon_position(cmd).await
+                }
+                PicaCommandChild::PicaDestroyBeaconCmd(cmd) => self.destroy_beacon(cmd).await,
+                PicaCommandChild::None => anyhow::bail!("Unsupported Pica command"),
+            },
             UciCommandChild::AndroidCommand(android_command) => {
                 match android_command.specialize() {
                     AndroidCommandChild::AndroidSetCountryCodeCmd(cmd) => {
@@ -335,7 +364,7 @@ impl Pica {
                     uci_test_version: 1,
                     vendor_spec_info: Vec::new(),
                 }
-               .build()
+                .build()
                 .into(),
             )
             .await?)
@@ -373,10 +402,35 @@ impl Pica {
 
     async fn session_init(
         &mut self,
-        _device_handle: usize,
-        _cmd: SessionInitCmdPacket,
+        device_handle: usize,
+        cmd: SessionInitCmdPacket,
     ) -> Result<()> {
-        todo!()
+        println!("session_init");
+        let device = self.get_device(device_handle);
+        let mut session = Session::default();
+        session.state = SessionState::SessionStateInit;
+        session.id = cmd.get_session_id();
+        session.session_type = cmd.get_session_type();
+        let status = match device.add_session(session) {
+            Ok(_) => StatusCode::UciStatusOk,
+            Err(_) => StatusCode::UciStatusFailed,
+        };
+        device
+            .tx
+            .send(SessionInitRspBuilder { status: status }.build().into())
+            .await?;
+        Ok(device
+            .tx
+            .send(
+                SessionStatusNtfBuilder {
+                    session_id: cmd.get_session_id(),
+                    session_state: SessionState::SessionStateInit,
+                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
+                }
+                .build()
+                .into(),
+            )
+            .await?)
     }
 
     async fn session_deinit(
@@ -389,10 +443,39 @@ impl Pica {
 
     async fn session_set_app_config(
         &mut self,
-        _device_handle: usize,
-        _cmd: SessionSetAppConfigCmdPacket,
+        device_handle: usize,
+        cmd: SessionSetAppConfigCmdPacket,
     ) -> Result<()> {
-        todo!()
+        // TODO: Set session app configuration regardings the incoming cmd
+        let device = self.get_device(device_handle);
+        let session = device.get_mut_session(cmd.get_session_id())?;
+        assert_eq!(session.state, SessionState::SessionStateInit);
+        println!("session_set_app_config");
+        session.state = SessionState::SessionStateIdle;
+        device
+            .tx
+            .send(
+                SessionSetAppConfigRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                    cfg_status: Vec::new(),
+                }
+                .build()
+                .into(),
+            )
+            .await?;
+
+        Ok(device
+            .tx
+            .send(
+                SessionStatusNtfBuilder {
+                    session_id: cmd.get_session_id(),
+                    session_state: SessionState::SessionStateIdle,
+                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
+                }
+                .build()
+                .into(),
+            )
+            .await?)
     }
 
     async fn session_get_app_config(
@@ -447,11 +530,19 @@ impl Pica {
         todo!()
     }
 
-    async fn init_device(&mut self, _device_handle: usize, _cmd: PicaInitDeviceCmdPacket) -> Result<()> {
+    async fn init_device(
+        &mut self,
+        _device_handle: usize,
+        _cmd: PicaInitDeviceCmdPacket,
+    ) -> Result<()> {
         todo!()
     }
 
-    async fn set_device_position(&mut self, _device_handle: usize, _cmd: PicaSetDevicePositionCmdPacket) -> Result<()> {
+    async fn set_device_position(
+        &mut self,
+        _device_handle: usize,
+        _cmd: PicaSetDevicePositionCmdPacket,
+    ) -> Result<()> {
         todo!()
     }
 
@@ -467,7 +558,11 @@ impl Pica {
         todo!()
     }
 
-    async fn set_country_code(&mut self, device_handle: usize, command: AndroidSetCountryCodeCmdPacket) -> Result<()> {
+    async fn set_country_code(
+        &mut self,
+        device_handle: usize,
+        command: AndroidSetCountryCodeCmdPacket,
+    ) -> Result<()> {
         let device = self.get_device(device_handle);
         device.country_code = *command.get_country_code();
         println!("android command: set_country_code");
