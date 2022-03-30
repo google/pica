@@ -60,6 +60,7 @@ pub enum PicaCommand {
     Command(usize, UciCommandPacket),
 }
 
+#[derive(Debug)]
 struct Beacon {
     position: Position,
     mac_address: MacAddress,
