@@ -7,6 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 MAX_PAYLOAD_SIZE = 1024
 
+def encode_position(x: int, y: int, z: int, azimuth: int, elevation: int):
+  return (x.to_bytes(2, byteorder='little')
+    + y.to_bytes(2, byteorder='little')
+    + z.to_bytes(2, byteorder='little')
+    + azimuth.to_bytes(2, byteorder='little')
+    + elevation.to_bytes(1, byteorder='little'))
+
 class Device:
     def __init__(self, reader, writer):
         self.reader = reader
@@ -48,6 +55,19 @@ class Device:
         """Query the current state of the UWB session."""
         self._send_command(bytes([0x21, 0x6, 0x0, 0x4]) + int(session_id).to_bytes(4, byteorder='little'))
 
+    def pica_create_beacon(
+      self,
+      mac_address: str = '0',
+      x: str = '0',
+      y: str= '0',
+      z: str = '0',
+      azimuth: str = '0',
+      elevation: str = '0'):
+        """Create a Pica beacon"""
+        self._send_command(bytes([0x29, 0x2, 0x0, 17]) + int(mac_address).to_bytes(8, byteorder='little')
+          + encode_position(int(x), int(y), int(z), int(azimuth), int(elevation)))
+
+
     async def read_responses_and_notifications(self):
         def chunks(l, n):
             for i in range(0, len(l), n):
@@ -85,6 +105,7 @@ async def command_line(device: Device):
         'session_deinit': device.session_deinit,
         'session_get_count': device.session_get_count,
         'session_get_state': device.session_get_state,
+        'pica_create_beacon': device.pica_create_beacon,
     }
 
     def usage():
