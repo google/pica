@@ -6,12 +6,13 @@ extern crate thiserror;
 mod position;
 mod uci_packets;
 mod uwb_subsystem;
+mod web;
 
 use anyhow::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
-use tokio::{pin, try_join};
+use tokio::try_join;
 
 use uwb_subsystem::*;
 
@@ -34,7 +35,7 @@ async fn main() -> Result<()> {
     let mut pica = Pica::new();
     let tx = pica.tx();
 
-    try_join!(accept_incoming(tx), pica.run())?;
+    try_join!(accept_incoming(tx), pica.run(), web::serve())?;
 
     Ok(())
 }
