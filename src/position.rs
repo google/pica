@@ -1,5 +1,7 @@
 use nalgebra::{Rotation3, Vector3};
-
+use crate::{uci_packets::PicaPosition, uwb_subsystem::Pica};
+use std::convert::From;
+use std::default::Default;
 pub struct Position {
     position: Vector3<f64>,
     rotation: Rotation3<f64>,
@@ -65,6 +67,24 @@ impl Position {
             f64::min(distance, u16::MAX as f64) as u16,
             azimuth as i16,
             elevation as i8,
+        )
+    }
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Self::new(0, 0, 0, 0, 0)
+    }
+}
+
+impl From<&PicaPosition> for Position {
+    fn from(other: &PicaPosition) -> Self {
+        Self::new(
+            other.x as i16,
+            other.y as i16,
+            other.z as i16,
+            other.azimuth as i16,
+            other.elevation as i8,
         )
     }
 }

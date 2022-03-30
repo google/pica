@@ -2,13 +2,15 @@ use std::collections::HashMap;
 use crate::uci_packets::{DeviceState, SessionState, UciPacketPacket};
 use anyhow::{anyhow, Result};
 use tokio::sync::mpsc;
+use crate::position::Position;
 
 use super::session::{Session, MAX_SESSION};
 
 pub const MAX_DEVICE: usize = 4;
 
 pub struct Device {
-    mac_address: usize,
+    pub mac_address: usize,
+    pub position: Position,
     pub state: DeviceState,
     pub sessions: HashMap<u32, Session>,
     pub tx: mpsc::Sender<UciPacketPacket>,
@@ -19,6 +21,7 @@ impl Device {
     pub fn new(device_handle: usize, tx: mpsc::Sender<UciPacketPacket>) -> Self {
         Device {
             mac_address: device_handle,
+            position: Position::default(),
             state: DeviceState::DeviceStateReady,
             sessions: Default::default(),
             tx,

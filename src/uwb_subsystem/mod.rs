@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use bytes::BytesMut;
 use std::collections::HashMap;
 use tokio::io::AsyncReadExt;
@@ -228,7 +228,7 @@ impl Pica {
                     AndroidCommandChild::AndroidGetPowerStatsCmd(cmd) => todo!(),
                     AndroidCommandChild::None => anyhow::bail!("Unsupported ranging command"),
                 }
-            }
+            },
             _ => anyhow::bail!("Unsupported command type"),
         }
     }
@@ -479,30 +479,63 @@ impl Pica {
 
     async fn init_device(
         &mut self,
-        _device_handle: usize,
-        _cmd: PicaInitDeviceCmdPacket,
+        device_handle: usize,
+        cmd: PicaInitDeviceCmdPacket,
     ) -> Result<()> {
-        todo!()
+        let mut device = self.get_device(device_handle);
+        let mac_address = cmd.get_mac_address();
+
+        device.mac_address = mac_address as usize;
+        device.position = Position::from(cmd.get_position());
+        Ok(())
     }
 
     async fn set_device_position(
         &mut self,
-        _device_handle: usize,
-        _cmd: PicaSetDevicePositionCmdPacket,
+        device_handle: usize,
+        cmd: PicaSetDevicePositionCmdPacket,
     ) -> Result<()> {
-        todo!()
+        let mut device = self.get_device(device_handle);
+        device.position = Position::from(cmd.get_position());
+        Ok(())
     }
 
-    async fn create_beacon(&mut self, _cmd: PicaCreateBeaconCmdPacket) -> Result<()> {
-        todo!()
+    async fn create_beacon(&mut self, cmd: PicaCreateBeaconCmdPacket) -> Result<()> {
+        let mac_address = cmd.get_mac_address();
+
+        if self.beacons.contains_key(&mac_address) {
+            Err(anyhow!("Beacon already exists"))
+        } else {
+            self.beacons
+                .insert(
+                    mac_address,
+                    Beacon {
+                        position: Position::from(cmd.get_position()),
+                        mac_address,
+                    },
+                )
+                .unwrap();
+            Ok(())
+        }
     }
 
-    async fn set_beacon_position(&mut self, _cmd: PicaSetBeaconPositionCmdPacket) -> Result<()> {
-        todo!()
+    async fn set_beacon_position(&mut self, cmd: PicaSetBeaconPositionCmdPacket) -> Result<()> {
+        if let Some(b) = self.beacons.get_mut(&cmd.get_mac_address()) {
+            b.position = Position::from(cmd.get_position());
+            Ok(())
+        } else {
+            Err(anyhow!("Beacon not found"))
+        }
     }
 
-    async fn destroy_beacon(&mut self, _cmd: PicaDestroyBeaconCmdPacket) -> Result<()> {
-        todo!()
+    async fn destroy_beacon(&mut self, cmd: PicaDestroyBeaconCmdPacket) -> Result<()> {
+        let mac_address = cmd.get_mac_address();
+
+        if self.beacons.remove(&mac_address).is_some() {
+            Ok(())
+        } else {
+            Err(anyhow!("Beacon not found"))
+        }
     }
 
     async fn set_country_code(
