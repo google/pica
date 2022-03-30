@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 use crate::uci_packets::{DeviceState, UciPacketPacket};
 use crate::uwb_subsystem::*;
+use std::collections::HashMap;
 
+use crate::position::Position;
 use anyhow::{anyhow, Result};
 use tokio::sync::mpsc;
-use crate::position::Position;
 
 use super::session::{Session, MAX_SESSION};
 
@@ -33,12 +33,11 @@ impl Device {
 
     pub fn add_session(&mut self, session: Session) -> Result<()> {
         if self.sessions.len() > MAX_SESSION {
-            return Err(anyhow!("Can't add session, maximum number of session reached"));
+            return Err(anyhow!(
+                "Can't add session, maximum number of session reached"
+            ));
         }
-        self.sessions.insert(
-            session.id,
-            session
-        );
+        self.sessions.insert(session.id, session);
         Ok(())
     }
 }
@@ -116,7 +115,11 @@ impl Pica {
         todo!()
     }
 
-    pub async fn set_config(&mut self, device_handle: usize, _cmd: SetConfigCmdPacket) -> Result<()> {
+    pub async fn set_config(
+        &mut self,
+        device_handle: usize,
+        _cmd: SetConfigCmdPacket,
+    ) -> Result<()> {
         let device = self.get_device(device_handle);
         assert_eq!(device.state, DeviceState::DeviceStateReady);
         // TODO: Check if the config is supported
@@ -134,7 +137,11 @@ impl Pica {
             .await?)
     }
 
-    pub async fn get_config(&mut self, _device_handle: usize, _cmd: GetConfigCmdPacket) -> Result<()> {
+    pub async fn get_config(
+        &mut self,
+        _device_handle: usize,
+        _cmd: GetConfigCmdPacket,
+    ) -> Result<()> {
         todo!()
     }
 }

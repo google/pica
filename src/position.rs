@@ -1,5 +1,5 @@
-use nalgebra::{Rotation3, Vector3};
 use crate::{uci_packets::PicaPosition, uwb_subsystem::Pica};
+use nalgebra::{Rotation3, Vector3};
 use std::convert::From;
 use std::default::Default;
 pub struct Position {

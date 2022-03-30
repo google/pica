@@ -20,13 +20,24 @@ class Device:
         self.writer.write(cmd)
 
     def device_reset(self):
+        """Reset the UWBS."""
         self._send_command(bytes([0x20, 0x0, 0x0, 0x1, 0x0]))
 
     def get_device_info(self):
+        """Retrieve the device information like (UCI version and other vendor specific info)."""
         self._send_command(bytes([0x20, 0x2, 0x0, 0x0]))
 
     def get_caps_info(self):
+        """Get the capability of the UWBS."""
         self._send_command(bytes([0x20, 0x3, 0x0, 0x0]))
+
+    def session_get_count(self):
+        """Retrieve number of UWB sessions in the UWBS."""
+        self._send_command(bytes([0x21, 0x5, 0x0, 0x0]))
+
+    def session_get_state(self, session_id: str = 0):
+        """Query the current state of the UWB session."""
+        self._send_command(bytes([0x21, 0x6, 0x0, 0x4]) + int(session_id).to_bytes(4, byteorder='little'))
 
     async def read_responses_and_notifications(self):
         def chunks(l, n):
@@ -61,13 +72,13 @@ async def command_line(device: Device):
         'device_reset': device.device_reset,
         'get_device_info': device.get_device_info,
         'get_caps_info': device.get_caps_info,
+        'session_get_count': device.session_get_count,
+        'session_get_state': device.session_get_state,
     }
 
-    print("command_line started")
-
     def usage():
-        for cmd in commands.keys():
-            print(f'  {cmd}')
+        for (cmd, func) in commands.items():
+            print(f'  {cmd.ljust(32)}{func.__doc__}')
 
     while True:
         cmd = await ainput('--> ')

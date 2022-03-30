@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use bytes::BytesMut;
 use std::collections::HashMap;
 use tokio::io::AsyncReadExt;
@@ -228,7 +228,7 @@ impl Pica {
                     AndroidCommandChild::AndroidGetPowerStatsCmd(_cmd) => todo!(),
                     AndroidCommandChild::None => anyhow::bail!("Unsupported ranging command"),
                 }
-            },
+            }
             _ => anyhow::bail!("Unsupported command type"),
         }
     }
