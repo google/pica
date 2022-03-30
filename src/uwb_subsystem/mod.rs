@@ -90,8 +90,12 @@ impl Pica {
         self.tx.clone()
     }
 
-    fn get_device(&mut self, device_handle: usize) -> &mut Device {
+    fn get_device_mut(&mut self, device_handle: usize) -> &mut Device {
         self.devices.get_mut(&device_handle).unwrap()
+    }
+
+    fn get_device(&self, device_handle: usize) -> &Device {
+        self.devices.get(&device_handle).unwrap()
     }
 
     async fn connect(&mut self, stream: TcpStream) {
@@ -161,6 +165,57 @@ impl Pica {
     async fn ranging(&mut self, device_handle: usize, session_id: u32) {
         println!("[{}] Ranging event", device_handle);
         println!("  session_id={}", session_id);
+
+        let device = self.get_device(device_handle);
+        let session = device.get_session(session_id).unwrap();
+
+        let mut measurements = Vec::new();
+        session
+            .get_dst_mac_addresses()
+            .iter()
+            .for_each(|mac_address| {
+                if let Some(beacon) = self.beacons.get(mac_address) {
+                    let local = device
+                        .position
+                        .compute_range_azimuth_elevation(&beacon.position);
+                    let remote = beacon
+                        .position
+                        .compute_range_azimuth_elevation(&device.position);
+
+                    assert!(local.0 == remote.0);
+
+                    measurements.push(ExtendedAddressTwoWayRangingMeasurement {
+                        mac_address: *mac_address,
+                        status: StatusCode::UciStatusOk,
+                        nlos: 0, // in Line Of Sight
+                        distance: local.0,
+                        aoa_azimuth: local.1 as u16,
+                        aoa_azimuth_fom: 100, // Yup, pretty sure about this
+                        aoa_elevation: local.2 as u16,
+                        aoa_elevation_fom: 100, // Yup, pretty sure about this
+                        aoa_destination_azimuth: remote.1 as u16,
+                        aoa_destination_azimuth_fom: 100,
+                        aoa_destination_elevation: remote.2 as u16,
+                        aoa_destination_elevation_fom: 100,
+                        slot_index: 0,
+                    });
+                }
+            });
+
+        device
+            .tx
+            .send(
+                ExtendedMacTwoWayRangeDataNtfBuilder {
+                    sequence_number: session.sequence_number, //TODO increment
+                    session_id: session_id as u32,
+                    rcr_indicator: 0,            //TODO
+                    current_ranging_interval: 0, //TODO
+                    two_way_ranging_measurements: measurements,
+                }
+                .build()
+                .into(),
+            )
+            .await;
     }
 
     async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) -> Result<()> {
@@ -231,11 +286,15 @@ impl Pica {
                 PicaCommandChild::PicaSetDevicePositionCmd(cmd) => {
                     self.set_device_position(device_handle, cmd).await
                 }
-                PicaCommandChild::PicaCreateBeaconCmd(cmd) => self.create_beacon(cmd).await,
-                PicaCommandChild::PicaSetBeaconPositionCmd(cmd) => {
-                    self.set_beacon_position(cmd).await
+                PicaCommandChild::PicaCreateBeaconCmd(cmd) => {
+                    self.create_beacon(device_handle, cmd).await
                 }
-                PicaCommandChild::PicaDestroyBeaconCmd(cmd) => self.destroy_beacon(cmd).await,
+                PicaCommandChild::PicaSetBeaconPositionCmd(cmd) => {
+                    self.set_beacon_position(device_handle, cmd).await
+                }
+                PicaCommandChild::PicaDestroyBeaconCmd(cmd) => {
+                    self.destroy_beacon(device_handle, cmd).await
+                }
                 PicaCommandChild::None => anyhow::bail!("Unsupported Pica command"),
             },
             UciCommandChild::AndroidCommand(android_command) => {
@@ -277,10 +336,20 @@ impl Pica {
         println!("  mac_address=0x{:x}", mac_address);
         println!("  position={:?}", position);
 
-        let device = self.get_device(device_handle);
+        let device = self.get_device_mut(device_handle);
         device.mac_address = mac_address as usize;
-        device.position = Position::from(position);
-        Ok(())
+        device.position = Position::from(cmd.get_position());
+        Ok(self
+            .get_device(device_handle)
+            .tx
+            .send(
+                PicaInitDeviceRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                }
+                .build()
+                .into(),
+            )
+            .await?)
     }
 
     async fn set_device_position(
@@ -288,20 +357,34 @@ impl Pica {
         device_handle: usize,
         cmd: PicaSetDevicePositionCmdPacket,
     ) -> Result<()> {
-        let mut device = self.get_device(device_handle);
-        device.position = Position::from(cmd.get_position());
-        Ok(())
+        let mut device = self.get_device_mut(device_handle);
+        device.position = cmd.get_position().into();
+        Ok(self
+            .get_device(device_handle)
+            .tx
+            .send(
+                PicaSetDevicePositionRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                }
+                .build()
+                .into(),
+            )
+            .await?)
     }
 
-    async fn create_beacon(&mut self, cmd: PicaCreateBeaconCmdPacket) -> Result<()> {
+    async fn create_beacon(
+        &mut self,
+        device_handle: usize,
+        cmd: PicaCreateBeaconCmdPacket,
+    ) -> Result<()> {
         let mac_address = cmd.get_mac_address();
         let position = cmd.get_position();
         println!("[_] Create beacon");
         println!("  mac_address=0x{:x}", mac_address);
         println!("  position={:?}", position);
 
-        if self.beacons.contains_key(&mac_address) {
-            Err(anyhow!("Beacon already exists"))
+        let status = if self.beacons.contains_key(&mac_address) {
+            StatusCode::UciStatusFailed
         } else {
             assert!(self
                 .beacons
@@ -312,36 +395,62 @@ impl Pica {
                         mac_address,
                     },
                 )
-                .is_none());
-            Ok(())
-        }
+                .is_some());
+            StatusCode::UciStatusOk
+        };
+
+        Ok(self
+            .get_device(device_handle)
+            .tx
+            .send(PicaCreateBeaconRspBuilder { status }.build().into())
+            .await?)
     }
 
-    async fn set_beacon_position(&mut self, cmd: PicaSetBeaconPositionCmdPacket) -> Result<()> {
+    async fn set_beacon_position(
+        &mut self,
+        device_handle: usize,
+        cmd: PicaSetBeaconPositionCmdPacket,
+    ) -> Result<()> {
         let mac_address = cmd.get_mac_address();
         let position = cmd.get_position();
         println!("[_] Set beacon position");
         println!("  mac_address=0x{:x}", mac_address);
         println!("  position={:?}", position);
 
-        if let Some(b) = self.beacons.get_mut(&mac_address) {
+        let status = if let Some(b) = self.beacons.get_mut(&mac_address) {
             b.position = Position::from(position);
-            Ok(())
+            StatusCode::UciStatusFailed
         } else {
-            Err(anyhow!("Beacon not found"))
-        }
+            StatusCode::UciStatusFailed
+        };
+
+        Ok(self
+            .get_device(device_handle)
+            .tx
+            .send(PicaSetBeaconPositionRspBuilder { status }.build().into())
+            .await?)
     }
 
-    async fn destroy_beacon(&mut self, cmd: PicaDestroyBeaconCmdPacket) -> Result<()> {
+    async fn destroy_beacon(
+        &mut self,
+        device_handle: usize,
+        cmd: PicaDestroyBeaconCmdPacket,
+    ) -> Result<()> {
         let mac_address = cmd.get_mac_address();
         println!("[_] Destroy beacon");
         println!("  mac_address=0x{:x}", mac_address);
 
-        if self.beacons.remove(&mac_address).is_some() {
-            Ok(())
+        let status = if self.beacons.remove(&mac_address).is_some() {
+            StatusCode::UciStatusOk
         } else {
-            Err(anyhow!("Beacon not found"))
-        }
+            StatusCode::UciStatusFailed
+        };
+
+        Ok(self
+            .get_device(device_handle)
+            .tx
+            .send(PicaDestroyBeaconRspBuilder { status }.build().into())
+            .await?)
     }
 
     async fn set_country_code(
@@ -349,7 +458,7 @@ impl Pica {
         device_handle: usize,
         command: AndroidSetCountryCodeCmdPacket,
     ) -> Result<()> {
-        let device = self.get_device(device_handle);
+        let device = self.get_device_mut(device_handle);
         device.country_code = *command.get_country_code();
         println!("android command: set_country_code");
         Ok(device

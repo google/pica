@@ -1,8 +1,11 @@
+use crate::uci_packets::{
+    AppConfigTlv, AppConfigTlvType, MacAddressIndicator, SessionState, SessionType,
+};
+use anyhow::Result;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
 
-use crate::uci_packets::{SessionState, SessionType};
 use crate::uwb_subsystem::*;
 
 pub const MAX_SESSION: usize = 255;
@@ -10,9 +13,13 @@ pub const MAX_SESSION: usize = 255;
 pub struct Session {
     pub state: SessionState,
     pub id: u32,
+
     pub session_type: SessionType,
-    sequence_number: usize,
+
+    pub sequence_number: u32,
     ranging_interval: usize,
+
+    dst_mac_addresses: Vec<u64>,
     ranging_task: Option<JoinHandle<()>>,
 }
 
@@ -24,6 +31,7 @@ impl Default for Session {
             session_type: SessionType::FiraRangingSession,
             sequence_number: 0,
             ranging_interval: 1000,
+            dst_mac_addresses: Vec::new(),
             ranging_task: None,
         }
     }
@@ -54,6 +62,10 @@ impl Session {
             self.ranging_task = None;
         }
     }
+
+    pub fn get_dst_mac_addresses(&self) -> &Vec<u64> {
+        &self.dst_mac_addresses
+    }
 }
 
 impl Drop for Session {
@@ -79,7 +91,7 @@ impl Pica {
         println!("  session_id=0x{:x}", session_id);
         println!("  session_type={}", session_type);
 
-        let device = self.get_device(device_handle);
+        let device = self.get_device_mut(device_handle);
         let mut session = Session::default();
         session.state = SessionState::SessionStateInit;
         session.id = session_id;
@@ -88,7 +100,7 @@ impl Pica {
 
         device
             .tx
-            .send(SessionInitRspBuilder { status: status }.build().into())
+            .send(SessionInitRspBuilder { status }.build().into())
             .await?;
 
         if status == StatusCode::UciStatusOk {
@@ -113,10 +125,10 @@ impl Pica {
         println!("[{}] Session deinit", device_handle);
         println!("  session_id=0x{:x}", session_id);
 
-        let device = self.get_device(device_handle);
-        let status = match device.sessions.remove(&session_id) {
-            Some(_) => StatusCode::UciStatusOk,
-            None => StatusCode::UciStatusSesssionNotExist,
+        let device = self.get_device_mut(device_handle);
+        let status = match device.remove_session(session_id) {
+            Ok(_) => StatusCode::UciStatusOk,
+            Err(_) => StatusCode::UciStatusSesssionNotExist,
         };
 
         device
@@ -145,12 +157,61 @@ impl Pica {
         println!("[{}] Session set app config", device_handle);
         println!("  session_id=0x{}", session_id);
 
-        let device = self.get_device(device_handle);
-        let (status, session_state) = match device.sessions.get_mut(&session_id) {
+        let device = self.get_device_mut(device_handle);
+        let (status, session_state) = match device.get_session_mut(session_id as u32) {
             Some(session) if session.state == SessionState::SessionStateInit => {
-                // TODO: Set session app configuration regardings the incoming cmd
                 session.state = SessionState::SessionStateIdle;
-                (StatusCode::UciStatusOk, session.state)
+
+                match session.session_type {
+                    SessionType::FiraRangingSession => {
+                        cmd.get_tlvs()
+                            .iter()
+                            .for_each(|config| match config.cfg_id {
+                                // AppConfigTlvType::DeviceRole => {}
+                                // AppConfigTlvType::MultiNodeMode => {}
+                                // AppConfigTlvType::NoOfControlee => {}
+                                // AppConfigTlvType::DeviceMacAddress => {}
+                                // AppConfigTlvType::DeviceType => {}
+                                AppConfigTlvType::MacAddressMode => {
+                                    assert!(config.v.len() == 1);
+                                    assert!(
+                                        config.v[0] == MacAddressIndicator::ExtendedAddress as u8
+                                    );
+                                }
+                                AppConfigTlvType::DstMacAddress => {
+                                    let mac_address_size = std::mem::size_of::<u64>();
+                                    assert!(config.v.len() > 0);
+                                    assert!((config.v.len() % mac_address_size) == 0);
+
+                                    for i in 0..(config.v.len() / mac_address_size) {
+                                        let mut mac_address: u64 = 0;
+                                        for j in 0..mac_address_size {
+                                            mac_address = (mac_address << 8)
+                                                + config.v[i * mac_address_size + j] as u64;
+                                        }
+                                        session.dst_mac_addresses.push(mac_address);
+                                    }
+                                }
+                                _ => {}
+                            });
+                    }
+                    _ => anyhow::bail!("Unsupported session type"),
+                }
+
+                device
+                    .tx
+                    .send(
+                        SessionSetAppConfigRspBuilder {
+                            status: StatusCode::UciStatusOk,
+                            cfg_status: Vec::new(),
+                        }
+                        .build()
+                        .into(),
+                    )
+                    .await?;
+
+                // TODO: Set session app configuration regardings the incoming cmd
+                (StatusCode::UciStatusOk, SessionState::SessionStateIdle)
             }
             Some(_) => (
                 StatusCode::UciStatusSesssionActive,
@@ -161,18 +222,6 @@ impl Pica {
                 SessionState::SessionStateDeinit,
             ),
         };
-
-        device
-            .tx
-            .send(
-                SessionSetAppConfigRspBuilder {
-                    status: StatusCode::UciStatusOk,
-                    cfg_status: Vec::new(),
-                }
-                .build()
-                .into(),
-            )
-            .await?;
 
         if status == StatusCode::UciStatusOk {
             device
@@ -202,7 +251,7 @@ impl Pica {
         println!("[{}] Session get count", device_handle);
 
         let device = self.get_device(device_handle);
-        let session_count = device.sessions.len() as u8;
+        let session_count = device.get_session_cnt() as u8;
         Ok(device
             .tx
             .send(
@@ -226,7 +275,7 @@ impl Pica {
         println!("  session_id=0x{:x}", session_id);
 
         let device = self.get_device(device_handle);
-        let (status, session_state) = match device.sessions.get(&session_id).map(|s| s.state) {
+        let (status, session_state) = match device.get_session(session_id).map(|s| s.state) {
             Some(state) => (StatusCode::UciStatusOk, state),
             None => (
                 StatusCode::UciStatusSesssionNotExist,
@@ -268,8 +317,8 @@ impl Pica {
         println!("  session_id=0x{:x}", session_id);
 
         let pica_tx = self.tx.clone();
-        let device = self.get_device(device_handle);
-        let status = match device.sessions.get_mut(&session_id) {
+        let device = self.get_device_mut(device_handle);
+        let status = match device.get_session_mut(session_id as u32) {
             Some(session) if session.state == SessionState::SessionStateIdle => {
                 session.start_ranging(device_handle, pica_tx);
                 session.state = SessionState::SessionStateActive;
@@ -313,8 +362,8 @@ impl Pica {
         println!("[{}] Range stop", device_handle);
         println!("  session_id=0x{:x}", session_id);
 
-        let device = self.get_device(device_handle);
-        let status = match device.sessions.get_mut(&session_id) {
+        let device = self.get_device_mut(device_handle);
+        let status = match device.get_session_mut(session_id as u32) {
             Some(session) if session.state == SessionState::SessionStateActive => {
                 session.stop_ranging();
                 session.state = SessionState::SessionStateIdle;
@@ -356,7 +405,7 @@ impl Pica {
         println!("  session_id=0x{:x}", session_id);
 
         let device = self.get_device(device_handle);
-        let (status, count) = match device.sessions.get(&session_id) {
+        let (status, count) = match device.get_session(session_id) {
             Some(session) if session.state == SessionState::SessionStateActive => {
                 (StatusCode::UciStatusOk, session.sequence_number as u32)
             }

@@ -15,7 +15,7 @@ pub struct Device {
     pub mac_address: usize,
     pub position: Position,
     pub state: DeviceState,
-    pub sessions: HashMap<u32, Session>,
+    sessions: HashMap<u32, Session>,
     pub tx: mpsc::Sender<UciPacketPacket>,
     pub country_code: [u8; 2],
 }
@@ -68,6 +68,26 @@ impl Device {
             .await?;
         Ok(())
     }
+
+    pub fn remove_session(&mut self, session_id: u32) -> Result<()> {
+        if let Some(_) = self.sessions.remove(&session_id) {
+            Ok(())
+        } else {
+            Err(anyhow!("Could not find session"))
+        }
+    }
+
+    pub fn get_session(&self, session_id: u32) -> Option<&Session> {
+        self.sessions.get(&session_id)
+    }
+
+    pub fn get_session_mut(&mut self, session_id: u32) -> Option<&mut Session> {
+        self.sessions.get_mut(&session_id)
+    }
+
+    pub fn get_session_cnt(&self) -> usize {
+        self.sessions.len()
+    }
 }
 
 impl Pica {
@@ -82,7 +102,7 @@ impl Pica {
         println!("[{}] Device Reset", device_handle);
         println!("  reset_config={}", reset_config);
         {
-            let mut device = self.get_device(device_handle);
+            let mut device = self.get_device_mut(device_handle);
             let status = match reset_config {
                 ResetConfig::UwbsReset => StatusCode::UciStatusOk,
             };

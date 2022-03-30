@@ -1,4 +1,4 @@
-use crate::{uci_packets::PicaPosition, uwb_subsystem::Pica};
+use crate::uci_packets::PicaPosition;
 use nalgebra::{Rotation3, Vector3};
 use std::convert::From;
 use std::default::Default;
@@ -53,7 +53,7 @@ impl Position {
         }
     }
 
-    pub fn compute_range_azimuth_elevation(&self, other: Position) -> (u16, i16, i8) {
+    pub fn compute_range_azimuth_elevation(&self, other: &Position) -> (u16, i16, i8) {
         let delta = other.position - self.position;
 
         let distance = f64::sqrt(delta.x.powi(2) + delta.y.powi(2) + delta.z.powi(2)).round();
