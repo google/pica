@@ -1,97 +1,22 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use bytes::BytesMut;
 use std::collections::HashMap;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
 use crate::position::*;
 use crate::uci_packets::*;
 
-const MAX_DEVICE: usize = 4;
-const MAX_SESSION: usize = 4;
+mod device;
+use device::{Device, MAX_DEVICE};
+
+mod session;
+use session::{Session, MAX_SESSION};
+
 const MAX_PAYLOAD_SIZE: usize = 4096;
 
 type MacAddress = u64;
-
-#[derive(Debug, PartialEq, Copy, Clone)]
-enum DeviceState {
-    Ready,
-    Active,
-    Error,
-}
-
-pub struct Session {
-    state: SessionState,
-    id: u32,
-    session_type: SessionType,
-    sequence_number: usize,
-    ranging_interval: usize,
-    ranging_task: Option<JoinHandle<()>>,
-}
-
-pub struct Device {
-    mac_address: usize,
-    state: DeviceState,
-    sessions: [Session; MAX_SESSION],
-    tx: mpsc::Sender<UciPacketPacket>,
-    country_code: [u8; 2],
-}
-
-impl Default for Session {
-    fn default() -> Self {
-        Session {
-            state: SessionState::SessionStateDeinit,
-            id: 0,
-            session_type: SessionType::FiraRangingSession,
-            sequence_number: 0,
-            ranging_interval: 0,
-            ranging_task: None,
-        }
-    }
-}
-
-impl Device {
-    pub fn new(device_handle: usize, tx: mpsc::Sender<UciPacketPacket>) -> Self {
-        Device {
-            mac_address: device_handle,
-            state: DeviceState::Ready,
-            sessions: Default::default(),
-            tx,
-            country_code: [0; 2],
-        }
-    }
-
-    pub fn add_session(&mut self, session: Session) -> Result<()> {
-        match self
-            .sessions
-            .iter_mut()
-            .filter(|session| session.state == SessionState::SessionStateDeinit)
-            .next()
-        {
-            Some(s) => {
-                *s = session;
-                Ok(())
-            }
-            None => Err(anyhow!("Maximum number of sessions reached")),
-        }
-    }
-
-    pub fn get_session(&self, session_id: u32) -> Result<&Session> {
-        self.sessions
-            .iter()
-            .find(|session| session.id == session_id)
-            .ok_or(anyhow!("Session not found"))
-    }
-
-    pub fn get_mut_session(&mut self, session_id: u32) -> Result<&mut Session> {
-        self.sessions
-            .iter_mut()
-            .find(|session| session.id == session_id)
-            .ok_or(anyhow!("Session not found"))
-    }
-}
 
 struct Connection {
     socket: TcpStream,
@@ -323,6 +248,8 @@ impl Pica {
         }
     }
 
+    // The fira norm specify to send a response, then reset, then
+    // send a notification once the reset is done
     async fn device_reset(
         &mut self,
         device_handle: usize,
@@ -331,13 +258,33 @@ impl Pica {
         let reset_config = cmd.get_reset_config();
         println!("[{}] Device Reset", device_handle);
         println!("  reset_config={}", reset_config);
-        let device = self.get_device(device_handle);
-        device.state = DeviceState::Ready;
-        Ok(device
+        {
+            let mut device = self.get_device(device_handle);
+            let status = match (reset_config) {
+                ResetConfig::UwbsReset => StatusCode::UciStatusOk,
+                _ => {
+                    // unreachable now but reserved for future use
+                    println!("Unknow reset config");
+                    StatusCode::UciStatusFailed
+                }
+            };
+            device.state = DeviceState::DeviceStateReady;
+            device
+                .tx
+                .send(DeviceResetRspBuilder { status }.build().into())
+                .await?;
+        }
+
+        self.devices.insert(
+            device_handle,
+            Device::new(device_handle, self.devices[&device_handle].tx.clone()),
+        );
+        Ok(self
+            .get_device(device_handle)
             .tx
             .send(
-                DeviceResetRspBuilder {
-                    status: StatusCode::UciStatusOk,
+                DeviceStatusNtfBuilder {
+                    device_state: DeviceState::DeviceStateReady,
                 }
                 .build()
                 .into(),
@@ -352,7 +299,7 @@ impl Pica {
     ) -> Result<()> {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
         let device = self.get_device(device_handle);
-        assert_eq!(device.state, DeviceState::Ready);
+        assert_eq!(device.state, DeviceState::DeviceStateReady);
         Ok(device
             .tx
             .send(
@@ -380,7 +327,7 @@ impl Pica {
 
     async fn set_config(&mut self, device_handle: usize, _cmd: SetConfigCmdPacket) -> Result<()> {
         let device = self.get_device(device_handle);
-        assert_eq!(device.state, DeviceState::Ready);
+        assert_eq!(device.state, DeviceState::DeviceStateReady);
         // TODO: Check if the config is supported
         // Currently we are saying we support everything
         Ok(device
@@ -448,7 +395,7 @@ impl Pica {
     ) -> Result<()> {
         // TODO: Set session app configuration regardings the incoming cmd
         let device = self.get_device(device_handle);
-        let session = device.get_mut_session(cmd.get_session_id())?;
+        let session = device.sessions.get_mut(&cmd.get_session_id()).unwrap();
         assert_eq!(session.state, SessionState::SessionStateInit);
         println!("session_set_app_config");
         session.state = SessionState::SessionStateIdle;
