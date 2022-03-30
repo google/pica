@@ -1,9 +1,10 @@
 use crate::uci_packets::{DeviceState, UciPacketPacket};
 use crate::uwb_subsystem::*;
+use bytes::Bytes;
 use std::collections::HashMap;
 
 use crate::position::Position;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tokio::sync::mpsc;
 
 use super::session::{Session, MAX_SESSION};
@@ -31,13 +32,33 @@ impl Device {
         }
     }
 
-    pub fn add_session(&mut self, session: Session) -> Result<()> {
+    pub fn add_session(&mut self, session: Session) -> StatusCode {
         if self.sessions.len() > MAX_SESSION {
-            return Err(anyhow!(
-                "Can't add session, maximum number of session reached"
-            ));
+            return StatusCode::UciStatusMaxSesssionsExceeded;
         }
-        self.sessions.insert(session.id, session);
+        match self.sessions.insert(session.id, session) {
+            Some(_) => StatusCode::UciStatusSesssionDuplicate,
+            None => StatusCode::UciStatusOk,
+        }
+    }
+
+    pub async fn send_session_status_notification(
+        &self,
+        session_id: u32,
+        session_state: SessionState,
+        reason_code: ReasonCode,
+    ) -> Result<()> {
+        self.tx
+            .send(
+                SessionStatusNtfBuilder {
+                    session_id,
+                    session_state,
+                    reason_code,
+                }
+                .build()
+                .into(),
+            )
+            .await?;
         Ok(())
     }
 }

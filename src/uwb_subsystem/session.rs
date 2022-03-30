@@ -44,26 +44,24 @@ impl Pica {
         session.state = SessionState::SessionStateInit;
         session.id = session_id;
         session.session_type = session_type;
-        let status = match device.add_session(session) {
-            Ok(_) => StatusCode::UciStatusOk,
-            Err(_) => StatusCode::UciStatusFailed,
-        };
+        let status = device.add_session(session);
+
         device
             .tx
             .send(SessionInitRspBuilder { status: status }.build().into())
             .await?;
-        Ok(device
-            .tx
-            .send(
-                SessionStatusNtfBuilder {
-                    session_id: cmd.get_session_id(),
-                    session_state: SessionState::SessionStateInit,
-                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
-                }
-                .build()
-                .into(),
-            )
-            .await?)
+
+        if status == StatusCode::UciStatusOk {
+            device
+                .send_session_status_notification(
+                    session_id,
+                    SessionState::SessionStateInit,
+                    ReasonCode::StateChangeWithSessionManagementCommands,
+                )
+                .await?;
+        }
+
+        Ok(())
     }
 
     pub async fn session_deinit(
@@ -76,24 +74,24 @@ impl Pica {
         println!("  session_id=0x{:x}", session_id);
 
         let device = self.get_device(device_handle);
-        let (status, notif) = match device.sessions.remove(&session_id) {
-            Some(_) => (
-                StatusCode::UciStatusOk,
-                Some(SessionStatusNtfBuilder {
-                    session_id,
-                    session_state: SessionState::SessionStateDeinit,
-                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
-                }),
-            ),
-            None => (StatusCode::UciStatusSesssionNotExist, None),
+        let status = match device.sessions.remove(&session_id) {
+            Some(_) => StatusCode::UciStatusOk,
+            None => StatusCode::UciStatusSesssionNotExist,
         };
-        let _ = device
+
+        device
             .tx
             .send(SessionDeinitRspBuilder { status }.build().into())
             .await?;
-        // Send session state change notification if required.
-        if let Some(notif) = notif {
-            device.tx.send(notif.build().into()).await?
+
+        if status == StatusCode::UciStatusOk {
+            device
+                .send_session_status_notification(
+                    session_id,
+                    SessionState::SessionStateDeinit,
+                    ReasonCode::StateChangeWithSessionManagementCommands,
+                )
+                .await?;
         }
         Ok(())
     }
@@ -103,13 +101,27 @@ impl Pica {
         device_handle: usize,
         cmd: SessionSetAppConfigCmdPacket,
     ) -> Result<()> {
+        let session_id = cmd.get_session_id();
         println!("[{}] Session set app config", device_handle);
+        println!("  session_id=0x{}", session_id);
 
-        // TODO: Set session app configuration regardings the incoming cmd
         let device = self.get_device(device_handle);
-        let session = device.sessions.get_mut(&cmd.get_session_id()).unwrap();
-        assert_eq!(session.state, SessionState::SessionStateInit);
-        session.state = SessionState::SessionStateIdle;
+        let (status, session_state) = match device.sessions.get_mut(&session_id) {
+            Some(session) if session.state == SessionState::SessionStateInit => {
+                // TODO: Set session app configuration regardings the incoming cmd
+                session.state = SessionState::SessionStateIdle;
+                (StatusCode::UciStatusOk, session.state)
+            }
+            Some(_) => (
+                StatusCode::UciStatusSesssionActive,
+                SessionState::SessionStateActive,
+            ),
+            None => (
+                StatusCode::UciStatusSesssionNotExist,
+                SessionState::SessionStateDeinit,
+            ),
+        };
+
         device
             .tx
             .send(
@@ -122,18 +134,16 @@ impl Pica {
             )
             .await?;
 
-        Ok(device
-            .tx
-            .send(
-                SessionStatusNtfBuilder {
-                    session_id: cmd.get_session_id(),
-                    session_state: session.state,
-                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
-                }
-                .build()
-                .into(),
-            )
-            .await?)
+        if status == StatusCode::UciStatusOk {
+            device
+                .send_session_status_notification(
+                    session_id,
+                    session_state,
+                    ReasonCode::StateChangeWithSessionManagementCommands,
+                )
+                .await?
+        }
+        Ok(())
     }
 
     pub async fn session_get_app_config(
