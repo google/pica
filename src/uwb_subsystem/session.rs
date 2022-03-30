@@ -33,12 +33,17 @@ impl Pica {
         device_handle: usize,
         cmd: SessionInitCmdPacket,
     ) -> Result<()> {
-        println!("session_init");
+        let session_id = cmd.get_session_id();
+        let session_type = cmd.get_session_type();
+        println!("[{}] Session init", device_handle);
+        println!("  session_id=0x{:x}", session_id);
+        println!("  session_type={}", session_type);
+
         let device = self.get_device(device_handle);
         let mut session = Session::default();
         session.state = SessionState::SessionStateInit;
-        session.id = cmd.get_session_id();
-        session.session_type = cmd.get_session_type();
+        session.id = session_id;
+        session.session_type = session_type;
         let status = match device.add_session(session) {
             Ok(_) => StatusCode::UciStatusOk,
             Err(_) => StatusCode::UciStatusFailed,
@@ -63,10 +68,34 @@ impl Pica {
 
     pub async fn session_deinit(
         &mut self,
-        _device_handle: usize,
-        _cmd: SessionDeinitCmdPacket,
+        device_handle: usize,
+        cmd: SessionDeinitCmdPacket,
     ) -> Result<()> {
-        todo!()
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session deinit", device_handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let device = self.get_device(device_handle);
+        let (status, notif) = match device.sessions.remove(&session_id) {
+            Some(_) => (
+                StatusCode::UciStatusOk,
+                Some(SessionStatusNtfBuilder {
+                    session_id,
+                    session_state: SessionState::SessionStateDeinit,
+                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
+                }),
+            ),
+            None => (StatusCode::UciStatusSesssionNotExist, None),
+        };
+        let _ = device
+            .tx
+            .send(SessionDeinitRspBuilder { status }.build().into())
+            .await?;
+        // Send session state change notification if required.
+        if let Some(notif) = notif {
+            device.tx.send(notif.build().into()).await?
+        }
+        Ok(())
     }
 
     pub async fn session_set_app_config(
@@ -74,11 +103,12 @@ impl Pica {
         device_handle: usize,
         cmd: SessionSetAppConfigCmdPacket,
     ) -> Result<()> {
+        println!("[{}] Session set app config", device_handle);
+
         // TODO: Set session app configuration regardings the incoming cmd
         let device = self.get_device(device_handle);
         let session = device.sessions.get_mut(&cmd.get_session_id()).unwrap();
         assert_eq!(session.state, SessionState::SessionStateInit);
-        println!("session_set_app_config");
         session.state = SessionState::SessionStateIdle;
         device
             .tx
@@ -97,7 +127,7 @@ impl Pica {
             .send(
                 SessionStatusNtfBuilder {
                     session_id: cmd.get_session_id(),
-                    session_state: SessionState::SessionStateIdle,
+                    session_state: session.state,
                     reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
                 }
                 .build()

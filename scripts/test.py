@@ -31,11 +31,20 @@ class Device:
         """Get the capability of the UWBS."""
         self._send_command(bytes([0x20, 0x3, 0x0, 0x0]))
 
+    def session_init(self, session_id: str = '0'):
+        """Initialize the session"""
+        self._send_command(bytes([0x21, 0x0, 0x0, 0x5]) +
+            int(session_id).to_bytes(4, byteorder='little') + bytes([0x0]))
+
+    def session_deinit(self, session_id: str = '0'):
+        """Deinitialize the session"""
+        self._send_command(bytes([0x21, 0x1, 0x0, 0x4]) + int(session_id).to_bytes(4, byteorder='little'))
+
     def session_get_count(self):
         """Retrieve number of UWB sessions in the UWBS."""
         self._send_command(bytes([0x21, 0x5, 0x0, 0x0]))
 
-    def session_get_state(self, session_id: str = 0):
+    def session_get_state(self, session_id: str = '0'):
         """Query the current state of the UWB session."""
         self._send_command(bytes([0x21, 0x6, 0x0, 0x4]) + int(session_id).to_bytes(4, byteorder='little'))
 
@@ -72,6 +81,8 @@ async def command_line(device: Device):
         'device_reset': device.device_reset,
         'get_device_info': device.get_device_info,
         'get_caps_info': device.get_caps_info,
+        'session_init': device.session_init,
+        'session_deinit': device.session_deinit,
         'session_get_count': device.session_get_count,
         'session_get_state': device.session_get_state,
     }

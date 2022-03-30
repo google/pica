@@ -134,6 +134,22 @@ impl Pica {
                 .await
                 .unwrap()
         });
+
+        // Send device status notification with state Ready as required
+        // by the UCI specification (section 6.1 Initialization of UWBS).
+        self.devices
+            .get(&device_handle)
+            .unwrap()
+            .tx
+            .send(
+                DeviceStatusNtfBuilder {
+                    device_state: DeviceState::DeviceStateReady,
+                }
+                .build()
+                .into(),
+            )
+            .await
+            .unwrap()
     }
 
     fn disconnect(&mut self, device_handle: usize) {
@@ -273,11 +289,15 @@ impl Pica {
         device_handle: usize,
         cmd: PicaInitDeviceCmdPacket,
     ) -> Result<()> {
-        let mut device = self.get_device(device_handle);
         let mac_address = cmd.get_mac_address();
+        let position = cmd.get_position();
+        println!("[_] Init device");
+        println!("  mac_address=0x{:x}", mac_address);
+        println!("  position={:?}", position);
 
+        let device = self.get_device(device_handle);
         device.mac_address = mac_address as usize;
-        device.position = Position::from(cmd.get_position());
+        device.position = Position::from(position);
         Ok(())
     }
 
@@ -293,6 +313,10 @@ impl Pica {
 
     async fn create_beacon(&mut self, cmd: PicaCreateBeaconCmdPacket) -> Result<()> {
         let mac_address = cmd.get_mac_address();
+        let position = cmd.get_position();
+        println!("[_] Create beacon");
+        println!("  mac_address=0x{:x}", mac_address);
+        println!("  position={:?}", position);
 
         if self.beacons.contains_key(&mac_address) {
             Err(anyhow!("Beacon already exists"))
@@ -301,7 +325,7 @@ impl Pica {
                 .insert(
                     mac_address,
                     Beacon {
-                        position: Position::from(cmd.get_position()),
+                        position: Position::from(position),
                         mac_address,
                     },
                 )
@@ -311,8 +335,14 @@ impl Pica {
     }
 
     async fn set_beacon_position(&mut self, cmd: PicaSetBeaconPositionCmdPacket) -> Result<()> {
-        if let Some(b) = self.beacons.get_mut(&cmd.get_mac_address()) {
-            b.position = Position::from(cmd.get_position());
+        let mac_address = cmd.get_mac_address();
+        let position = cmd.get_position();
+        println!("[_] Set beacon position");
+        println!("  mac_address=0x{:x}", mac_address);
+        println!("  position={:?}", position);
+
+        if let Some(b) = self.beacons.get_mut(&mac_address) {
+            b.position = Position::from(position);
             Ok(())
         } else {
             Err(anyhow!("Beacon not found"))
@@ -321,6 +351,8 @@ impl Pica {
 
     async fn destroy_beacon(&mut self, cmd: PicaDestroyBeaconCmdPacket) -> Result<()> {
         let mac_address = cmd.get_mac_address();
+        println!("[_] Destroy beacon");
+        println!("  mac_address=0x{:x}", mac_address);
 
         if self.beacons.remove(&mac_address).is_some() {
             Ok(())
