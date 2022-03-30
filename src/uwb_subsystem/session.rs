@@ -1,4 +1,6 @@
+use std::time::Duration;
 use tokio::task::JoinHandle;
+use tokio::time;
 
 use crate::uci_packets::{SessionState, SessionType};
 use crate::uwb_subsystem::*;
@@ -23,6 +25,38 @@ impl Default for Session {
             sequence_number: 0,
             ranging_interval: 0,
             ranging_task: None,
+        }
+    }
+}
+
+impl Session {
+    fn start_ranging(&mut self, device_handle: usize, tx: mpsc::Sender<PicaCommand>) {
+        assert!(self.ranging_task.is_none());
+        let session_id = self.id;
+        let ranging_interval = self.ranging_interval as u64;
+        self.ranging_task = Some(tokio::spawn(async move {
+            loop {
+                time::sleep(Duration::from_millis(ranging_interval as u64)).await;
+                tx.send(PicaCommand::Ranging(device_handle, session_id)).await;
+            }
+        }))
+    }
+
+    fn stop_ranging(&mut self) {
+        if let Some(handle) = &self.ranging_task {
+            handle.abort();
+            self.ranging_task = None;
+        }
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Make sure to abort the ranging task when dropping the session,
+        // the default behaviour when dropping a task handle is to detach
+        // the task, which is undesirable.
+        if let Some(handle) = &self.ranging_task {
+            handle.abort();
         }
     }
 }
@@ -208,9 +242,86 @@ impl Pica {
 
     pub async fn session_update_controller_multicast_list(
         &mut self,
-        _device_handle: usize,
-        _cmd: SessionUpdateControllerMulticastListCmdPacket,
+        device_handle: usize,
+        cmd: SessionUpdateControllerMulticastListCmdPacket,
     ) -> Result<()> {
-        todo!()
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session get state", device_handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        Ok(())
+    }
+
+    pub async fn range_start(
+        &mut self,
+        device_handle: usize,
+        cmd: RangeStartCmdPacket,
+    ) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Range start", device_handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let pica_tx = self.tx.clone();
+        let device = self.get_device(device_handle);
+        let status = match device.sessions.get_mut(&session_id) {
+            Some(session) if session.state == SessionState::SessionStateIdle => {
+                session.start_ranging(device_handle, pica_tx);
+                session.state = SessionState::SessionStateActive;
+                StatusCode::UciStatusOk
+            },
+            Some(session) if session.state == SessionState::SessionStateActive =>
+                StatusCode::UciStatusSesssionActive,
+            Some(_) => StatusCode::UciStatusFailed,
+            None => StatusCode::UciStatusSesssionNotExist,
+        };
+
+        device.tx.send(RangeStartRspBuilder { status }.build().into()).await?;
+
+        if status == StatusCode::UciStatusOk {
+            device.send_session_status_notification(session_id, SessionState::SessionStateActive, ReasonCode::StateChangeWithSessionManagementCommands).await?;
+            // TODO when one session becomes active
+            device.send_device_status_notification(DeviceState::DeviceStateActive).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn range_stop(&mut self, device_handle: usize, cmd: RangeStopCmdPacket) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Range stop", device_handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let device = self.get_device(device_handle);
+        let status = match device.sessions.get_mut(&session_id) {
+            Some(session) if session.state == SessionState::SessionStateActive => {
+                session.stop_ranging();
+                session.state = SessionState::SessionStateIdle;
+                StatusCode::UciStatusOk
+            },
+            Some(_) => StatusCode::UciStatusFailed,
+            None => StatusCode::UciStatusSesssionNotExist,
+        };
+
+        device.tx.send(RangeStopRspBuilder { status }.build().into()).await?;
+
+        if status == StatusCode::UciStatusOk {
+            device.send_session_status_notification(session_id, SessionState::SessionStateIdle, ReasonCode::StateChangeWithSessionManagementCommands).await?;
+            // TODO when all sessions becomes idle
+            device.send_device_status_notification(DeviceState::DeviceStateReady).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn range_get_ranging_count(
+        &mut self,
+        device_handle: usize,
+        cmd: RangeGetRangingCountCmdPacket,
+    ) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Get ranging count", device_handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        Ok(())
     }
 }

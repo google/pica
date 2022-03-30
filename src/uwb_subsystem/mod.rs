@@ -55,7 +55,7 @@ pub enum PicaCommand {
     // Disconnect the selected device.
     Disconnect(usize),
     // Execute ranging command for selected device and session.
-    Ranging(usize, usize),
+    Ranging(usize, u32),
     // Execute UCI command received for selected device.
     Command(usize, UciCommandPacket),
 }
@@ -157,7 +157,7 @@ impl Pica {
         self.devices.remove(&device_handle);
     }
 
-    async fn ranging(&mut self, _device_handle: usize, _session_id: usize) {
+    async fn ranging(&mut self, _device_handle: usize, _session_id: u32) {
         todo!()
     }
 
@@ -262,26 +262,6 @@ impl Pica {
                 None => (),
             }
         }
-    }
-
-    async fn range_start(
-        &mut self,
-        _device_handle: usize,
-        _cmd: RangeStartCmdPacket,
-    ) -> Result<()> {
-        todo!()
-    }
-
-    async fn range_stop(&mut self, _device_handle: usize, _cmd: RangeStopCmdPacket) -> Result<()> {
-        todo!()
-    }
-
-    async fn range_get_ranging_count(
-        &mut self,
-        _device_handle: usize,
-        _cmd: RangeGetRangingCountCmdPacket,
-    ) -> Result<()> {
-        todo!()
     }
 
     async fn init_device(

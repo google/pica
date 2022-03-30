@@ -42,6 +42,22 @@ impl Device {
         }
     }
 
+    pub async fn send_device_status_notification(
+        &self,
+        device_state: DeviceState
+    ) -> Result<()> {
+        self.tx
+            .send(
+                DeviceStatusNtfBuilder {
+                    device_state,
+                }
+                .build()
+                .into(),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn send_session_status_notification(
         &self,
         session_id: u32,
