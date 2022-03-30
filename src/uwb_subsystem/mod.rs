@@ -302,7 +302,8 @@ impl Pica {
         if self.beacons.contains_key(&mac_address) {
             Err(anyhow!("Beacon already exists"))
         } else {
-            self.beacons
+            assert!(self
+                .beacons
                 .insert(
                     mac_address,
                     Beacon {
@@ -310,7 +311,7 @@ impl Pica {
                         mac_address,
                     },
                 )
-                .unwrap();
+                .is_none());
             Ok(())
         }
     }
