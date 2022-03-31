@@ -1,10 +1,10 @@
 use crate::uci_packets::{AppConfigTlvType, MacAddressIndicator, SessionState, SessionType};
 use anyhow::Result;
-use num_derive::FromPrimitive;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
 
+use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 
 use crate::uwb_subsystem::*;
@@ -26,9 +26,17 @@ pub enum DeviceRole {
     Initiator,
 }
 
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive)]
+pub enum MacAddressMode {
+    AddressMode_0,
+    AddressMode_1,
+    AddressMode_2,
+}
+
 #[derive(Clone)]
 pub struct AppConfig {
     raw: HashMap<u8, Vec<u8>>,
+    pub mac_address_mode: MacAddressMode,
     pub device_type: Option<DeviceType>,
     pub ranging_interval: u32,
     pub slot_duration: u16,
@@ -53,6 +61,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
             raw: HashMap::new(),
+            mac_address_mode: MacAddressMode::AddressMode_0,
             device_role: None,
             device_type: None,
             ranging_interval: DEFAULT_RANGING_INTERVAL,
@@ -101,6 +110,24 @@ impl AppConfig {
             }
         };
         Ok(())
+    }
+
+    fn get_config(&self, id: AppConfigTlvType) -> Option<Vec<u8>> {
+        Some(match id {
+            AppConfigTlvType::MacAddressMode => [self.mac_address_mode.to_u8().unwrap()].into(),
+            AppConfigTlvType::RangingInterval => self.ranging_interval.to_le_bytes().into(),
+            AppConfigTlvType::SlotDuration => self.slot_duration.to_le_bytes().into(),
+            AppConfigTlvType::ChannelNumber => [self.channel_number].into(),
+            AppConfigTlvType::DstMacAddress => {
+                self.dst_mac_addresses
+                    .iter()
+                    .fold(Vec::new(), |mut value, mac_address| {
+                        value.extend(mac_address.to_le_bytes().into_iter());
+                        value
+                    })
+            }
+            _ => return self.raw.get(&id.to_u8().unwrap()).map(|v| v.clone()),
+        })
     }
 
     fn extend(&mut self, configs: &Vec<AppConfigParameter>) -> Vec<AppConfigStatus> {
@@ -313,10 +340,52 @@ impl Pica {
 
     pub async fn session_get_app_config(
         &mut self,
-        _device_handle: usize,
-        _cmd: SessionGetAppConfigCmdPacket,
+        device_handle: usize,
+        cmd: SessionGetAppConfigCmdPacket,
     ) -> Result<()> {
-        todo!()
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session get app config", device_handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let device = self.get_device(device_handle);
+        let (status, parameters) = match device.get_session(session_id) {
+            Some(session) => {
+                let (valid_parameters, invalid_parameters) = cmd.get_parameters().iter().fold(
+                    (Vec::new(), Vec::new()),
+                    |(mut valid_parameters, mut invalid_parameters), config_id| {
+                        match AppConfigTlvType::from_u8(*config_id)
+                            .and_then(|id| session.app_config.get_config(id))
+                        {
+                            Some(value) => valid_parameters.push(AppConfigParameter {
+                                id: *config_id,
+                                value,
+                            }),
+                            None => invalid_parameters.push(AppConfigParameter {
+                                id: *config_id,
+                                value: Vec::new(),
+                            }),
+                        }
+                        (valid_parameters, invalid_parameters)
+                    },
+                );
+
+                if invalid_parameters.is_empty() {
+                    (StatusCode::UciStatusOk, valid_parameters)
+                } else {
+                    (StatusCode::UciStatusFailed, invalid_parameters)
+                }
+            }
+            None => (StatusCode::UciStatusSesssionNotExist, Vec::new()),
+        };
+
+        Ok(device
+            .tx
+            .send(
+                SessionGetAppConfigRspBuilder { status, parameters }
+                    .build()
+                    .into(),
+            )
+            .await?)
     }
 
     pub async fn session_get_count(

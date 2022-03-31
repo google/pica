@@ -363,7 +363,9 @@ impl Pica {
                     AndroidCommandChild::AndroidSetCountryCodeCmd(cmd) => {
                         self.set_country_code(device_handle, cmd).await
                     }
-                    AndroidCommandChild::AndroidGetPowerStatsCmd(_cmd) => todo!(),
+                    AndroidCommandChild::AndroidGetPowerStatsCmd(cmd) => {
+                        self.get_power_stats(device_handle, cmd).await
+                    }
                     AndroidCommandChild::None => anyhow::bail!("Unsupported ranging command"),
                 }
             }
@@ -586,16 +588,46 @@ impl Pica {
     async fn set_country_code(
         &mut self,
         device_handle: usize,
-        command: AndroidSetCountryCodeCmdPacket,
+        cmd: AndroidSetCountryCodeCmdPacket,
     ) -> Result<()> {
+        let country_code = *cmd.get_country_code();
+        println!("[{}] Set country code", device_handle);
+        println!("  country_code={},{}", country_code[0], country_code[1]);
+
         let device = self.get_device_mut(device_handle);
-        device.country_code = *command.get_country_code();
-        println!("android command: set_country_code");
+        device.country_code = country_code;
         Ok(device
             .tx
             .send(
                 AndroidSetCountryCodeRspBuilder {
                     status: StatusCode::UciStatusOk,
+                }
+                .build()
+                .into(),
+            )
+            .await?)
+    }
+
+    async fn get_power_stats(
+        &mut self,
+        device_handle: usize,
+        _cmd: AndroidGetPowerStatsCmdPacket,
+    ) -> Result<()> {
+        println!("[{}] Get power stats", device_handle);
+
+        // TODO
+        let device = self.get_device(device_handle);
+        Ok(device
+            .tx
+            .send(
+                AndroidGetPowerStatsRspBuilder {
+                    stats: PowerStats {
+                        status: StatusCode::UciStatusOk,
+                        idle_time_ms: 0,
+                        tx_time_ms: 0,
+                        rx_time_ms: 0,
+                        total_wake_count: 0,
+                    },
                 }
                 .build()
                 .into(),
