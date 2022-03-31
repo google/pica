@@ -521,16 +521,16 @@ test SessionStatusNtf {
     "\x61\x02\x00\x06\x01\x02\x03\x04\x02\x21",
 }
 
-struct AppConfigTlv {
-    cfg_id: AppConfigTlvType,
-    _count_(v): 8,
-    v: 8[],
+struct AppConfigParameter {
+    id: 8,
+    _count_(value): 8,
+    value: 8[],
 }
 
 packet SessionSetAppConfigCmd : SessionCommand (opcode = 0x3) { //SESSION_SET_APP_CONFIG
     session_id: 32,
-    _count_(tlvs): 8,
-    tlvs: AppConfigTlv[]
+    _count_(parameters): 8,
+    parameters: AppConfigParameter[]
 }
 
 test SessionSetAppConfigCmd {
@@ -538,14 +538,14 @@ test SessionSetAppConfigCmd {
 }
 
 struct AppConfigStatus {
-    cfg_id: AppConfigTlvType,
+    config_id: 8,
     status: StatusCode,
 }
 
 packet SessionSetAppConfigRsp : SessionResponse (opcode = 0x3) { //SESSION_SET_APP_CONFIG
     status: StatusCode,
-    _count_(cfg_status): 8,
-    cfg_status: AppConfigStatus[],
+    _count_(parameters): 8,
+    parameters: AppConfigStatus[],
 }
 
 test SessionSetAppConfigRsp {
@@ -554,8 +554,8 @@ test SessionSetAppConfigRsp {
 
 packet SessionGetAppConfigCmd : SessionCommand (opcode = 0x4) { //SESSION_GET_APP_CONFIG
     session_id: 32,
-    _count_(app_cfg): 8,
-    app_cfg: 8[], // AppConfigTlvType (Infra does not allow array of enums)
+    _count_(parameters): 8,
+    parameters: 8[],
 }
 
 test SessionGetAppConfigCmd {
@@ -564,8 +564,8 @@ test SessionGetAppConfigCmd {
 
 packet SessionGetAppConfigRsp : SessionResponse (opcode = 0x4) { //SESSION_GET_APP_CONFIG
     status: StatusCode,
-    _count_(tlvs): 8,
-    tlvs: AppConfigTlv[],
+    _count_(parameters): 8,
+    parameters: AppConfigParameter[],
 }
 
 test SessionGetAppConfigRsp {

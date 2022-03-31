@@ -25,7 +25,7 @@ pub struct Device {
     pub state: DeviceState,
     sessions: HashMap<u32, Session>,
     pub tx: mpsc::Sender<UciPacketPacket>,
-    pub config: Vec<DeviceParameter>,
+    pub config: HashMap<u8, Vec<u8>>,
     pub country_code: [u8; 2],
 }
 
@@ -37,7 +37,7 @@ impl Device {
             state: DeviceState::DeviceStateReady,
             sessions: Default::default(),
             tx,
-            config: Vec::new(),
+            config: HashMap::new(),
             country_code: Default::default(),
         }
     }
@@ -193,6 +193,7 @@ impl Pica {
         device_handle: usize,
         cmd: SetConfigCmdPacket,
     ) -> Result<()> {
+        println!("[{}] SetConfig", device_handle);
         let device = self.get_device_mut(device_handle);
         assert_eq!(device.state, DeviceState::DeviceStateReady); // UCI 6.3
         assert_eq!(
@@ -200,13 +201,15 @@ impl Pica {
             PacketBoundaryFlag::Complete,
             "Boundary flag is true, implement fragmentation"
         );
-        println!("[{}] SetConfig", device_handle);
+
         let (valid_parameters, invalid_config_status) = cmd.get_parameters().iter().fold(
-            (Vec::new(), Vec::new()),
+            (HashMap::new(), Vec::new()),
             |(mut valid_parameters, mut invalid_config_status), param| {
                 let id = param.id;
                 match DeviceConfigId::from_u8(id) {
-                    Some(_) => valid_parameters.push(param.clone()),
+                    Some(_) => {
+                        valid_parameters.insert(param.id, param.value.clone());
+                    }
                     None => invalid_config_status.push(DeviceConfigStatus {
                         parameter_id: id,
                         status: StatusCode::UciStatusInvalidParam,
@@ -251,8 +254,11 @@ impl Pica {
                 // If the status code is ok, return the params
                 // If there is at least one invalid param, return the list of invalid params
                 // If the ID is not present in our config, return the Type with length = 0
-                match device.config.iter().find(|param| param.id == *id) {
-                    Some(param) => valid_parameters.push(param.clone()),
+                match device.config.get(id) {
+                    Some(value) => valid_parameters.push(DeviceParameter {
+                        id: *id,
+                        value: value.clone(),
+                    }),
                     None => invalid_parameters.push(DeviceParameter {
                         id: *id,
                         value: Vec::new(),

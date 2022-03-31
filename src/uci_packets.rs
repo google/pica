@@ -1323,76 +1323,69 @@ impl DeviceConfigStatus {
 }
 
 #[derive(Debug, Clone)]
-pub struct AppConfigTlv {
-    pub cfg_id: AppConfigTlvType,
-    pub v: Vec<u8>,
+pub struct AppConfigParameter {
+    pub id: u8,
+    pub value: Vec<u8>,
 }
-impl AppConfigTlv {
+impl AppConfigParameter {
     fn conforms(bytes: &[u8]) -> bool {
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 1 {
             return Err(Error::InvalidLengthError {
-                obj: "AppConfigTlv".to_string(),
-                field: "cfg_id".to_string(),
+                obj: "AppConfigParameter".to_string(),
+                field: "id".to_string(),
                 wanted: 1,
                 got: bytes.len(),
             });
         }
-        let cfg_id = u8::from_le_bytes([bytes[0]]);
-        let cfg_id =
-            AppConfigTlvType::from_u8(cfg_id).ok_or_else(|| Error::InvalidEnumValueError {
-                obj: "AppConfigTlv".to_string(),
-                field: "cfg_id".to_string(),
-                value: cfg_id as u64,
-                type_: "AppConfigTlvType".to_string(),
-            })?;
+        let id = u8::from_le_bytes([bytes[0]]);
         if bytes.len() < 2 {
             return Err(Error::InvalidLengthError {
-                obj: "AppConfigTlv".to_string(),
-                field: "v_count".to_string(),
+                obj: "AppConfigParameter".to_string(),
+                field: "value_count".to_string(),
                 wanted: 2,
                 got: bytes.len(),
             });
         }
-        let v_count = u8::from_le_bytes([bytes[1]]);
-        let want_ = 2 + ((v_count as usize) * 1);
+        let value_count = u8::from_le_bytes([bytes[1]]);
+        let want_ = 2 + ((value_count as usize) * 1);
         if bytes.len() < want_ {
             return Err(Error::InvalidLengthError {
-                obj: "AppConfigTlv".to_string(),
-                field: "v".to_string(),
+                obj: "AppConfigParameter".to_string(),
+                field: "value".to_string(),
                 wanted: want_,
                 got: bytes.len(),
             });
         }
-        let v: Vec<u8> = bytes[2..2 + ((v_count as usize) * 1)]
+        let value: Vec<u8> = bytes[2..2 + ((value_count as usize) * 1)]
             .to_vec()
             .chunks_exact(1)
             .into_iter()
             .map(|i| u8::from_le_bytes([i[0]]))
             .collect();
-        Ok(Self { cfg_id, v })
+        Ok(Self { id, value })
     }
     fn write_to(&self, buffer: &mut [u8]) {
-        let cfg_id = self.cfg_id.to_u8().unwrap();
-        buffer[0..1].copy_from_slice(&cfg_id.to_le_bytes()[0..1]);
-        buffer[1..2].copy_from_slice(&(self.v.len() as u8).to_le_bytes());
-        for (i, e) in self.v.iter().enumerate() {
+        let id = self.id;
+        buffer[0..1].copy_from_slice(&id.to_le_bytes()[0..1]);
+        buffer[1..2].copy_from_slice(&(self.value.len() as u8).to_le_bytes());
+        for (i, e) in self.value.iter().enumerate() {
             buffer[2 + i..2 + i + 1].copy_from_slice(&e.to_le_bytes())
         }
     }
     fn get_total_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 2;
-        let ret = ret + (self.v.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
+        let ret = ret + (self.value.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
         ret
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct AppConfigStatus {
-    pub cfg_id: AppConfigTlvType,
+    pub config_id: u8,
     pub status: StatusCode,
 }
 impl AppConfigStatus {
@@ -1403,19 +1396,12 @@ impl AppConfigStatus {
         if bytes.len() < 1 {
             return Err(Error::InvalidLengthError {
                 obj: "AppConfigStatus".to_string(),
-                field: "cfg_id".to_string(),
+                field: "config_id".to_string(),
                 wanted: 1,
                 got: bytes.len(),
             });
         }
-        let cfg_id = u8::from_le_bytes([bytes[0]]);
-        let cfg_id =
-            AppConfigTlvType::from_u8(cfg_id).ok_or_else(|| Error::InvalidEnumValueError {
-                obj: "AppConfigStatus".to_string(),
-                field: "cfg_id".to_string(),
-                value: cfg_id as u64,
-                type_: "AppConfigTlvType".to_string(),
-            })?;
+        let config_id = u8::from_le_bytes([bytes[0]]);
         if bytes.len() < 2 {
             return Err(Error::InvalidLengthError {
                 obj: "AppConfigStatus".to_string(),
@@ -1431,11 +1417,11 @@ impl AppConfigStatus {
             value: status as u64,
             type_: "StatusCode".to_string(),
         })?;
-        Ok(Self { cfg_id, status })
+        Ok(Self { config_id, status })
     }
     fn write_to(&self, buffer: &mut [u8]) {
-        let cfg_id = self.cfg_id.to_u8().unwrap();
-        buffer[0..1].copy_from_slice(&cfg_id.to_le_bytes()[0..1]);
+        let config_id = self.config_id;
+        buffer[0..1].copy_from_slice(&config_id.to_le_bytes()[0..1]);
         let status = self.status.to_u8().unwrap();
         buffer[1..2].copy_from_slice(&status.to_le_bytes()[0..1]);
     }
@@ -9150,7 +9136,7 @@ session_status_ntf_builder_tests! { session_status_ntf_builder_test_00: b"\x61\x
 #[derive(Debug)]
 struct SessionSetAppConfigCmdData {
     session_id: u32,
-    tlvs: Vec<AppConfigTlv>,
+    parameters: Vec<AppConfigParameter>,
 }
 #[derive(Debug, Clone)]
 pub struct SessionSetAppConfigCmdPacket {
@@ -9162,7 +9148,7 @@ pub struct SessionSetAppConfigCmdPacket {
 #[derive(Debug)]
 pub struct SessionSetAppConfigCmdBuilder {
     pub session_id: u32,
-    pub tlvs: Vec<AppConfigTlv>,
+    pub parameters: Vec<AppConfigParameter>,
 }
 impl SessionSetAppConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
@@ -9181,33 +9167,36 @@ impl SessionSetAppConfigCmdData {
         if bytes.len() < 9 {
             return Err(Error::InvalidLengthError {
                 obj: "SessionSetAppConfigCmd".to_string(),
-                field: "tlvs_count".to_string(),
+                field: "parameters_count".to_string(),
                 wanted: 9,
                 got: bytes.len(),
             });
         }
-        let tlvs_count = u8::from_le_bytes([bytes[8]]);
-        let mut tlvs: Vec<AppConfigTlv> = Vec::new();
+        let parameters_count = u8::from_le_bytes([bytes[8]]);
+        let mut parameters: Vec<AppConfigParameter> = Vec::new();
         let mut parsable_ = &bytes[9..];
-        let count_ = tlvs_count as usize;
+        let count_ = parameters_count as usize;
         for _ in 0..count_ {
-            match AppConfigTlv::parse(&parsable_) {
+            match AppConfigParameter::parse(&parsable_) {
                 Ok(parsed) => {
                     parsable_ = &parsable_[parsed.get_total_size()..];
-                    tlvs.push(parsed);
+                    parameters.push(parsed);
                 }
                 Err(Error::ImpossibleStructError) => break,
                 Err(e) => return Err(e),
             }
         }
-        Ok(Self { session_id, tlvs })
+        Ok(Self {
+            session_id,
+            parameters,
+        })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         let session_id = self.session_id;
         buffer[4..8].copy_from_slice(&session_id.to_le_bytes()[0..4]);
-        buffer[8..9].copy_from_slice(&(self.tlvs.len() as u8).to_le_bytes());
+        buffer[8..9].copy_from_slice(&(self.parameters.len() as u8).to_le_bytes());
         let mut vec_buffer_ = &mut buffer[9..];
-        for e_ in &self.tlvs {
+        for e_ in &self.parameters {
             e_.write_to(&mut vec_buffer_[0..e_.get_total_size()]);
             vec_buffer_ = &mut vec_buffer_[e_.get_total_size()..];
         }
@@ -9218,7 +9207,11 @@ impl SessionSetAppConfigCmdData {
     fn get_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 5;
-        let ret = ret + self.tlvs.iter().fold(0, |acc, x| acc + x.get_total_size());
+        let ret = ret
+            + self
+                .parameters
+                .iter()
+                .fold(0, |acc, x| acc + x.get_total_size());
         ret
     }
 }
@@ -9286,8 +9279,8 @@ impl SessionSetAppConfigCmdPacket {
     pub fn get_session_id(&self) -> u32 {
         self.session_set_app_config_cmd.as_ref().session_id
     }
-    pub fn get_tlvs(&self) -> &Vec<AppConfigTlv> {
-        &self.session_set_app_config_cmd.as_ref().tlvs
+    pub fn get_parameters(&self) -> &Vec<AppConfigParameter> {
+        &self.session_set_app_config_cmd.as_ref().parameters
     }
 }
 impl Into<UciPacketPacket> for SessionSetAppConfigCmdPacket {
@@ -9309,7 +9302,7 @@ impl SessionSetAppConfigCmdBuilder {
     pub fn build(self) -> SessionSetAppConfigCmdPacket {
         let session_set_app_config_cmd = Arc::new(SessionSetAppConfigCmdData {
             session_id: self.session_id,
-            tlvs: self.tlvs,
+            parameters: self.parameters,
         });
         let session_command = Arc::new(SessionCommandData {
             child: SessionCommandDataChild::SessionSetAppConfigCmd(session_set_app_config_cmd),
@@ -9348,13 +9341,13 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionSetAppConfigCmd(packet) => {let rebuilder = SessionSetAppConfigCmdBuilder {session_id : packet.get_session_id(),tlvs : packet.get_tlvs().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_set_app_config_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionSetAppConfigCmd(packet) => {let rebuilder = SessionSetAppConfigCmdBuilder {session_id : packet.get_session_id(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_set_app_config_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_set_app_config_cmd_builder_tests! { session_set_app_config_cmd_builder_test_00: b"\x21\x03\x00\x05\x01\x02\x03\x04\x00",}
 
 #[derive(Debug)]
 struct SessionSetAppConfigRspData {
     status: StatusCode,
-    cfg_status: Vec<AppConfigStatus>,
+    parameters: Vec<AppConfigStatus>,
 }
 #[derive(Debug, Clone)]
 pub struct SessionSetAppConfigRspPacket {
@@ -9366,7 +9359,7 @@ pub struct SessionSetAppConfigRspPacket {
 #[derive(Debug)]
 pub struct SessionSetAppConfigRspBuilder {
     pub status: StatusCode,
-    pub cfg_status: Vec<AppConfigStatus>,
+    pub parameters: Vec<AppConfigStatus>,
 }
 impl SessionSetAppConfigRspData {
     fn conforms(bytes: &[u8]) -> bool {
@@ -9391,42 +9384,42 @@ impl SessionSetAppConfigRspData {
         if bytes.len() < 6 {
             return Err(Error::InvalidLengthError {
                 obj: "SessionSetAppConfigRsp".to_string(),
-                field: "cfg_status_count".to_string(),
+                field: "parameters_count".to_string(),
                 wanted: 6,
                 got: bytes.len(),
             });
         }
-        let cfg_status_count = u8::from_le_bytes([bytes[5]]);
-        let want_ = 6 + ((cfg_status_count as usize) * 2);
+        let parameters_count = u8::from_le_bytes([bytes[5]]);
+        let want_ = 6 + ((parameters_count as usize) * 2);
         if bytes.len() < want_ {
             return Err(Error::InvalidLengthError {
                 obj: "SessionSetAppConfigRsp".to_string(),
-                field: "cfg_status".to_string(),
+                field: "parameters".to_string(),
                 wanted: want_,
                 got: bytes.len(),
             });
         }
-        let mut cfg_status: Vec<AppConfigStatus> = Vec::new();
+        let mut parameters: Vec<AppConfigStatus> = Vec::new();
         let mut parsable_ = &bytes[6..];
-        let count_ = cfg_status_count as usize;
+        let count_ = parameters_count as usize;
         for _ in 0..count_ {
             match AppConfigStatus::parse(&parsable_) {
                 Ok(parsed) => {
                     parsable_ = &parsable_[parsed.get_total_size()..];
-                    cfg_status.push(parsed);
+                    parameters.push(parsed);
                 }
                 Err(Error::ImpossibleStructError) => break,
                 Err(e) => return Err(e),
             }
         }
-        Ok(Self { status, cfg_status })
+        Ok(Self { status, parameters })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         let status = self.status.to_u8().unwrap();
         buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
-        buffer[5..6].copy_from_slice(&(self.cfg_status.len() as u8).to_le_bytes());
+        buffer[5..6].copy_from_slice(&(self.parameters.len() as u8).to_le_bytes());
         let mut vec_buffer_ = &mut buffer[6..];
-        for e_ in &self.cfg_status {
+        for e_ in &self.parameters {
             e_.write_to(&mut vec_buffer_[0..e_.get_total_size()]);
             vec_buffer_ = &mut vec_buffer_[e_.get_total_size()..];
         }
@@ -9437,7 +9430,7 @@ impl SessionSetAppConfigRspData {
     fn get_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 2;
-        let ret = ret + (self.cfg_status.len() * ((/* Bits: */16 + /* Dynamic: */ 0) / 8));
+        let ret = ret + (self.parameters.len() * ((/* Bits: */16 + /* Dynamic: */ 0) / 8));
         ret
     }
 }
@@ -9505,8 +9498,8 @@ impl SessionSetAppConfigRspPacket {
     pub fn get_status(&self) -> StatusCode {
         self.session_set_app_config_rsp.as_ref().status
     }
-    pub fn get_cfg_status(&self) -> &Vec<AppConfigStatus> {
-        &self.session_set_app_config_rsp.as_ref().cfg_status
+    pub fn get_parameters(&self) -> &Vec<AppConfigStatus> {
+        &self.session_set_app_config_rsp.as_ref().parameters
     }
 }
 impl Into<UciPacketPacket> for SessionSetAppConfigRspPacket {
@@ -9528,7 +9521,7 @@ impl SessionSetAppConfigRspBuilder {
     pub fn build(self) -> SessionSetAppConfigRspPacket {
         let session_set_app_config_rsp = Arc::new(SessionSetAppConfigRspData {
             status: self.status,
-            cfg_status: self.cfg_status,
+            parameters: self.parameters,
         });
         let session_response = Arc::new(SessionResponseData {
             child: SessionResponseDataChild::SessionSetAppConfigRsp(session_set_app_config_rsp),
@@ -9567,13 +9560,13 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionSetAppConfigRsp(packet) => {let rebuilder = SessionSetAppConfigRspBuilder {status : packet.get_status(),cfg_status : packet.get_cfg_status().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_set_app_config_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionSetAppConfigRsp(packet) => {let rebuilder = SessionSetAppConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_set_app_config_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_set_app_config_rsp_builder_tests! { session_set_app_config_rsp_builder_test_00: b"\x41\x03\x00\x04\x01\x01\x01\x00",}
 
 #[derive(Debug)]
 struct SessionGetAppConfigCmdData {
     session_id: u32,
-    app_cfg: Vec<u8>,
+    parameters: Vec<u8>,
 }
 #[derive(Debug, Clone)]
 pub struct SessionGetAppConfigCmdPacket {
@@ -9585,7 +9578,7 @@ pub struct SessionGetAppConfigCmdPacket {
 #[derive(Debug)]
 pub struct SessionGetAppConfigCmdBuilder {
     pub session_id: u32,
-    pub app_cfg: Vec<u8>,
+    pub parameters: Vec<u8>,
 }
 impl SessionGetAppConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
@@ -9604,22 +9597,22 @@ impl SessionGetAppConfigCmdData {
         if bytes.len() < 9 {
             return Err(Error::InvalidLengthError {
                 obj: "SessionGetAppConfigCmd".to_string(),
-                field: "app_cfg_count".to_string(),
+                field: "parameters_count".to_string(),
                 wanted: 9,
                 got: bytes.len(),
             });
         }
-        let app_cfg_count = u8::from_le_bytes([bytes[8]]);
-        let want_ = 9 + ((app_cfg_count as usize) * 1);
+        let parameters_count = u8::from_le_bytes([bytes[8]]);
+        let want_ = 9 + ((parameters_count as usize) * 1);
         if bytes.len() < want_ {
             return Err(Error::InvalidLengthError {
                 obj: "SessionGetAppConfigCmd".to_string(),
-                field: "app_cfg".to_string(),
+                field: "parameters".to_string(),
                 wanted: want_,
                 got: bytes.len(),
             });
         }
-        let app_cfg: Vec<u8> = bytes[9..9 + ((app_cfg_count as usize) * 1)]
+        let parameters: Vec<u8> = bytes[9..9 + ((parameters_count as usize) * 1)]
             .to_vec()
             .chunks_exact(1)
             .into_iter()
@@ -9627,14 +9620,14 @@ impl SessionGetAppConfigCmdData {
             .collect();
         Ok(Self {
             session_id,
-            app_cfg,
+            parameters,
         })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         let session_id = self.session_id;
         buffer[4..8].copy_from_slice(&session_id.to_le_bytes()[0..4]);
-        buffer[8..9].copy_from_slice(&(self.app_cfg.len() as u8).to_le_bytes());
-        for (i, e) in self.app_cfg.iter().enumerate() {
+        buffer[8..9].copy_from_slice(&(self.parameters.len() as u8).to_le_bytes());
+        for (i, e) in self.parameters.iter().enumerate() {
             buffer[9 + i..9 + i + 1].copy_from_slice(&e.to_le_bytes())
         }
     }
@@ -9644,7 +9637,7 @@ impl SessionGetAppConfigCmdData {
     fn get_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 5;
-        let ret = ret + (self.app_cfg.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
+        let ret = ret + (self.parameters.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
         ret
     }
 }
@@ -9712,8 +9705,8 @@ impl SessionGetAppConfigCmdPacket {
     pub fn get_session_id(&self) -> u32 {
         self.session_get_app_config_cmd.as_ref().session_id
     }
-    pub fn get_app_cfg(&self) -> &Vec<u8> {
-        &self.session_get_app_config_cmd.as_ref().app_cfg
+    pub fn get_parameters(&self) -> &Vec<u8> {
+        &self.session_get_app_config_cmd.as_ref().parameters
     }
 }
 impl Into<UciPacketPacket> for SessionGetAppConfigCmdPacket {
@@ -9735,7 +9728,7 @@ impl SessionGetAppConfigCmdBuilder {
     pub fn build(self) -> SessionGetAppConfigCmdPacket {
         let session_get_app_config_cmd = Arc::new(SessionGetAppConfigCmdData {
             session_id: self.session_id,
-            app_cfg: self.app_cfg,
+            parameters: self.parameters,
         });
         let session_command = Arc::new(SessionCommandData {
             child: SessionCommandDataChild::SessionGetAppConfigCmd(session_get_app_config_cmd),
@@ -9774,13 +9767,13 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionGetAppConfigCmd(packet) => {let rebuilder = SessionGetAppConfigCmdBuilder {session_id : packet.get_session_id(),app_cfg : packet.get_app_cfg().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_app_config_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionGetAppConfigCmd(packet) => {let rebuilder = SessionGetAppConfigCmdBuilder {session_id : packet.get_session_id(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_app_config_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_app_config_cmd_builder_tests! { session_get_app_config_cmd_builder_test_00: b"\x21\x04\x00\x05\x01\x02\x03\x04\x00",}
 
 #[derive(Debug)]
 struct SessionGetAppConfigRspData {
     status: StatusCode,
-    tlvs: Vec<AppConfigTlv>,
+    parameters: Vec<AppConfigParameter>,
 }
 #[derive(Debug, Clone)]
 pub struct SessionGetAppConfigRspPacket {
@@ -9792,7 +9785,7 @@ pub struct SessionGetAppConfigRspPacket {
 #[derive(Debug)]
 pub struct SessionGetAppConfigRspBuilder {
     pub status: StatusCode,
-    pub tlvs: Vec<AppConfigTlv>,
+    pub parameters: Vec<AppConfigParameter>,
 }
 impl SessionGetAppConfigRspData {
     fn conforms(bytes: &[u8]) -> bool {
@@ -9817,33 +9810,33 @@ impl SessionGetAppConfigRspData {
         if bytes.len() < 6 {
             return Err(Error::InvalidLengthError {
                 obj: "SessionGetAppConfigRsp".to_string(),
-                field: "tlvs_count".to_string(),
+                field: "parameters_count".to_string(),
                 wanted: 6,
                 got: bytes.len(),
             });
         }
-        let tlvs_count = u8::from_le_bytes([bytes[5]]);
-        let mut tlvs: Vec<AppConfigTlv> = Vec::new();
+        let parameters_count = u8::from_le_bytes([bytes[5]]);
+        let mut parameters: Vec<AppConfigParameter> = Vec::new();
         let mut parsable_ = &bytes[6..];
-        let count_ = tlvs_count as usize;
+        let count_ = parameters_count as usize;
         for _ in 0..count_ {
-            match AppConfigTlv::parse(&parsable_) {
+            match AppConfigParameter::parse(&parsable_) {
                 Ok(parsed) => {
                     parsable_ = &parsable_[parsed.get_total_size()..];
-                    tlvs.push(parsed);
+                    parameters.push(parsed);
                 }
                 Err(Error::ImpossibleStructError) => break,
                 Err(e) => return Err(e),
             }
         }
-        Ok(Self { status, tlvs })
+        Ok(Self { status, parameters })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         let status = self.status.to_u8().unwrap();
         buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
-        buffer[5..6].copy_from_slice(&(self.tlvs.len() as u8).to_le_bytes());
+        buffer[5..6].copy_from_slice(&(self.parameters.len() as u8).to_le_bytes());
         let mut vec_buffer_ = &mut buffer[6..];
-        for e_ in &self.tlvs {
+        for e_ in &self.parameters {
             e_.write_to(&mut vec_buffer_[0..e_.get_total_size()]);
             vec_buffer_ = &mut vec_buffer_[e_.get_total_size()..];
         }
@@ -9854,7 +9847,11 @@ impl SessionGetAppConfigRspData {
     fn get_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 2;
-        let ret = ret + self.tlvs.iter().fold(0, |acc, x| acc + x.get_total_size());
+        let ret = ret
+            + self
+                .parameters
+                .iter()
+                .fold(0, |acc, x| acc + x.get_total_size());
         ret
     }
 }
@@ -9922,8 +9919,8 @@ impl SessionGetAppConfigRspPacket {
     pub fn get_status(&self) -> StatusCode {
         self.session_get_app_config_rsp.as_ref().status
     }
-    pub fn get_tlvs(&self) -> &Vec<AppConfigTlv> {
-        &self.session_get_app_config_rsp.as_ref().tlvs
+    pub fn get_parameters(&self) -> &Vec<AppConfigParameter> {
+        &self.session_get_app_config_rsp.as_ref().parameters
     }
 }
 impl Into<UciPacketPacket> for SessionGetAppConfigRspPacket {
@@ -9945,7 +9942,7 @@ impl SessionGetAppConfigRspBuilder {
     pub fn build(self) -> SessionGetAppConfigRspPacket {
         let session_get_app_config_rsp = Arc::new(SessionGetAppConfigRspData {
             status: self.status,
-            tlvs: self.tlvs,
+            parameters: self.parameters,
         });
         let session_response = Arc::new(SessionResponseData {
             child: SessionResponseDataChild::SessionGetAppConfigRsp(session_get_app_config_rsp),
@@ -9984,7 +9981,7 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionGetAppConfigRsp(packet) => {let rebuilder = SessionGetAppConfigRspBuilder {status : packet.get_status(),tlvs : packet.get_tlvs().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_app_config_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionGetAppConfigRsp(packet) => {let rebuilder = SessionGetAppConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_app_config_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_app_config_rsp_builder_tests! { session_get_app_config_rsp_builder_test_00: b"\x41\x04\x00\x02\x01\x00",}
 
 #[derive(Debug)]

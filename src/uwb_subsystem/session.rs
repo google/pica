@@ -1,26 +1,128 @@
-use crate::uci_packets::{
-    AppConfigTlv, AppConfigTlvType, MacAddressIndicator, SessionState, SessionType,
-};
+use crate::uci_packets::{AppConfigTlvType, MacAddressIndicator, SessionState, SessionType};
 use anyhow::Result;
+use num_derive::FromPrimitive;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time;
 
+use num_traits::{FromPrimitive, ToPrimitive};
+
 use crate::uwb_subsystem::*;
 
 pub const MAX_SESSION: usize = 255;
+pub const DEFAULT_CHANNEL_NUMBER: u8 = 9;
+pub const DEFAULT_RANGING_INTERVAL: u32 = 200; // milliseconds
+pub const DEFAULT_SLOT_DURATION: u16 = 2400; // RTSU unit
+
+#[derive(Copy, Clone, FromPrimitive)]
+pub enum DeviceType {
+    Controlee,
+    Controller,
+}
+
+#[derive(Copy, Clone, FromPrimitive)]
+pub enum DeviceRole {
+    Responder,
+    Initiator,
+}
+
+#[derive(Clone)]
+pub struct AppConfig {
+    raw: HashMap<u8, Vec<u8>>,
+    pub device_type: Option<DeviceType>,
+    pub ranging_interval: u32,
+    pub slot_duration: u16,
+    pub channel_number: u8,
+    pub device_role: Option<DeviceRole>,
+    pub device_mac_address: Option<MacAddress>,
+    pub dst_mac_addresses: Vec<MacAddress>,
+}
 
 pub struct Session {
     pub state: SessionState,
     pub id: u32,
 
     pub session_type: SessionType,
-
     pub sequence_number: u32,
-    ranging_interval: usize,
 
-    dst_mac_addresses: Vec<u64>,
+    app_config: AppConfig,
     ranging_task: Option<JoinHandle<()>>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        AppConfig {
+            raw: HashMap::new(),
+            device_role: None,
+            device_type: None,
+            ranging_interval: DEFAULT_RANGING_INTERVAL,
+            slot_duration: DEFAULT_SLOT_DURATION,
+            channel_number: DEFAULT_CHANNEL_NUMBER,
+            device_mac_address: None,
+            dst_mac_addresses: Vec::new(),
+        }
+    }
+}
+
+impl AppConfig {
+    fn set_config(
+        &mut self,
+        id: AppConfigTlvType,
+        value: &Vec<u8>,
+    ) -> std::result::Result<(), StatusCode> {
+        // TODO: raise Err(StatusCode::UciStatusInvalidParam) when
+        // an invalid parameter value is received.
+        match id {
+            AppConfigTlvType::MacAddressMode => {
+                assert!(value.len() == 1);
+                assert!(value[0] == MacAddressIndicator::ExtendedAddress as u8);
+            }
+            AppConfigTlvType::RangingInterval => {
+                self.ranging_interval = u32::from_le_bytes(value[..].try_into().unwrap());
+            }
+            AppConfigTlvType::SlotDuration => {
+                self.slot_duration = u16::from_le_bytes(value[..].try_into().unwrap());
+            }
+            AppConfigTlvType::ChannelNumber => {
+                self.channel_number = value[0];
+            }
+            AppConfigTlvType::DstMacAddress => {
+                let mac_address_size = std::mem::size_of::<u64>();
+                assert!(value.len() > 0);
+                assert!((value.len() % mac_address_size) == 0);
+
+                for i in 0..(value.len() / mac_address_size) {
+                    self.dst_mac_addresses
+                        .push(u64::from_le_bytes(value[i..i + 4].try_into().unwrap()));
+                }
+            }
+            _ => {
+                self.raw.insert(id.to_u8().unwrap(), value.clone());
+            }
+        };
+        Ok(())
+    }
+
+    fn extend(&mut self, configs: &Vec<AppConfigParameter>) -> Vec<AppConfigStatus> {
+        configs
+            .iter()
+            .fold(Vec::new(), |mut invalid_parameters, config| {
+                match AppConfigTlvType::from_u8(config.id) {
+                    Some(id) => match self.set_config(id, &config.value) {
+                        Ok(_) => (),
+                        Err(status) => invalid_parameters.push(AppConfigStatus {
+                            config_id: config.id,
+                            status,
+                        }),
+                    },
+                    None => invalid_parameters.push(AppConfigStatus {
+                        config_id: config.id,
+                        status: StatusCode::UciStatusInvalidParam,
+                    }),
+                };
+                invalid_parameters
+            })
+    }
 }
 
 impl Default for Session {
@@ -30,8 +132,7 @@ impl Default for Session {
             id: 0,
             session_type: SessionType::FiraRangingSession,
             sequence_number: 0,
-            ranging_interval: 1000,
-            dst_mac_addresses: Vec::new(),
+            app_config: AppConfig::default(),
             ranging_task: None,
         }
     }
@@ -41,7 +142,7 @@ impl Session {
     fn start_ranging(&mut self, device_handle: usize, tx: mpsc::Sender<PicaCommand>) {
         assert!(self.ranging_task.is_none());
         let session_id = self.id;
-        let ranging_interval = self.ranging_interval as u64;
+        let ranging_interval = self.app_config.ranging_interval as u64;
         self.ranging_task = Some(tokio::spawn(async move {
             loop {
                 time::sleep(Duration::from_millis(ranging_interval as u64)).await;
@@ -59,7 +160,7 @@ impl Session {
     }
 
     pub fn get_dst_mac_addresses(&self) -> &Vec<u64> {
-        &self.dst_mac_addresses
+        &self.app_config.dst_mac_addresses
     }
 }
 
@@ -151,72 +252,51 @@ impl Pica {
         let session_id = cmd.get_session_id();
         println!("[{}] Session set app config", device_handle);
         println!("  session_id=0x{}", session_id);
+        assert_eq!(
+            cmd.get_packet_boundary_flag(),
+            PacketBoundaryFlag::Complete,
+            "Boundary flag is true, implement fragmentation"
+        );
 
         let device = self.get_device_mut(device_handle);
-        let (status, session_state) = match device.get_session_mut(session_id as u32) {
-            Some(session) if session.state == SessionState::SessionStateInit => {
+        let (status, session_state, parameters) = match device.get_session_mut(session_id) {
+            Some(session)
+                if session.state == SessionState::SessionStateInit
+                    && session.session_type == SessionType::FiraRangingSession =>
+            {
                 session.state = SessionState::SessionStateIdle;
+                let mut app_config = session.app_config.clone();
+                let invalid_parameters = app_config.extend(cmd.get_parameters());
+                let status = if invalid_parameters.is_empty() {
+                    session.app_config = app_config;
+                    session.state = SessionState::SessionStateIdle;
+                    StatusCode::UciStatusOk
+                } else {
+                    StatusCode::UciStatusInvalidParam
+                };
 
-                match session.session_type {
-                    SessionType::FiraRangingSession => {
-                        cmd.get_tlvs()
-                            .iter()
-                            .for_each(|config| match config.cfg_id {
-                                // AppConfigTlvType::DeviceRole => {}
-                                // AppConfigTlvType::MultiNodeMode => {}
-                                // AppConfigTlvType::NoOfControlee => {}
-                                // AppConfigTlvType::DeviceMacAddress => {}
-                                // AppConfigTlvType::DeviceType => {}
-                                AppConfigTlvType::MacAddressMode => {
-                                    assert!(config.v.len() == 1);
-                                    assert!(
-                                        config.v[0] == MacAddressIndicator::ExtendedAddress as u8
-                                    );
-                                }
-                                AppConfigTlvType::DstMacAddress => {
-                                    let mac_address_size = std::mem::size_of::<u64>();
-                                    assert!(config.v.len() > 0);
-                                    assert!((config.v.len() % mac_address_size) == 0);
-
-                                    for i in 0..(config.v.len() / mac_address_size) {
-                                        let mut mac_address: u64 = 0;
-                                        for j in 0..mac_address_size {
-                                            mac_address = (mac_address << 8)
-                                                + config.v[i * mac_address_size + j] as u64;
-                                        }
-                                        session.dst_mac_addresses.push(mac_address);
-                                    }
-                                }
-                                _ => {}
-                            });
-                    }
-                    _ => anyhow::bail!("Unsupported session type"),
-                }
-
-                device
-                    .tx
-                    .send(
-                        SessionSetAppConfigRspBuilder {
-                            status: StatusCode::UciStatusOk,
-                            cfg_status: Vec::new(),
-                        }
-                        .build()
-                        .into(),
-                    )
-                    .await?;
-
-                // TODO: Set session app configuration regardings the incoming cmd
-                (StatusCode::UciStatusOk, SessionState::SessionStateIdle)
+                (status, session.state, invalid_parameters)
             }
             Some(_) => (
                 StatusCode::UciStatusSesssionActive,
                 SessionState::SessionStateActive,
+                Vec::new(),
             ),
             None => (
                 StatusCode::UciStatusSesssionNotExist,
                 SessionState::SessionStateDeinit,
+                Vec::new(),
             ),
         };
+
+        device
+            .tx
+            .send(
+                SessionSetAppConfigRspBuilder { status, parameters }
+                    .build()
+                    .into(),
+            )
+            .await?;
 
         if status == StatusCode::UciStatusOk {
             device
@@ -313,7 +393,7 @@ impl Pica {
 
         let pica_tx = self.tx.clone();
         let device = self.get_device_mut(device_handle);
-        let status = match device.get_session_mut(session_id as u32) {
+        let status = match device.get_session_mut(session_id) {
             Some(session) if session.state == SessionState::SessionStateIdle => {
                 session.start_ranging(device_handle, pica_tx);
                 session.state = SessionState::SessionStateActive;
@@ -358,7 +438,7 @@ impl Pica {
         println!("  session_id=0x{:x}", session_id);
 
         let device = self.get_device_mut(device_handle);
-        let status = match device.get_session_mut(session_id as u32) {
+        let status = match device.get_session_mut(session_id) {
             Some(session) if session.state == SessionState::SessionStateActive => {
                 session.stop_ranging();
                 session.state = SessionState::SessionStateIdle;
