@@ -275,7 +275,8 @@ impl Pica {
                 .build()
                 .into(),
             )
-            .await;
+            .await
+            .unwrap();
     }
 
     async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) -> Result<()> {

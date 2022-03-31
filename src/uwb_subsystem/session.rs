@@ -147,7 +147,8 @@ impl Session {
             loop {
                 time::sleep(Duration::from_millis(ranging_interval as u64)).await;
                 tx.send(PicaCommand::Ranging(device_handle, session_id))
-                    .await;
+                    .await
+                    .unwrap();
             }
         }))
     }
