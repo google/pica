@@ -44,11 +44,11 @@ impl Position {
         Position {
             position: Vector3::new(x as f64, y as f64, z as f64),
             rotation: Rotation3::from_axis_angle(
-                &Vector3::x_axis(),
-                (elevation as f64).to_radians(),
-            ) * Rotation3::from_axis_angle(
                 &Vector3::y_axis(),
-                (-azimuth as f64).to_radians(),
+                (azimuth as f64).to_radians(),
+            ) * Rotation3::from_axis_angle(
+                &Vector3::x_axis(),
+                (-elevation as f64).to_radians(),
             ),
         }
     }
@@ -88,5 +88,56 @@ impl From<&PicaPosition> for Position {
             other.azimuth as i16,
             other.elevation as i8,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Position, elevation, azimuth};
+    use nalgebra::Vector3;
+
+    #[test]
+    fn azimuth_elevation_check_positive() {
+        let position = Position::new(0, 0, 0, 42, 42);
+        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+
+        assert!(azimuth(vector).to_degrees() == 42.0);
+        assert!(elevation(vector).to_degrees() == 42.0);
+    }
+
+    #[test]
+    fn azimuth_elevation_check_first_negative() {
+        let position = Position::new(0, 0, 0, -42, 42);
+        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+
+        assert!(azimuth(vector).to_degrees() == -42.0);
+        assert!(elevation(vector).to_degrees() == 42.0);
+    }
+
+    #[test]
+    fn azimuth_elevation_check_second_negative() {
+        let position = Position::new(0, 0, 0, 42, -42);
+        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+
+        assert!(azimuth(vector).to_degrees() == 42.0);
+        assert!(elevation(vector).to_degrees() == -42.0);
+    }
+
+    #[test]
+    fn azimuth_elevation_check_negative() {
+        let position = Position::new(0, 0, 0, -42, -42);
+        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+
+        assert!(azimuth(vector).to_degrees() == -42.0);
+        assert!(elevation(vector).to_degrees() == -42.0);
+    }
+
+    #[test]
+    fn azimuth_elevation_check_over_90() {
+        let position = Position::new(0, 0, 0, 90 + 42, 42);
+        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+
+        assert!(azimuth(vector).to_degrees() == 90.0 + 42.0);
+        assert!(elevation(vector).to_degrees() == 42.0);
     }
 }
