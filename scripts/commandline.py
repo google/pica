@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import inspect
 import readline
 import socket
 import sys
@@ -186,7 +187,32 @@ async def command_line(device: Device):
             print(f'  {cmd.ljust(32)}{func.__doc__}')
 
     def complete(text, state):
-        results = [cmd for cmd in commands.keys() if cmd.startswith(text)] + [None]
+        tokens = readline.get_line_buffer().split()
+        if not tokens or readline.get_line_buffer()[-1] == ' ':
+            tokens.append('')
+
+        # Writing a command name, complete to ' '
+        if len(tokens) == 1:
+            results = [cmd + ' ' for cmd in commands.keys() if
+                cmd.startswith(text)]
+
+        # Writing a keyword argument, no completion
+        elif '=' in tokens[-1]:
+            results = []
+
+        # Writing a keyword name, but unknown command, no completion
+        elif tokens[0] not in commands:
+            results = []
+
+        # Writing a keyword name, complete to '='
+        else:
+            sig = inspect.signature(commands[tokens[0]])
+            names = [name for (name, p) in sig.parameters.items()
+                if (p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD or
+                    p.kind == inspect.Parameter.KEYWORD_ONLY)]
+            results = [name + '=' for name in names if name.startswith(tokens[-1])]
+
+        results += [None]
         return results[state]
 
     # Configure readline
