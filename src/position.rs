@@ -16,14 +16,14 @@ impl Serialize for Position {
         S: Serializer,
     {
         let mut state = serializer.serialize_struct("Position", 5)?;
-        state.serialize_field("x", &self.position.x)?;
-        state.serialize_field("y", &self.position.y)?;
-        state.serialize_field("z", &self.position.z)?;
+        state.serialize_field("x", &(self.position.x as i16))?;
+        state.serialize_field("y", &(self.position.y as i16))?;
+        state.serialize_field("z", &(self.position.z as i16))?;
 
         let vector = self.rotation * Vector3::new(0.0, 0.0, 1.0);
 
-        state.serialize_field("azimuth", &azimuth(vector).to_degrees())?;
-        state.serialize_field("elevation", &elevation(vector).to_degrees())?;
+        state.serialize_field("azimuth", &(azimuth(vector).to_degrees() as i16))?;
+        state.serialize_field("elevation", &(elevation(vector).to_degrees() as i8))?;
         state.end()
     }
 }
@@ -53,7 +53,7 @@ fn azimuth(delta: Vector3<f64>) -> f64 {
 
 fn elevation(delta: Vector3<f64>) -> f64 {
     checked_div(delta.y, f64::sqrt(delta.x.powi(2) + delta.z.powi(2)))
-        .map_or(delta.y.signum() * std::f64::consts::PI, f64::atan)
+        .map_or(delta.y.signum() * std::f64::consts::FRAC_PI_2, f64::atan)
 }
 
 impl Position {

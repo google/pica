@@ -17,7 +17,7 @@ use session::MAX_SESSION;
 
 const MAX_PAYLOAD_SIZE: usize = 4096;
 
-type MacAddress = u64;
+pub type MacAddress = u64;
 
 struct Connection {
     socket: TcpStream,
@@ -82,6 +82,12 @@ pub enum PicaEvent {
         #[serde(flatten)]
         position: Position,
     },
+    UpdateNeighbor {
+        mac_address: MacAddress,
+        neighbor: MacAddress,
+        azimuth: i16,
+        elevation: i8,
+    },
 }
 
 #[derive(Debug)]
@@ -122,6 +128,13 @@ impl Pica {
 
     fn get_device(&self, device_handle: usize) -> &Device {
         self.devices.get(&device_handle).unwrap()
+    }
+
+    fn get_device_mut_by_mac(&mut self, mac_address: MacAddress) -> Option<&mut Device> {
+        // FIXME: this assumes that mac_address is the same as the device_handle
+        self.devices
+            .values_mut()
+            .find(|d| d.mac_address as u64 == mac_address)
     }
 
     fn send_event(&self, event: PicaEvent) {
@@ -195,7 +208,7 @@ impl Pica {
             .unwrap()
     }
 
-    async fn disconnect(&mut self, device_handle: usize) -> Result<()> {
+    fn disconnect(&mut self, device_handle: usize) -> Result<()> {
         println!("[{}] Disconnecting device", device_handle);
 
         let device = self.devices.get(&device_handle).context("Unknown device")?;
@@ -362,7 +375,7 @@ impl Pica {
             use PicaCommand::*;
             match self.rx.recv().await {
                 Some(Connect(stream)) => self.connect(stream).await,
-                Some(Disconnect(device_handle)) => self.disconnect(device_handle).await?,
+                Some(Disconnect(device_handle)) => self.disconnect(device_handle)?,
                 Some(Ranging(device_handle, session_id)) => {
                     self.ranging(device_handle, session_id).await
                 }
@@ -387,6 +400,7 @@ impl Pica {
         let device = self.get_device_mut(device_handle);
         device.mac_address = mac_address as usize;
         device.position = Position::from(cmd.get_position());
+        // FIXME: send event for the mac_address change
         Ok(self
             .get_device(device_handle)
             .tx
@@ -400,13 +414,56 @@ impl Pica {
             .await?)
     }
 
-    fn set_position(&mut self, mac: MacAddress, position: Position) -> Result<()> {
-        /*if let Some(b) = self.beacons.get_mut(&mac_address) {
-            b.position = position;
-            Ok(())
+    fn update_position(&self, mac_address: MacAddress, position: Position) {
+        self.send_event(PicaEvent::UpdatePosition {
+            mac_address,
+            position: position.clone(),
+        });
+
+        let devices = self
+            .devices
+            .values()
+            .map(|d| (d.mac_address as MacAddress, d.position.clone()));
+        let beacons = self
+            .beacons
+            .values()
+            .map(|b| (b.mac_address, b.position.clone()));
+
+        for (device_mac_address, device_position) in devices.chain(beacons) {
+            if mac_address != device_mac_address {
+                let local = position.compute_range_azimuth_elevation(&device_position);
+                let remote = device_position.compute_range_azimuth_elevation(&position);
+
+                assert!(local.0 == remote.0);
+
+                self.send_event(PicaEvent::UpdateNeighbor {
+                    mac_address: mac_address,
+                    neighbor: device_mac_address,
+                    azimuth: local.1,
+                    elevation: local.2,
+                });
+
+                self.send_event(PicaEvent::UpdateNeighbor {
+                    mac_address: device_mac_address,
+                    neighbor: mac_address,
+                    azimuth: remote.1,
+                    elevation: remote.2,
+                });
+            }
+        }
+    }
+
+    fn set_position(&mut self, mac_address: MacAddress, position: Position) -> Result<()> {
+        if let Some(d) = self.get_device_mut_by_mac(mac_address) {
+            d.position = position.clone();
+        } else if let Some(b) = self.beacons.get_mut(&mac_address) {
+            b.position = position.clone();
         } else {
-            Err(anyhow!("Beacon not found"))
-        }*/
+            return Err(anyhow!("Device or Beacon not found"));
+        }
+
+        self.update_position(mac_address, position);
+
         Ok(())
     }
 
@@ -417,6 +474,12 @@ impl Pica {
     ) -> Result<()> {
         let mut device = self.get_device_mut(device_handle);
         device.position = cmd.get_position().into();
+
+        let position = device.position.clone();
+        let mac_address = device.mac_address as u64;
+
+        self.update_position(mac_address, position);
+
         Ok(self
             .get_device(device_handle)
             .tx
@@ -457,7 +520,7 @@ impl Pica {
                         mac_address,
                     },
                 )
-                .is_some());
+                .is_none());
             StatusCode::UciStatusOk
         };
 
@@ -481,11 +544,14 @@ impl Pica {
 
         let status = if let Some(b) = self.beacons.get_mut(&mac_address) {
             b.position = Position::from(position);
-            StatusCode::UciStatusFailed
+            StatusCode::UciStatusOk
         } else {
             StatusCode::UciStatusFailed
         };
 
+        if status == StatusCode::UciStatusOk {
+            self.update_position(mac_address, Position::from(position));
+        }
         Ok(self
             .get_device(device_handle)
             .tx

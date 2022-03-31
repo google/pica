@@ -82,13 +82,17 @@ export class DeviceInfo extends LitElement {
   }
 
   setAzimuth(event) {
-    this.device.azimuth = event.target.value;
+    this.device.azimuth = Number(event.target.value);
     this.update();
   }
 
   setElevation(event) {
-    this.device.elevation = event.target.value;
+    this.device.elevation = Number(event.target.value);
     this.update();
+  }
+
+  notifyChange() {
+    this.dispatchEvent(new CustomEvent("orientation-change"));
   }
 
   render() {
@@ -98,18 +102,18 @@ export class DeviceInfo extends LitElement {
       ${this.device == null
         ? html`<span>No Device Selected</span>`
         : html`
-            <span>Mac Address: ${this.device.mac}</span>
+            <span>Mac Address: 0x${this.device.mac_address.toString(16)}</span>
             <span
               >X:
-              <span style="color: blue">${this.device.position.x}</span></span
+              <span style="color: red">${this.device.position.x}</span></span
             >
             <span
               >Y:
-              <span style="color: green">${this.device.position.y}</span></span
+              <span style="color: blue">${this.device.position.y}</span></span
             >
             <span
               >Z:
-              <span style="color: red">${this.device.position.z}</span></span
+              <span style="color: green">${this.device.position.z}</span></span
             >
             <div class="orientation">
               <span class="center">Device Orientation</span>
@@ -125,6 +129,7 @@ export class DeviceInfo extends LitElement {
                   max="180"
                   value=${this.device.azimuth}
                   @input=${this.setAzimuth}
+                  @change=${this.notifyChange}
                 />
               </label>
               <label>
@@ -135,30 +140,31 @@ export class DeviceInfo extends LitElement {
                   max="90"
                   value=${this.device.elevation}
                   @input=${this.setElevation}
+                  @change=${this.notifyChange}
                 />
               </label>
             </div>
             <h2>Neighbors</h2>
             <ul class="neighbors">
-              ${Array.from({ length: 10 }).map(
-                (_, i) => html`
+              ${this.device.neighbors.map(
+                ({ mac_address, azimuth, elevation }) => html`
                   <li>
                     <pika-orientation
-                      azimuth="${31 * i}"
-                      elevation="${30 * i}"
+                      azimuth="${azimuth}"
+                      elevation="${elevation}"
                     ></pika-orientation>
                     <table>
                       <tr>
                         <td>Mac</td>
-                        <td>42:${42 + i}</td>
+                        <td>0x${mac_address.toString(16)}</td>
                       </tr>
                       <tr>
                         <td>Azimuth</td>
-                        <td>${31 * i}</td>
+                        <td>${azimuth}</td>
                       </tr>
                       <tr>
                         <td>Elevation</td>
-                        <td>${30 * i}</td>
+                        <td>${elevation}</td>
                       </tr>
                     </table>
                   </li>

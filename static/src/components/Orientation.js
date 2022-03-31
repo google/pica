@@ -21,15 +21,15 @@ export class Orientation extends LitElement {
       background: currentColor;
     }
 
-    .x {
+    .z {
       color: blue;
     }
 
-    .y {
+    .x {
       color: green;
     }
 
-    .z {
+    .y {
       color: red;
     }
 

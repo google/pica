@@ -67,6 +67,37 @@
 
   map.addEventListener("move", () => info.update());
 
+  function set_position({
+    mac_address,
+    position: { x, y, z },
+    azimuth,
+    elevation,
+  }) {
+    fetch("/set_position", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        mac_address,
+        x,
+        y,
+        z,
+        azimuth,
+        elevation,
+      }),
+    });
+  }
+
+  map.addEventListener("end-move", (event) => {
+    set_position(event.detail.device);
+  });
+
+  info.addEventListener("orientation-change", () => {
+    console.log("Orientation change");
+    set_position(info.device);
+  });
+
   const events = new EventSource("/events");
 
   events.addEventListener("add-device", (event) => {
@@ -77,10 +108,11 @@
     map.devices = [
       ...map.devices,
       {
-        mac: `0x${mac_address.toString(16)}`,
+        mac_address,
         position: { x, y, z },
         azimuth,
         elevation,
+        neighbors: [],
       },
     ];
   });
@@ -88,16 +120,54 @@
   events.addEventListener("remove-device", (event) => {
     const data = JSON.parse(event.data);
     console.log("Remove Device", data);
-    const mac = `0x${data.mac_address.toString(16)}`;
-    if (info.device?.mac === mac) {
+
+    const { mac_address } = data;
+    if (info.device?.mac_address === mac_address) {
       info.device = null;
     }
 
-    map.devices = map.devices.filter((device) => device.mac != mac);
+    map.devices = map.devices.filter(
+      (device) => device.mac_address !== mac_address
+    );
   });
 
   events.addEventListener("update-position", (event) => {
     const data = JSON.parse(event.data);
     console.log("Update Position", data);
+
+    const { mac_address, x, y, z, azimuth, elevation } = data;
+
+    const device = map.devices.find(
+      (device) => device.mac_address === mac_address
+    );
+
+    device.position = { x, y, z };
+    device.azimuth = azimuth;
+    device.elevation;
+
+    map.update();
+    info.update();
+  });
+
+  events.addEventListener("update-neighbor", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Update Neighbor", data);
+
+    const { mac_address, neighbor: neighbor_mac, azimuth, elevation } = data;
+
+    const device = map.devices.find(
+      (device) => device.mac_address === mac_address
+    );
+
+    const neighbor = device.neighbors.find(
+      (device) => device.mac_address == neighbor_mac
+    ) || { mac_address: neighbor_mac };
+
+    neighbor.azimuth = azimuth;
+    neighbor.elevation = elevation;
+
+    if (!device.neighbors.includes(neighbor)) device.neighbors.push(neighbor);
+
+    info.update();
   });
 </script>

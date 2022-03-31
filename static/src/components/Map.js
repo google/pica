@@ -14,14 +14,10 @@ function createIsometricMatrix() {
 
 export const PROJECTION = createIsometricMatrix();
 
-const OFFSET_X = 100 + 40;
-const OFFSET_Y = 100;
-
 export class Map extends LitElement {
   static styles = css`
     svg {
-      width: var(--map-size);
-      height: min(var(--map-size), 100vh);
+      margin-top: -15%;
     }
 
     .dragging {
@@ -72,6 +68,10 @@ export class Map extends LitElement {
   }
 
   onMouseUp() {
+    if (this.dragging || this.changingElevation)
+      this.dispatchEvent(
+        new CustomEvent("end-move", { detail: { device: this.selected } })
+      );
     this.dragging = false;
     this.changingElevation = false;
     this.update();
@@ -80,19 +80,19 @@ export class Map extends LitElement {
   onMouseMove(event) {
     if (this.dragging) {
       const to = this.screenToSvg(event.clientX, event.clientY);
-      this.selected.position.x = Math.max(
-        Math.floor(to.x) - this.selected.position.z - OFFSET_X,
-        0
+      this.selected.position.x = Math.min(
+        Math.max(Math.floor(-to.x) + this.selected.position.y, -600 + 40),
+        600 - 40
       );
-      this.selected.position.y = Math.max(
-        Math.floor(to.y) + this.selected.position.z - OFFSET_Y,
-        0
+      this.selected.position.z = Math.min(
+        Math.max(Math.floor(to.y) + this.selected.position.y, -600 + 40),
+        600 - 40
       );
       this.update();
     }
     if (this.changingElevation) {
-      const distance = Math.min(event.movementY * 2, this.selected.position.z);
-      this.selected.position.z -= distance;
+      const distance = Math.min(event.movementY * 2, this.selected.position.y);
+      this.selected.position.y -= distance;
       this.update();
     }
     if (this.dragging || this.changingElevation) {
@@ -112,6 +112,7 @@ export class Map extends LitElement {
     const m = PROJECTION;
     return html`<svg
       transform="matrix(${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f})"
+      viewBox="-600 -600 1200 1200"
       @mousemove="${this.onMouseMove}"
       @mousedown="${this.onMouseDown}"
       class="${this.dragging ? "dragging" : ""}"
@@ -146,14 +147,26 @@ export class Map extends LitElement {
         </pattern>
       </defs>
 
-      <rect fill="var(--grid-background-color)" width="100%" height="100%" />
-      <rect fill="url(#grid)" width="100%" height="100%"></rect>
+      <rect
+        x="-50%"
+        y="-50%"
+        fill="var(--grid-background-color)"
+        width="100%"
+        height="100%"
+      />
+      <rect
+        x="-50%"
+        y="-50%"
+        fill="url(#grid)"
+        width="100%"
+        height="100%"
+      ></rect>
 
       ${this.devices.map(
         (device, i) => svg`
     <g key="${i}" transform=${`translate(${
-          device.position.x + OFFSET_X + device.position.z
-        } ${device.position.y + OFFSET_Y - device.position.z})`}
+          -device.position.x + device.position.y
+        } ${device.position.z - device.position.y})`}
         class="${device == this.selected ? "selected marker" : "marker"}">
         <rect x="-40" y="-40" width="40" height="40" fill="#f44336" transform="skewY(-45)"></rect>
         <rect x="0" y="0" width="40" height="40" fill="#ffeb3b" transform="skewX(-45)"></rect>
@@ -180,17 +193,17 @@ export class Map extends LitElement {
         <!-- Elevation arrow -->
         <g stroke="black" stroke-width="5">
             ${
-              device.position.z == 0
+              device.position.y == 0
                 ? ""
                 : svg`
             <line x1="-40" y1="0" x2="-${
-              40 + device.position.z
+              40 + device.position.y
             }" y2="0" transform="skewY(-45)" stroke-dasharray="8" />
-            <path d="M-${40 + device.position.z},-10 L-${
-                    40 + device.position.z
+            <path d="M-${40 + device.position.y},-10 L-${
+                    40 + device.position.y
                   },10" transform="skewY(-45)" />
-            <path d="M-${40 + device.position.z},-10 L-${
-                    40 + device.position.z
+            <path d="M-${40 + device.position.y},-10 L-${
+                    40 + device.position.y
                   },10" transform="skewY(-45) skewX(45)">
                 `
             }

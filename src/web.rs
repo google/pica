@@ -3,11 +3,13 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use anyhow::{Context, Result};
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server};
+use hyper::{body, Body, Request, Response, Server};
+use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
-use crate::uwb_subsystem::{PicaCommand, PicaEvent};
+use crate::position::Position;
+use crate::uwb_subsystem::{MacAddress, PicaCommand, PicaEvent};
 
 const WEB_PORT: u16 = 3000;
 
@@ -36,11 +38,12 @@ fn event_name(event: &PicaEvent) -> &'static str {
         AddDevice { .. } => "add-device",
         RemoveDevice { .. } => "remove-device",
         UpdatePosition { .. } => "update-position",
+        UpdateNeighbor { .. } => "update-neighbor",
     }
 }
 
 async fn handle(
-    req: Request<Body>,
+    mut req: Request<Body>,
     tx: mpsc::Sender<PicaCommand>,
     events: broadcast::Sender<PicaEvent>,
 ) -> Result<Response<Body>, Infallible> {
@@ -71,7 +74,28 @@ async fn handle(
                 .body(Body::wrap_stream(stream))
                 .unwrap());
         }
-        "/command" => {}
+        "/set_position" => {
+            #[derive(Deserialize)]
+            struct SetPositionBody {
+                mac_address: MacAddress,
+                x: i16,
+                y: i16,
+                z: i16,
+                azimuth: i16,
+                elevation: i8,
+            }
+
+            let body = body::to_bytes(req.body_mut()).await.unwrap();
+            let body: SetPositionBody = serde_json::from_slice(&body).unwrap();
+
+            let position = Position::new(body.x, body.y, body.z, body.azimuth, body.elevation);
+
+            tx.send(PicaCommand::SetPosition(body.mac_address, position))
+                .await
+                .unwrap();
+
+            return Ok(Response::builder().status(200).body("".into()).unwrap());
+        }
         _ => (),
     }
 
