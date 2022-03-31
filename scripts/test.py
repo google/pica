@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+import readline
 import socket
 import sys
 import time
@@ -147,6 +149,14 @@ async def command_line(device: Device):
         for (cmd, func) in commands.items():
             print(f'  {cmd.ljust(32)}{func.__doc__}')
 
+    def complete(text, state):
+        results = [cmd for cmd in commands.keys() if cmd.startswith(text)] + [None]
+        return results[state]
+
+    # Configure readline
+    readline.parse_and_bind("tab: complete")
+    readline.set_completer(complete)
+
     while True:
         cmd = await ainput('--> ')
         [cmd, *args] = cmd.split(' ')
@@ -159,7 +169,16 @@ async def command_line(device: Device):
         commands[cmd](*args)
 
 async def main():
-    reader, writer = await asyncio.open_connection('127.0.0.1', 7000)
+    # Connect to Pica
+    try:
+        reader, writer = await asyncio.open_connection('127.0.0.1', 7000)
+    except Exception as exn:
+        print(
+            'Failed to connect to Pica server\n' +
+            'Make sure the server is running locally on port 7000')
+        exit(1)
+
+    # Start input and receive loops
     device = Device(reader, writer)
     loop = asyncio.get_event_loop()
     loop.create_task(device.read_responses_and_notifications())
