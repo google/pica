@@ -1210,69 +1210,62 @@ impl CapTlv {
 }
 
 #[derive(Debug, Clone)]
-pub struct DeviceConfigTLV {
-    pub cfg_id: DeviceConfigId,
-    pub v: Vec<u8>,
+pub struct DeviceParameter {
+    pub id: u8,
+    pub value: Vec<u8>,
 }
-impl DeviceConfigTLV {
+impl DeviceParameter {
     fn conforms(bytes: &[u8]) -> bool {
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 1 {
             return Err(Error::InvalidLengthError {
-                obj: "DeviceConfigTLV".to_string(),
-                field: "cfg_id".to_string(),
+                obj: "DeviceParameter".to_string(),
+                field: "id".to_string(),
                 wanted: 1,
                 got: bytes.len(),
             });
         }
-        let cfg_id = u8::from_le_bytes([bytes[0]]);
-        let cfg_id =
-            DeviceConfigId::from_u8(cfg_id).ok_or_else(|| Error::InvalidEnumValueError {
-                obj: "DeviceConfigTLV".to_string(),
-                field: "cfg_id".to_string(),
-                value: cfg_id as u64,
-                type_: "DeviceConfigId".to_string(),
-            })?;
+        let id = u8::from_le_bytes([bytes[0]]);
         if bytes.len() < 2 {
             return Err(Error::InvalidLengthError {
-                obj: "DeviceConfigTLV".to_string(),
-                field: "v_count".to_string(),
+                obj: "DeviceParameter".to_string(),
+                field: "value_count".to_string(),
                 wanted: 2,
                 got: bytes.len(),
             });
         }
-        let v_count = u8::from_le_bytes([bytes[1]]);
-        let want_ = 2 + ((v_count as usize) * 1);
+        let value_count = u8::from_le_bytes([bytes[1]]);
+        let want_ = 2 + ((value_count as usize) * 1);
         if bytes.len() < want_ {
             return Err(Error::InvalidLengthError {
-                obj: "DeviceConfigTLV".to_string(),
-                field: "v".to_string(),
+                obj: "DeviceParameter".to_string(),
+                field: "value".to_string(),
                 wanted: want_,
                 got: bytes.len(),
             });
         }
-        let v: Vec<u8> = bytes[2..2 + ((v_count as usize) * 1)]
+        let value: Vec<u8> = bytes[2..2 + ((value_count as usize) * 1)]
             .to_vec()
             .chunks_exact(1)
             .into_iter()
             .map(|i| u8::from_le_bytes([i[0]]))
             .collect();
-        Ok(Self { cfg_id, v })
+        Ok(Self { id, value })
     }
     fn write_to(&self, buffer: &mut [u8]) {
-        let cfg_id = self.cfg_id.to_u8().unwrap();
-        buffer[0..1].copy_from_slice(&cfg_id.to_le_bytes()[0..1]);
-        buffer[1..2].copy_from_slice(&(self.v.len() as u8).to_le_bytes());
-        for (i, e) in self.v.iter().enumerate() {
+        let id = self.id;
+        buffer[0..1].copy_from_slice(&id.to_le_bytes()[0..1]);
+        buffer[1..2].copy_from_slice(&(self.value.len() as u8).to_le_bytes());
+        for (i, e) in self.value.iter().enumerate() {
             buffer[2 + i..2 + i + 1].copy_from_slice(&e.to_le_bytes())
         }
     }
     fn get_total_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 2;
-        let ret = ret + (self.v.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
+        let ret = ret + (self.value.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
         ret
     }
 }
@@ -7238,7 +7231,7 @@ get_caps_info_rsp_builder_tests! { get_caps_info_rsp_builder_test_00: b"\x40\x03
 
 #[derive(Debug)]
 struct SetConfigCmdData {
-    tlvs: Vec<DeviceConfigTLV>,
+    parameters: Vec<DeviceParameter>,
 }
 #[derive(Debug, Clone)]
 pub struct SetConfigCmdPacket {
@@ -7249,7 +7242,7 @@ pub struct SetConfigCmdPacket {
 }
 #[derive(Debug)]
 pub struct SetConfigCmdBuilder {
-    pub tlvs: Vec<DeviceConfigTLV>,
+    pub parameters: Vec<DeviceParameter>,
 }
 impl SetConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
@@ -7259,31 +7252,31 @@ impl SetConfigCmdData {
         if bytes.len() < 5 {
             return Err(Error::InvalidLengthError {
                 obj: "SetConfigCmd".to_string(),
-                field: "tlvs_count".to_string(),
+                field: "parameters_count".to_string(),
                 wanted: 5,
                 got: bytes.len(),
             });
         }
-        let tlvs_count = u8::from_le_bytes([bytes[4]]);
-        let mut tlvs: Vec<DeviceConfigTLV> = Vec::new();
+        let parameters_count = u8::from_le_bytes([bytes[4]]);
+        let mut parameters: Vec<DeviceParameter> = Vec::new();
         let mut parsable_ = &bytes[5..];
-        let count_ = tlvs_count as usize;
+        let count_ = parameters_count as usize;
         for _ in 0..count_ {
-            match DeviceConfigTLV::parse(&parsable_) {
+            match DeviceParameter::parse(&parsable_) {
                 Ok(parsed) => {
                     parsable_ = &parsable_[parsed.get_total_size()..];
-                    tlvs.push(parsed);
+                    parameters.push(parsed);
                 }
                 Err(Error::ImpossibleStructError) => break,
                 Err(e) => return Err(e),
             }
         }
-        Ok(Self { tlvs })
+        Ok(Self { parameters })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
-        buffer[4..5].copy_from_slice(&(self.tlvs.len() as u8).to_le_bytes());
+        buffer[4..5].copy_from_slice(&(self.parameters.len() as u8).to_le_bytes());
         let mut vec_buffer_ = &mut buffer[5..];
-        for e_ in &self.tlvs {
+        for e_ in &self.parameters {
             e_.write_to(&mut vec_buffer_[0..e_.get_total_size()]);
             vec_buffer_ = &mut vec_buffer_[e_.get_total_size()..];
         }
@@ -7294,7 +7287,11 @@ impl SetConfigCmdData {
     fn get_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 1;
-        let ret = ret + self.tlvs.iter().fold(0, |acc, x| acc + x.get_total_size());
+        let ret = ret
+            + self
+                .parameters
+                .iter()
+                .fold(0, |acc, x| acc + x.get_total_size());
         ret
     }
 }
@@ -7359,8 +7356,8 @@ impl SetConfigCmdPacket {
     pub fn get_opcode(&self) -> u8 {
         self.uci_packet.as_ref().opcode
     }
-    pub fn get_tlvs(&self) -> &Vec<DeviceConfigTLV> {
-        &self.set_config_cmd.as_ref().tlvs
+    pub fn get_parameters(&self) -> &Vec<DeviceParameter> {
+        &self.set_config_cmd.as_ref().parameters
     }
 }
 impl Into<UciPacketPacket> for SetConfigCmdPacket {
@@ -7380,7 +7377,9 @@ impl Into<CoreCommandPacket> for SetConfigCmdPacket {
 }
 impl SetConfigCmdBuilder {
     pub fn build(self) -> SetConfigCmdPacket {
-        let set_config_cmd = Arc::new(SetConfigCmdData { tlvs: self.tlvs });
+        let set_config_cmd = Arc::new(SetConfigCmdData {
+            parameters: self.parameters,
+        });
         let core_command = Arc::new(CoreCommandData {
             child: CoreCommandDataChild::SetConfigCmd(set_config_cmd),
         });
@@ -7418,7 +7417,7 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::CoreCommand(core_command_packet) => {match core_command_packet.specialize() {/* (3) */
-CoreCommandChild::SetConfigCmd(packet) => {let rebuilder = SetConfigCmdBuilder {tlvs : packet.get_tlvs().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse set_config_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreCommandChild::SetConfigCmd(packet) => {let rebuilder = SetConfigCmdBuilder {parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse set_config_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 set_config_cmd_builder_tests! { set_config_cmd_builder_test_00: b"\x20\x04\x00\x03\x01\x01\x00",}
 
 #[derive(Debug)]
@@ -7642,7 +7641,7 @@ set_config_rsp_builder_tests! { set_config_rsp_builder_test_00: b"\x40\x04\x00\x
 
 #[derive(Debug)]
 struct GetConfigCmdData {
-    cfg_id: Vec<u8>,
+    parameter_ids: Vec<u8>,
 }
 #[derive(Debug, Clone)]
 pub struct GetConfigCmdPacket {
@@ -7653,7 +7652,7 @@ pub struct GetConfigCmdPacket {
 }
 #[derive(Debug)]
 pub struct GetConfigCmdBuilder {
-    pub cfg_id: Vec<u8>,
+    pub parameter_ids: Vec<u8>,
 }
 impl GetConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
@@ -7663,32 +7662,32 @@ impl GetConfigCmdData {
         if bytes.len() < 5 {
             return Err(Error::InvalidLengthError {
                 obj: "GetConfigCmd".to_string(),
-                field: "cfg_id_count".to_string(),
+                field: "parameter_ids_count".to_string(),
                 wanted: 5,
                 got: bytes.len(),
             });
         }
-        let cfg_id_count = u8::from_le_bytes([bytes[4]]);
-        let want_ = 5 + ((cfg_id_count as usize) * 1);
+        let parameter_ids_count = u8::from_le_bytes([bytes[4]]);
+        let want_ = 5 + ((parameter_ids_count as usize) * 1);
         if bytes.len() < want_ {
             return Err(Error::InvalidLengthError {
                 obj: "GetConfigCmd".to_string(),
-                field: "cfg_id".to_string(),
+                field: "parameter_ids".to_string(),
                 wanted: want_,
                 got: bytes.len(),
             });
         }
-        let cfg_id: Vec<u8> = bytes[5..5 + ((cfg_id_count as usize) * 1)]
+        let parameter_ids: Vec<u8> = bytes[5..5 + ((parameter_ids_count as usize) * 1)]
             .to_vec()
             .chunks_exact(1)
             .into_iter()
             .map(|i| u8::from_le_bytes([i[0]]))
             .collect();
-        Ok(Self { cfg_id })
+        Ok(Self { parameter_ids })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
-        buffer[4..5].copy_from_slice(&(self.cfg_id.len() as u8).to_le_bytes());
-        for (i, e) in self.cfg_id.iter().enumerate() {
+        buffer[4..5].copy_from_slice(&(self.parameter_ids.len() as u8).to_le_bytes());
+        for (i, e) in self.parameter_ids.iter().enumerate() {
             buffer[5 + i..5 + i + 1].copy_from_slice(&e.to_le_bytes())
         }
     }
@@ -7698,7 +7697,7 @@ impl GetConfigCmdData {
     fn get_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 1;
-        let ret = ret + (self.cfg_id.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
+        let ret = ret + (self.parameter_ids.len() * ((/* Bits: */8 + /* Dynamic: */ 0) / 8));
         ret
     }
 }
@@ -7763,8 +7762,8 @@ impl GetConfigCmdPacket {
     pub fn get_opcode(&self) -> u8 {
         self.uci_packet.as_ref().opcode
     }
-    pub fn get_cfg_id(&self) -> &Vec<u8> {
-        &self.get_config_cmd.as_ref().cfg_id
+    pub fn get_parameter_ids(&self) -> &Vec<u8> {
+        &self.get_config_cmd.as_ref().parameter_ids
     }
 }
 impl Into<UciPacketPacket> for GetConfigCmdPacket {
@@ -7785,7 +7784,7 @@ impl Into<CoreCommandPacket> for GetConfigCmdPacket {
 impl GetConfigCmdBuilder {
     pub fn build(self) -> GetConfigCmdPacket {
         let get_config_cmd = Arc::new(GetConfigCmdData {
-            cfg_id: self.cfg_id,
+            parameter_ids: self.parameter_ids,
         });
         let core_command = Arc::new(CoreCommandData {
             child: CoreCommandDataChild::GetConfigCmd(get_config_cmd),
@@ -7824,13 +7823,13 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::CoreCommand(core_command_packet) => {match core_command_packet.specialize() {/* (3) */
-CoreCommandChild::GetConfigCmd(packet) => {let rebuilder = GetConfigCmdBuilder {cfg_id : packet.get_cfg_id().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_config_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreCommandChild::GetConfigCmd(packet) => {let rebuilder = GetConfigCmdBuilder {parameter_ids : packet.get_parameter_ids().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_config_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_config_cmd_builder_tests! { get_config_cmd_builder_test_00: b"\x20\x05\x00\x02\x01\x01",}
 
 #[derive(Debug)]
 struct GetConfigRspData {
     status: StatusCode,
-    tlvs: Vec<DeviceConfigTLV>,
+    parameters: Vec<DeviceParameter>,
 }
 #[derive(Debug, Clone)]
 pub struct GetConfigRspPacket {
@@ -7842,7 +7841,7 @@ pub struct GetConfigRspPacket {
 #[derive(Debug)]
 pub struct GetConfigRspBuilder {
     pub status: StatusCode,
-    pub tlvs: Vec<DeviceConfigTLV>,
+    pub parameters: Vec<DeviceParameter>,
 }
 impl GetConfigRspData {
     fn conforms(bytes: &[u8]) -> bool {
@@ -7867,33 +7866,33 @@ impl GetConfigRspData {
         if bytes.len() < 6 {
             return Err(Error::InvalidLengthError {
                 obj: "GetConfigRsp".to_string(),
-                field: "tlvs_count".to_string(),
+                field: "parameters_count".to_string(),
                 wanted: 6,
                 got: bytes.len(),
             });
         }
-        let tlvs_count = u8::from_le_bytes([bytes[5]]);
-        let mut tlvs: Vec<DeviceConfigTLV> = Vec::new();
+        let parameters_count = u8::from_le_bytes([bytes[5]]);
+        let mut parameters: Vec<DeviceParameter> = Vec::new();
         let mut parsable_ = &bytes[6..];
-        let count_ = tlvs_count as usize;
+        let count_ = parameters_count as usize;
         for _ in 0..count_ {
-            match DeviceConfigTLV::parse(&parsable_) {
+            match DeviceParameter::parse(&parsable_) {
                 Ok(parsed) => {
                     parsable_ = &parsable_[parsed.get_total_size()..];
-                    tlvs.push(parsed);
+                    parameters.push(parsed);
                 }
                 Err(Error::ImpossibleStructError) => break,
                 Err(e) => return Err(e),
             }
         }
-        Ok(Self { status, tlvs })
+        Ok(Self { status, parameters })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         let status = self.status.to_u8().unwrap();
         buffer[4..5].copy_from_slice(&status.to_le_bytes()[0..1]);
-        buffer[5..6].copy_from_slice(&(self.tlvs.len() as u8).to_le_bytes());
+        buffer[5..6].copy_from_slice(&(self.parameters.len() as u8).to_le_bytes());
         let mut vec_buffer_ = &mut buffer[6..];
-        for e_ in &self.tlvs {
+        for e_ in &self.parameters {
             e_.write_to(&mut vec_buffer_[0..e_.get_total_size()]);
             vec_buffer_ = &mut vec_buffer_[e_.get_total_size()..];
         }
@@ -7904,7 +7903,11 @@ impl GetConfigRspData {
     fn get_size(&self) -> usize {
         let ret = 0;
         let ret = ret + 2;
-        let ret = ret + self.tlvs.iter().fold(0, |acc, x| acc + x.get_total_size());
+        let ret = ret
+            + self
+                .parameters
+                .iter()
+                .fold(0, |acc, x| acc + x.get_total_size());
         ret
     }
 }
@@ -7972,8 +7975,8 @@ impl GetConfigRspPacket {
     pub fn get_status(&self) -> StatusCode {
         self.get_config_rsp.as_ref().status
     }
-    pub fn get_tlvs(&self) -> &Vec<DeviceConfigTLV> {
-        &self.get_config_rsp.as_ref().tlvs
+    pub fn get_parameters(&self) -> &Vec<DeviceParameter> {
+        &self.get_config_rsp.as_ref().parameters
     }
 }
 impl Into<UciPacketPacket> for GetConfigRspPacket {
@@ -7995,7 +7998,7 @@ impl GetConfigRspBuilder {
     pub fn build(self) -> GetConfigRspPacket {
         let get_config_rsp = Arc::new(GetConfigRspData {
             status: self.status,
-            tlvs: self.tlvs,
+            parameters: self.parameters,
         });
         let core_response = Arc::new(CoreResponseData {
             child: CoreResponseDataChild::GetConfigRsp(get_config_rsp),
@@ -8034,7 +8037,7 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::CoreResponse(core_response_packet) => {match core_response_packet.specialize() {/* (3) */
-CoreResponseChild::GetConfigRsp(packet) => {let rebuilder = GetConfigRspBuilder {status : packet.get_status(),tlvs : packet.get_tlvs().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_config_rsp{:02x?}", core_response_packet); }}}_ => {println!("Couldn't parse core_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreResponseChild::GetConfigRsp(packet) => {let rebuilder = GetConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_config_rsp{:02x?}", core_response_packet); }}}_ => {println!("Couldn't parse core_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_config_rsp_builder_tests! { get_config_rsp_builder_test_00: b"\x40\x05\x00\x05\x01\x01\x00\x01\x01",}
 
 #[derive(Debug)]

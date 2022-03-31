@@ -421,15 +421,15 @@ test GetCapsInfoRsp {
     "\x40\x03\x00\x05\x00\x01\x00\x01\x01",
 }
 
-struct DeviceConfigTLV {
-    cfg_id: DeviceConfigId,
-    _count_(v): 8,
-    v: 8[],
+struct DeviceParameter {
+    id: 8,
+    _count_(value): 8,
+    value: 8[],
 }
 
 packet SetConfigCmd : CoreCommand (opcode = 0x4) { //CORE_SET_CONFIG
-    _count_(tlvs): 8,
-    tlvs: DeviceConfigTLV[],
+    _count_(parameters): 8,
+    parameters: DeviceParameter[],
 }
 
 test SetConfigCmd {
@@ -452,8 +452,8 @@ test SetConfigRsp {
 }
 
 packet GetConfigCmd : CoreCommand (opcode = 0x5) { //CORE_GET_CONFIG
-    _count_(cfg_id): 8,
-    cfg_id: 8[], // DeviceConfigId (Infra does not allow array of enums)
+    _count_(parameter_ids): 8,
+    parameter_ids: 8[],
 }
 
 test GetConfigCmd {
@@ -462,8 +462,8 @@ test GetConfigCmd {
 
 packet GetConfigRsp : CoreResponse (opcode = 0x5) { //CORE_GET_CONFIG
     status: StatusCode,
-    _count_(tlvs): 8,
-    tlvs: DeviceConfigTLV[]
+    _count_(parameters): 8,
+    parameters: DeviceParameter[]
 }
 
 test GetConfigRsp {
