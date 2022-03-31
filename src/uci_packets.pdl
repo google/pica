@@ -437,14 +437,14 @@ test SetConfigCmd {
 }
 
 struct DeviceConfigStatus {
-    cfg_id: DeviceConfigId,
+    parameter_id: 8,
     status: StatusCode,
 }
 
 packet SetConfigRsp : CoreResponse (opcode = 0x4) { //CORE_SET_CONFIG
     status: StatusCode,
-    _count_(cfg_status): 8,
-    cfg_status: DeviceConfigStatus[],
+    _count_(parameters): 8,
+    parameters: DeviceConfigStatus[],
 }
 
 test SetConfigRsp {

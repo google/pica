@@ -157,7 +157,7 @@ impl Pica {
             .send(
                 SetConfigRspBuilder {
                     status: StatusCode::UciStatusOk,
-                    cfg_status: Vec::new(),
+                    parameters: Vec::new(),
                 }
                 .build()
                 .into(),
