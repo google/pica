@@ -42,18 +42,9 @@ impl Device {
         }
     }
 
-    pub async fn send_device_status_notification(
-        &self,
-        device_state: DeviceState
-    ) -> Result<()> {
+    pub async fn send_device_status_notification(&self, device_state: DeviceState) -> Result<()> {
         self.tx
-            .send(
-                DeviceStatusNtfBuilder {
-                    device_state,
-                }
-                .build()
-                .into(),
-            )
+            .send(DeviceStatusNtfBuilder { device_state }.build().into())
             .await?;
         Ok(())
     }

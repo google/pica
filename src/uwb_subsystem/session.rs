@@ -23,7 +23,7 @@ impl Default for Session {
             id: 0,
             session_type: SessionType::FiraRangingSession,
             sequence_number: 0,
-            ranging_interval: 0,
+            ranging_interval: 1000,
             ranging_task: None,
         }
     }
@@ -37,7 +37,13 @@ impl Session {
         self.ranging_task = Some(tokio::spawn(async move {
             loop {
                 time::sleep(Duration::from_millis(ranging_interval as u64)).await;
-                tx.send(PicaCommand::Ranging(device_handle, session_id)).await;
+                if tx
+                    .send(PicaCommand::Ranging(device_handle, session_id))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
             }
         }))
     }
@@ -268,25 +274,41 @@ impl Pica {
                 session.start_ranging(device_handle, pica_tx);
                 session.state = SessionState::SessionStateActive;
                 StatusCode::UciStatusOk
-            },
-            Some(session) if session.state == SessionState::SessionStateActive =>
-                StatusCode::UciStatusSesssionActive,
+            }
+            Some(session) if session.state == SessionState::SessionStateActive => {
+                StatusCode::UciStatusSesssionActive
+            }
             Some(_) => StatusCode::UciStatusFailed,
             None => StatusCode::UciStatusSesssionNotExist,
         };
 
-        device.tx.send(RangeStartRspBuilder { status }.build().into()).await?;
+        device
+            .tx
+            .send(RangeStartRspBuilder { status }.build().into())
+            .await?;
 
         if status == StatusCode::UciStatusOk {
-            device.send_session_status_notification(session_id, SessionState::SessionStateActive, ReasonCode::StateChangeWithSessionManagementCommands).await?;
+            device
+                .send_session_status_notification(
+                    session_id,
+                    SessionState::SessionStateActive,
+                    ReasonCode::StateChangeWithSessionManagementCommands,
+                )
+                .await?;
             // TODO when one session becomes active
-            device.send_device_status_notification(DeviceState::DeviceStateActive).await?;
+            device
+                .send_device_status_notification(DeviceState::DeviceStateActive)
+                .await?;
         }
 
         Ok(())
     }
 
-    pub async fn range_stop(&mut self, device_handle: usize, cmd: RangeStopCmdPacket) -> Result<()> {
+    pub async fn range_stop(
+        &mut self,
+        device_handle: usize,
+        cmd: RangeStopCmdPacket,
+    ) -> Result<()> {
         let session_id = cmd.get_session_id();
         println!("[{}] Range stop", device_handle);
         println!("  session_id=0x{:x}", session_id);
@@ -297,17 +319,28 @@ impl Pica {
                 session.stop_ranging();
                 session.state = SessionState::SessionStateIdle;
                 StatusCode::UciStatusOk
-            },
+            }
             Some(_) => StatusCode::UciStatusFailed,
             None => StatusCode::UciStatusSesssionNotExist,
         };
 
-        device.tx.send(RangeStopRspBuilder { status }.build().into()).await?;
+        device
+            .tx
+            .send(RangeStopRspBuilder { status }.build().into())
+            .await?;
 
         if status == StatusCode::UciStatusOk {
-            device.send_session_status_notification(session_id, SessionState::SessionStateIdle, ReasonCode::StateChangeWithSessionManagementCommands).await?;
+            device
+                .send_session_status_notification(
+                    session_id,
+                    SessionState::SessionStateIdle,
+                    ReasonCode::StateChangeWithSessionManagementCommands,
+                )
+                .await?;
             // TODO when all sessions becomes idle
-            device.send_device_status_notification(DeviceState::DeviceStateReady).await?;
+            device
+                .send_device_status_notification(DeviceState::DeviceStateReady)
+                .await?;
         }
 
         Ok(())
@@ -319,9 +352,26 @@ impl Pica {
         cmd: RangeGetRangingCountCmdPacket,
     ) -> Result<()> {
         let session_id = cmd.get_session_id();
-        println!("[{}] Get ranging count", device_handle);
+        println!("[{}] Range get count", device_handle);
         println!("  session_id=0x{:x}", session_id);
 
+        let device = self.get_device(device_handle);
+        let (status, count) = match device.sessions.get(&session_id) {
+            Some(session) if session.state == SessionState::SessionStateActive => {
+                (StatusCode::UciStatusOk, session.sequence_number as u32)
+            }
+            Some(_) => (StatusCode::UciStatusFailed, 0),
+            None => (StatusCode::UciStatusSesssionNotExist, 0),
+        };
+
+        device
+            .tx
+            .send(
+                RangeGetRangingCountRspBuilder { status, count }
+                    .build()
+                    .into(),
+            )
+            .await?;
         Ok(())
     }
 }

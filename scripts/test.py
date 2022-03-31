@@ -7,23 +7,25 @@ from concurrent.futures import ThreadPoolExecutor
 
 MAX_PAYLOAD_SIZE = 1024
 
-def encode_position(x: int, y: int, z: int, azimuth: int, elevation: int):
-  return (x.to_bytes(2, byteorder='little')
-    + y.to_bytes(2, byteorder='little')
-    + z.to_bytes(2, byteorder='little')
-    + azimuth.to_bytes(2, byteorder='little')
-    + elevation.to_bytes(1, byteorder='little'))
+def encode_position(x: int, y: int, z: int, azimuth: int, elevation: int) -> bytes:
+    return (x.to_bytes(2, byteorder='little')
+        + y.to_bytes(2, byteorder='little')
+        + z.to_bytes(2, byteorder='little')
+        + azimuth.to_bytes(2, byteorder='little')
+        + elevation.to_bytes(1, byteorder='little'))
+
+def encode_session_id(session_id: str) -> bytes:
+    return int(session_id).to_bytes(4, byteorder='little')
+
+def encode_mac_address(mac_address: str) -> bytes:
+    return int(mac_address).to_bytes(8, byteorder='little')
 
 class Device:
     def __init__(self, reader, writer):
         self.reader = reader
         self.writer = writer
 
-        # self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # self.socket.connect((addr, port))
-
     def _send_command(self, cmd: bytes):
-        # self.socket.send(cmd)
         self.writer.write(cmd)
 
     def device_reset(self):
@@ -45,7 +47,21 @@ class Device:
 
     def session_deinit(self, session_id: str = '0'):
         """Deinitialize the session"""
-        self._send_command(bytes([0x21, 0x1, 0x0, 0x4]) + int(session_id).to_bytes(4, byteorder='little'))
+        self._send_command(bytes([0x21, 0x1, 0x0, 0x4]) + encode_session_id(session_id))
+
+    def session_set_app_config(self, session_id: str = '0'):
+        """set APP Configuration Parameters for the requested UWB session."""
+        self._send_command(
+            bytes([0x21, 0x3, 0x0, 0x5]) +
+            encode_session_id(session_id) +
+            bytes([0x0]))
+
+    def session_get_app_config(self, session_id: str = '0'):
+        """retrieve the current APP Configuration Parameters of the requested UWB session."""
+        self._send_command(
+            bytes([0x21, 0x4, 0x0, 0x5]) +
+            encode_session_id(session_id) +
+            bytes([0x0]))
 
     def session_get_count(self):
         """Retrieve number of UWB sessions in the UWBS."""
@@ -53,7 +69,19 @@ class Device:
 
     def session_get_state(self, session_id: str = '0'):
         """Query the current state of the UWB session."""
-        self._send_command(bytes([0x21, 0x6, 0x0, 0x4]) + int(session_id).to_bytes(4, byteorder='little'))
+        self._send_command(bytes([0x21, 0x6, 0x0, 0x4]) + encode_session_id(session_id))
+
+    def range_start(self, session_id: str = '0'):
+        """start a UWB session."""
+        self._send_command(bytes([0x22, 0x0, 0x0, 0x4]) + encode_session_id(session_id))
+
+    def range_stop(self, session_id: str = '0'):
+        """Stop a UWB session."""
+        self._send_command(bytes([0x22, 0x1, 0x0, 0x4]) + encode_session_id(session_id))
+
+    def get_ranging_count(self, session_id: str = '0'):
+        """Get the number of times ranging has been attempted during the ranging session.."""
+        self._send_command(bytes([0x22, 0x3, 0x0, 0x4]) + encode_session_id(session_id))
 
     def pica_create_beacon(
       self,
@@ -64,8 +92,10 @@ class Device:
       azimuth: str = '0',
       elevation: str = '0'):
         """Create a Pica beacon"""
-        self._send_command(bytes([0x29, 0x2, 0x0, 17]) + int(mac_address).to_bytes(8, byteorder='little')
-          + encode_position(int(x), int(y), int(z), int(azimuth), int(elevation)))
+        self._send_command(
+            bytes([0x29, 0x2, 0x0, 17]) +
+            encode_mac_address(mac_address) +
+            encode_position(int(x), int(y), int(z), int(azimuth), int(elevation)))
 
 
     async def read_responses_and_notifications(self):
@@ -103,8 +133,13 @@ async def command_line(device: Device):
         'get_caps_info': device.get_caps_info,
         'session_init': device.session_init,
         'session_deinit': device.session_deinit,
+        'session_set_app_config': device.session_set_app_config,
+        'session_get_app_config': device.session_get_app_config,
         'session_get_count': device.session_get_count,
         'session_get_state': device.session_get_state,
+        'range_start': device.range_start,
+        'range_stop': device.range_stop,
+        'get_ranging_count': device.get_ranging_count,
         'pica_create_beacon': device.pica_create_beacon,
     }
 

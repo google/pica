@@ -158,8 +158,9 @@ impl Pica {
         self.devices.remove(&device_handle);
     }
 
-    async fn ranging(&mut self, _device_handle: usize, _session_id: u32) {
-        todo!()
+    async fn ranging(&mut self, device_handle: usize, session_id: u32) {
+        println!("[{}] Ranging event", device_handle);
+        println!("  session_id={}", session_id);
     }
 
     async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) -> Result<()> {
