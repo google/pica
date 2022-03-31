@@ -102,7 +102,7 @@ impl AppConfig {
 
                 for i in 0..(value.len() / mac_address_size) {
                     self.dst_mac_addresses
-                        .push(u64::from_le_bytes(value[i..i + 4].try_into().unwrap()));
+                        .push(u64::from_le_bytes(value[i..i + 8].try_into().unwrap()));
                 }
             }
             _ => {
