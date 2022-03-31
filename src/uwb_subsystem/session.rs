@@ -45,13 +45,8 @@ impl Session {
         self.ranging_task = Some(tokio::spawn(async move {
             loop {
                 time::sleep(Duration::from_millis(ranging_interval as u64)).await;
-                if tx
-                    .send(PicaCommand::Ranging(device_handle, session_id))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
+                tx.send(PicaCommand::Ranging(device_handle, session_id))
+                    .await;
             }
         }))
     }
