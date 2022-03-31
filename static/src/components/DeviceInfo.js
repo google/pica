@@ -140,27 +140,30 @@ export class DeviceInfo extends LitElement {
             </div>
             <h2>Neighbors</h2>
             <ul class="neighbors">
-              ${Array.from({ length: 10 }).map((_, i) => html`              <li>
-                <pika-orientation
-                  azimuth="${31 * i}"
-                  elevation="${30 * i}"
-                ></pika-orientation>
-                <table>
-                  <tr>
-                    <td>Mac</td>
-                    <td>42:${42 + i}</td>
-                  </tr>
-                  <tr>
-                    <td>Azimuth</td>
-                    <td>${31 * i}</td>
-                  </tr>
-                  <tr>
-                    <td>Elevation</td>
-                    <td>${30 * i}</td>
-                  </tr>
-                </table>
-              </li>
-              `)}
+              ${Array.from({ length: 10 }).map(
+                (_, i) => html`
+                  <li>
+                    <pika-orientation
+                      azimuth="${31 * i}"
+                      elevation="${30 * i}"
+                    ></pika-orientation>
+                    <table>
+                      <tr>
+                        <td>Mac</td>
+                        <td>42:${42 + i}</td>
+                      </tr>
+                      <tr>
+                        <td>Azimuth</td>
+                        <td>${31 * i}</td>
+                      </tr>
+                      <tr>
+                        <td>Elevation</td>
+                        <td>${30 * i}</td>
+                      </tr>
+                    </table>
+                  </li>
+                `
+              )}
             </ul>
           `}
     `;

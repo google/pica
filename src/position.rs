@@ -1,12 +1,31 @@
 use crate::uci_packets::PicaPosition;
 use nalgebra::{Rotation3, Vector3};
+use serde::ser::{Serialize, SerializeStruct, Serializer};
 use std::convert::From;
 use std::default::Default;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Position {
     position: Vector3<f64>,
     rotation: Rotation3<f64>,
+}
+
+impl Serialize for Position {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Position", 5)?;
+        state.serialize_field("x", &self.position.x)?;
+        state.serialize_field("y", &self.position.y)?;
+        state.serialize_field("z", &self.position.z)?;
+
+        let vector = self.rotation * Vector3::new(0.0, 0.0, 1.0);
+
+        state.serialize_field("azimuth", &azimuth(vector).to_degrees())?;
+        state.serialize_field("elevation", &elevation(vector).to_degrees())?;
+        state.end()
+    }
 }
 
 fn checked_div(num: f64, den: f64) -> Option<f64> {
@@ -43,13 +62,8 @@ impl Position {
         assert!(elevation >= -90 && elevation <= 90);
         Position {
             position: Vector3::new(x as f64, y as f64, z as f64),
-            rotation: Rotation3::from_axis_angle(
-                &Vector3::y_axis(),
-                (azimuth as f64).to_radians(),
-            ) * Rotation3::from_axis_angle(
-                &Vector3::x_axis(),
-                (-elevation as f64).to_radians(),
-            ),
+            rotation: Rotation3::from_axis_angle(&Vector3::y_axis(), (azimuth as f64).to_radians())
+                * Rotation3::from_axis_angle(&Vector3::x_axis(), (-elevation as f64).to_radians()),
         }
     }
 
@@ -93,7 +107,7 @@ impl From<&PicaPosition> for Position {
 
 #[cfg(test)]
 mod tests {
-    use super::{Position, elevation, azimuth};
+    use super::{azimuth, elevation, Position};
     use nalgebra::Vector3;
 
     #[test]

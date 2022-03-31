@@ -14,6 +14,9 @@ function createIsometricMatrix() {
 
 export const PROJECTION = createIsometricMatrix();
 
+const OFFSET_X = 100 + 40;
+const OFFSET_Y = 100;
+
 export class Map extends LitElement {
   static styles = css`
     svg {
@@ -77,8 +80,14 @@ export class Map extends LitElement {
   onMouseMove(event) {
     if (this.dragging) {
       const to = this.screenToSvg(event.clientX, event.clientY);
-      this.selected.position.x = Math.floor(to.x) - this.selected.position.z;
-      this.selected.position.y = Math.floor(to.y) + this.selected.position.z;
+      this.selected.position.x = Math.max(
+        Math.floor(to.x) - this.selected.position.z - OFFSET_X,
+        0
+      );
+      this.selected.position.y = Math.max(
+        Math.floor(to.y) + this.selected.position.z - OFFSET_Y,
+        0
+      );
       this.update();
     }
     if (this.changingElevation) {
@@ -87,9 +96,7 @@ export class Map extends LitElement {
       this.update();
     }
     if (this.dragging || this.changingElevation) {
-      this.dispatchEvent(
-        new CustomEvent("move")
-      );
+      this.dispatchEvent(new CustomEvent("move"));
     }
   }
 
@@ -144,7 +151,9 @@ export class Map extends LitElement {
 
       ${this.devices.map(
         (device, i) => svg`
-    <g key="${i}" transform=${`translate(${device.position.x + device.position.z} ${device.position.y - device.position.z})`}
+    <g key="${i}" transform=${`translate(${
+          device.position.x + OFFSET_X + device.position.z
+        } ${device.position.y + OFFSET_Y - device.position.z})`}
         class="${device == this.selected ? "selected marker" : "marker"}">
         <rect x="-40" y="-40" width="40" height="40" fill="#f44336" transform="skewY(-45)"></rect>
         <rect x="0" y="0" width="40" height="40" fill="#ffeb3b" transform="skewX(-45)"></rect>

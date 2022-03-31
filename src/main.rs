@@ -11,14 +11,14 @@ mod web;
 use anyhow::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{broadcast, mpsc};
 use tokio::try_join;
 
 use uwb_subsystem::*;
 
 const UCI_PORT: u16 = 7000;
 
-async fn accept_incoming(tx: Sender<PicaCommand>) -> Result<()> {
+async fn accept_incoming(tx: mpsc::Sender<PicaCommand>) -> Result<()> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, UCI_PORT);
     let uci_listener = TcpListener::bind(uci_socket).await?;
     println!("Pica: Listening on: {}", UCI_PORT);
@@ -32,10 +32,16 @@ async fn accept_incoming(tx: Sender<PicaCommand>) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut pica = Pica::new();
+    let (event_tx, _) = broadcast::channel(16);
+
+    let mut pica = Pica::new(event_tx.clone());
     let tx = pica.tx();
 
-    try_join!(accept_incoming(tx), pica.run(), web::serve())?;
+    try_join!(
+        accept_incoming(tx.clone()),
+        pica.run(),
+        web::serve(tx, event_tx)
+    )?;
 
     Ok(())
 }

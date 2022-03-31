@@ -1,9 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use bytes::BytesMut;
+use serde::Serialize;
 use std::collections::HashMap;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::position::*;
 use crate::uci_packets::*;
@@ -58,6 +59,29 @@ pub enum PicaCommand {
     Ranging(usize, u32),
     // Execute UCI command received for selected device.
     Command(usize, UciCommandPacket),
+    // Set Position
+    SetPosition(MacAddress, Position),
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum PicaEvent {
+    // A Device was added
+    AddDevice {
+        mac_address: MacAddress,
+        #[serde(flatten)]
+        position: Position,
+    },
+    // A Device was removed
+    RemoveDevice {
+        mac_address: MacAddress,
+    },
+    // A Device position has changed
+    UpdatePosition {
+        mac_address: MacAddress,
+        #[serde(flatten)]
+        position: Position,
+    },
 }
 
 #[derive(Debug)]
@@ -72,10 +96,11 @@ pub struct Pica {
     counter: usize,
     rx: mpsc::Receiver<PicaCommand>,
     tx: mpsc::Sender<PicaCommand>,
+    event_tx: broadcast::Sender<PicaEvent>,
 }
 
 impl Pica {
-    pub fn new() -> Self {
+    pub fn new(event_tx: broadcast::Sender<PicaEvent>) -> Self {
         let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
         Pica {
             devices: HashMap::new(),
@@ -83,6 +108,7 @@ impl Pica {
             counter: 0,
             rx,
             tx,
+            event_tx,
         }
     }
 
@@ -98,6 +124,12 @@ impl Pica {
         self.devices.get(&device_handle).unwrap()
     }
 
+    fn send_event(&self, event: PicaEvent) {
+        // An error here means that we have
+        // no receivers, so ignore it
+        let _ = self.event_tx.send(event);
+    }
+
     async fn connect(&mut self, stream: TcpStream) {
         let (packet_tx, mut packet_rx) = mpsc::channel(MAX_SESSION);
         let device_handle = self.counter;
@@ -106,8 +138,14 @@ impl Pica {
         println!("[{}] Connecting device", device_handle);
 
         self.counter += 1;
-        self.devices
-            .insert(device_handle, Device::new(device_handle, packet_tx));
+        let device = Device::new(device_handle, packet_tx);
+
+        self.send_event(PicaEvent::AddDevice {
+            mac_address: device.mac_address as u64,
+            position: device.position.clone(),
+        });
+
+        self.devices.insert(device_handle, device);
 
         // Spawn and detach the connection handling task.
         // The task notifies pica when exiting to let it clean
@@ -157,9 +195,18 @@ impl Pica {
             .unwrap()
     }
 
-    fn disconnect(&mut self, device_handle: usize) {
+    async fn disconnect(&mut self, device_handle: usize) -> Result<()> {
         println!("[{}] Disconnecting device", device_handle);
+
+        let device = self.devices.get(&device_handle).context("Unknown device")?;
+
+        self.send_event(PicaEvent::RemoveDevice {
+            mac_address: device.mac_address as u64,
+        });
+
         self.devices.remove(&device_handle);
+
+        Ok(())
     }
 
     async fn ranging(&mut self, device_handle: usize, session_id: u32) {
@@ -315,11 +362,12 @@ impl Pica {
             use PicaCommand::*;
             match self.rx.recv().await {
                 Some(Connect(stream)) => self.connect(stream).await,
-                Some(Disconnect(device_handle)) => self.disconnect(device_handle),
+                Some(Disconnect(device_handle)) => self.disconnect(device_handle).await?,
                 Some(Ranging(device_handle, session_id)) => {
                     self.ranging(device_handle, session_id).await
                 }
                 Some(Command(device_handle, cmd)) => self.command(device_handle, cmd).await?,
+                Some(SetPosition(mac, position)) => self.set_position(mac, position)?,
                 None => (),
             }
         }
@@ -350,6 +398,16 @@ impl Pica {
                 .into(),
             )
             .await?)
+    }
+
+    fn set_position(&mut self, mac: MacAddress, position: Position) -> Result<()> {
+        /*if let Some(b) = self.beacons.get_mut(&mac_address) {
+            b.position = position;
+            Ok(())
+        } else {
+            Err(anyhow!("Beacon not found"))
+        }*/
+        Ok(())
     }
 
     async fn set_device_position(
@@ -386,6 +444,10 @@ impl Pica {
         let status = if self.beacons.contains_key(&mac_address) {
             StatusCode::UciStatusFailed
         } else {
+            self.send_event(PicaEvent::AddDevice {
+                mac_address: mac_address.clone(),
+                position: Position::from(position),
+            });
             assert!(self
                 .beacons
                 .insert(
@@ -441,6 +503,7 @@ impl Pica {
         println!("  mac_address=0x{:x}", mac_address);
 
         let status = if self.beacons.remove(&mac_address).is_some() {
+            self.send_event(PicaEvent::RemoveDevice { mac_address });
             StatusCode::UciStatusOk
         } else {
             StatusCode::UciStatusFailed

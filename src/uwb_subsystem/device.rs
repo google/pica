@@ -193,7 +193,7 @@ impl Pica {
         device_handle: usize,
         cmd: SetConfigCmdPacket,
     ) -> Result<()> {
-        let device = self.get_device(device_handle);
+        let device = self.get_device_mut(device_handle);
         assert_eq!(device.state, DeviceState::DeviceStateReady); // UCI 6.3
         assert_eq!(
             cmd.get_packet_boundary_flag(),
@@ -217,7 +217,7 @@ impl Pica {
         );
 
         let (status, parameters) = if invalid_config_status.is_empty() {
-            device.config.extend(valid_parameters.iter().cloned());
+            device.config.extend(valid_parameters.into_iter());
             (StatusCode::UciStatusOk, Vec::new())
         } else {
             (StatusCode::UciStatusInvalidParam, invalid_config_status)

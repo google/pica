@@ -1,89 +1,103 @@
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap"
+  rel="stylesheet"
+/>
 
 <style>
-    body {
-        margin: 0;
-        background: var(--background);
-        font-family: 'Montserrat', sans-serif;
-    }
+  body {
+    margin: 0;
+    background: var(--background);
+    font-family: "Montserrat", sans-serif;
+  }
 
-    main {
-        display: flex;
-        flex-direction: row;
-        width: 100vw;
-        height: 100vh;
-    }
+  main {
+    display: flex;
+    flex-direction: row;
+    width: 100vw;
+    height: 100vh;
+  }
 
-    #map {
-        width: var(--map-size);
-    }
+  #map {
+    width: var(--map-size);
+  }
 
-    #info {
-        width: 300px;
-        background: var(--sidebar-color);
-        box-shadow: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
-    }
+  #info {
+    width: 300px;
+    background: var(--sidebar-color);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.23);
+  }
 
-    :root {
-        --map-size: calc(100vw - 300px);
-        --background: #cbd5e1;
-        --grid-line-color: #fbbf24;
-        --grid-background-color: #f8fafc;
-        --sidebar-color: #f0abfc;
-        --selection-color: #f0abfc;
-    }
+  :root {
+    --map-size: calc(100vw - 300px);
+    --background: #cbd5e1;
+    --grid-line-color: #fbbf24;
+    --grid-background-color: #f8fafc;
+    --sidebar-color: #f0abfc;
+    --selection-color: #f0abfc;
+  }
 </style>
 <main>
-    <pika-map id="map"></pika-map>
-    <pika-device-info id="info"></pika-device-info>
+  <pika-map id="map"></pika-map>
+  <pika-device-info id="info"></pika-device-info>
 </main>
 
 <script type="importmap">
-    {
-      "imports": {
-        "lit": "https://cdn.jsdelivr.net/gh/lit/dist@2/core/lit-core.min.js"
-      }
+  {
+    "imports": {
+      "lit": "https://cdn.jsdelivr.net/gh/lit/dist@2/core/lit-core.min.js"
     }
+  }
 </script>
 
 <script type="module">
-    import {LitElement, html} from 'lit';
+  import { LitElement, html } from "lit";
 
-    import './src/components/Map.js';
-    import './src/components/DeviceInfo.js';
+  import "./src/components/Map.js";
+  import "./src/components/DeviceInfo.js";
 
+  const map = document.getElementById("map");
+  const info = document.getElementById("info");
 
-    const map = document.getElementById("map");
-    const info = document.getElementById("info");
+  map.addEventListener(
+    "select",
+    (event) => (info.device = event.detail.device)
+  );
 
-    const devices = [
+  map.addEventListener("move", () => info.update());
+
+  const events = new EventSource("/events");
+
+  events.addEventListener("add-device", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Add Device", data);
+
+    const { mac_address, x, y, z, azimuth, elevation } = data;
+    map.devices = [
+      ...map.devices,
       {
-        mac: "42:42",
-        position: {
-          x: 200,
-          y: 200,
-          z: 0
-        },
-        azimuth: 0,
-        elevation: 0,
-      },
-      {
-        mac: "42:43",
-        position: {
-          x: 100,
-          y: 100,
-          z: 0,
-        },
-        azimuth: 0,
-        elevation: 0,
+        mac: `0x${mac_address.toString(16)}`,
+        position: { x, y, z },
+        azimuth,
+        elevation,
       },
     ];
+  });
 
-    map.devices = devices;
+  events.addEventListener("remove-device", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Remove Device", data);
+    const mac = `0x${data.mac_address.toString(16)}`;
+    if (info.device?.mac === mac) {
+      info.device = null;
+    }
 
-    map.addEventListener("select", (event) => info.device = event.detail.device);
+    map.devices = map.devices.filter((device) => device.mac != mac);
+  });
 
-    map.addEventListener("move", () => info.update());
+  events.addEventListener("update-position", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Update Position", data);
+  });
 </script>

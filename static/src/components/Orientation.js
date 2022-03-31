@@ -22,15 +22,15 @@ export class Orientation extends LitElement {
     }
 
     .x {
-        color: blue;
+      color: blue;
     }
 
     .y {
-        color: green;
+      color: green;
     }
 
     .z {
-        color: red;
+      color: red;
     }
 
     .circle {
@@ -43,19 +43,19 @@ export class Orientation extends LitElement {
     }
 
     .value {
-        color: yellow;
+      color: yellow;
     }
 
     .arrow::after {
-        content: '';
-        display: block;
-        border-left: 2px solid currentColor;
-        border-top: 2px solid currentColor;
-        width: 10px;
-        height: 10px;
-        transform: rotate(45deg) translate(0, -2px);
-        transform-origin: top left;
-      }
+      content: "";
+      display: block;
+      border-left: 2px solid currentColor;
+      border-top: 2px solid currentColor;
+      width: 10px;
+      height: 10px;
+      transform: rotate(45deg) translate(0, -2px);
+      transform-origin: top left;
+    }
   `;
 
   static properties = {
@@ -64,9 +64,9 @@ export class Orientation extends LitElement {
   };
 
   constructor() {
-      super();
-      this.azimuth = 0;
-      this.elevation = 0;
+    super();
+    this.azimuth = 0;
+    this.elevation = 0;
   }
 
   render() {
@@ -78,7 +78,11 @@ export class Orientation extends LitElement {
       <div class="axis arrow x" style="transform: rotateZ(-180deg)"></div>
       <div class="axis arrow y" style="transform: rotateZ(-90deg)"></div>
       <div class="axis arrow z" style="transform: rotateX(-90deg)"></div>
-      <svg viewBox="${-a / 2} ${-a / 2} ${a} ${a}" class="circle" style="transform: rotateZ(90deg) rotateX(${azimuth > 0 ? 0 : 180}deg)">
+      <svg
+        viewBox="${-a / 2} ${-a / 2} ${a} ${a}"
+        class="circle"
+        style="transform: rotateZ(90deg) rotateX(${azimuth > 0 ? 0 : 180}deg)"
+      >
         <circle
           r="${a / 4}"
           stroke-width="${a / 2}"
@@ -87,7 +91,13 @@ export class Orientation extends LitElement {
           fill="none"
         />
       </svg>
-      <svg viewBox="${-a / 2} ${-a / 2} ${a} ${a}" class="circle" style="transform: rotateZ(${90 + azimuth}deg) rotateX(${Math.sign(elevation) * 90}deg)">
+      <svg
+        viewBox="${-a / 2} ${-a / 2} ${a} ${a}"
+        class="circle"
+        style="transform: rotateZ(${90 + azimuth}deg) rotateX(${Math.sign(
+          elevation
+        ) * 90}deg)"
+      >
         <circle
           r="${a / 4}"
           stroke-width="${a / 2}"
@@ -96,8 +106,16 @@ export class Orientation extends LitElement {
           fill="none"
         />
       </svg>
-      <div class="axis value" style="transform: rotateZ(${180 + azimuth}deg) rotateX(${-elevation}deg) rotateY(90deg)"></div>
-      <div class="axis value" style="transform: rotateZ(${180 + azimuth}deg) rotateX(${-elevation}deg)"></div>
+      <div
+        class="axis value"
+        style="transform: rotateZ(${180 +
+        azimuth}deg) rotateX(${-elevation}deg) rotateY(90deg)"
+      ></div>
+      <div
+        class="axis value"
+        style="transform: rotateZ(${180 +
+        azimuth}deg) rotateX(${-elevation}deg)"
+      ></div>
     `;
   }
 }
