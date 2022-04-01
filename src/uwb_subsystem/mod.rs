@@ -85,6 +85,7 @@ pub enum PicaEvent {
     UpdateNeighbor {
         mac_address: MacAddress,
         neighbor: MacAddress,
+        distance: u16,
         azimuth: i16,
         elevation: i8,
     },
@@ -461,8 +462,9 @@ impl Pica {
                 assert!(local.0 == remote.0);
 
                 self.send_event(PicaEvent::UpdateNeighbor {
-                    mac_address: mac_address,
+                    mac_address,
                     neighbor: device_mac_address,
+                    distance: local.0,
                     azimuth: local.1,
                     elevation: local.2,
                 });
@@ -470,6 +472,7 @@ impl Pica {
                 self.send_event(PicaEvent::UpdateNeighbor {
                     mac_address: device_mac_address,
                     neighbor: mac_address,
+                    distance: remote.0,
                     azimuth: remote.1,
                     elevation: remote.2,
                 });
