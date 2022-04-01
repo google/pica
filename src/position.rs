@@ -22,7 +22,7 @@ impl Serialize for Position {
 
         let vector = self.rotation * Vector3::new(0.0, 0.0, 1.0);
 
-        state.serialize_field("azimuth", &(azimuth(vector).to_degrees() as i16))?;
+        state.serialize_field("azimuth", &(-azimuth(vector).to_degrees() as i16))?;
         state.serialize_field("elevation", &(elevation(vector).to_degrees() as i8))?;
         state.end()
     }
@@ -62,8 +62,13 @@ impl Position {
         assert!(elevation >= -90 && elevation <= 90);
         Position {
             position: Vector3::new(x as f64, y as f64, z as f64),
-            rotation: Rotation3::from_axis_angle(&Vector3::y_axis(), (azimuth as f64).to_radians())
-                * Rotation3::from_axis_angle(&Vector3::x_axis(), (-elevation as f64).to_radians()),
+            rotation: Rotation3::from_axis_angle(
+                &Vector3::y_axis(),
+                (-azimuth as f64).to_radians(),
+            ) * Rotation3::from_axis_angle(
+                &Vector3::x_axis(),
+                (elevation as f64).to_radians(),
+            ),
         }
     }
 
@@ -107,51 +112,149 @@ impl From<&PicaPosition> for Position {
 
 #[cfg(test)]
 mod tests {
-    use super::{azimuth, elevation, Position};
-    use nalgebra::Vector3;
+    use super::Position;
+
+    #[test]
+    fn azimuth_simple() {
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(10, 0, 10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == 45);
+            assert!(elevation == 0);
+        }
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(-10, 0, 10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == -45);
+            assert!(elevation == 0);
+        }
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(10, 0, -10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == 135);
+            assert!(elevation == 0);
+        }
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(-10, 0, -10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == -135);
+            assert!(elevation == 0);
+        }
+    }
+
+    #[test]
+    fn elevation_simple() {
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(0, 10, 10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == 0);
+            assert!(elevation == 45);
+        }
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(0, -10, 10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == 0);
+            assert!(elevation == -45);
+        }
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(0, 10, -10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == 180 || azimuth == -180);
+            assert!(elevation == 45);
+        }
+        {
+            let position_a = Position::new(0, 0, 0, 0, 0);
+            let position_b = Position::new(0, -10, -10, 0, 0);
+
+            let (_range, azimuth, elevation) =
+                position_a.compute_range_azimuth_elevation(&position_b);
+            assert!(azimuth == 180 || azimuth == -180);
+            assert!(elevation == -45);
+        }
+    }
 
     #[test]
     fn azimuth_elevation_check_positive() {
-        let position = Position::new(0, 0, 0, 42, 42);
-        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+        let position_a = Position::new(0, 0, 0, 42, 35);
+        let position_b = Position::new(0, 0, 10, 0, 0);
 
-        assert!(azimuth(vector).to_degrees() == 42.0);
-        assert!(elevation(vector).to_degrees() == 42.0);
+        let (_range, azimuth, elevation) = position_a.compute_range_azimuth_elevation(&position_b);
+        println!("{} {}", azimuth, elevation);
+        assert!(azimuth == -42);
+        assert!(elevation == -35);
     }
 
     #[test]
     fn azimuth_elevation_check_first_negative() {
-        let position = Position::new(0, 0, 0, -42, 42);
-        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+        let position_a = Position::new(0, 0, 0, -42, 42);
+        let position_b = Position::new(0, 0, 10, 0, 0);
 
-        assert!(azimuth(vector).to_degrees() == -42.0);
-        assert!(elevation(vector).to_degrees() == 42.0);
+        let (_, azimuth, elevation) = position_a.compute_range_azimuth_elevation(&position_b);
+
+        assert!(azimuth == 42);
+        assert!(elevation == -42);
     }
 
     #[test]
     fn azimuth_elevation_check_second_negative() {
-        let position = Position::new(0, 0, 0, 42, -42);
-        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+        let position_a = Position::new(0, 0, 0, 42, -42);
+        let position_b = Position::new(0, 0, 10, 0, 0);
 
-        assert!(azimuth(vector).to_degrees() == 42.0);
-        assert!(elevation(vector).to_degrees() == -42.0);
+        let (_, azimuth, elevation) = position_a.compute_range_azimuth_elevation(&position_b);
+
+        assert!(azimuth == -42);
+        assert!(elevation == 42);
     }
 
     #[test]
     fn azimuth_elevation_check_negative() {
-        let position = Position::new(0, 0, 0, -42, -42);
-        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+        let position_a = Position::new(0, 0, 0, -42, -42);
+        let position_b = Position::new(0, 0, 10, 0, 0);
+        let (_, azimuth, elevation) = position_a.compute_range_azimuth_elevation(&position_b);
 
-        assert!(azimuth(vector).to_degrees() == -42.0);
-        assert!(elevation(vector).to_degrees() == -42.0);
+        assert!(azimuth == 42);
+        assert!(elevation == 42);
     }
 
     #[test]
     fn azimuth_elevation_check_over_90() {
-        let position = Position::new(0, 0, 0, 90 + 42, 42);
-        let vector = position.rotation * Vector3::new(0.0, 0.0, 1.0);
+        let position_a = Position::new(0, 0, 0, 90 + 42, 42);
+        let position_b = Position::new(0, 0, 10, 0, 0);
+        let (_, azimuth, elevation) = position_a.compute_range_azimuth_elevation(&position_b);
 
-        assert!(azimuth(vector).to_degrees() == 90.0 + 42.0);
-        assert!(elevation(vector).to_degrees() == 42.0);
+        assert!(azimuth == -(90 + 42));
+        assert!(elevation == -42);
+    }
+
+    #[test]
+    fn azimuth_composition() {
+        let position_a = Position::new(0, 0, 0, 45, 0);
+        let position_b = Position::new(10, 0, 10, 0, 0); // 45+45deg
+
+        let res = position_a.compute_range_azimuth_elevation(&position_b);
+        println!("{:?}", res);
+        assert!(res.1 == 0);
+        assert!(res.2 == 0);
     }
 }
