@@ -28,9 +28,9 @@ pub enum DeviceRole {
 
 #[derive(Copy, Clone, FromPrimitive, ToPrimitive)]
 pub enum MacAddressMode {
-    AddressMode_0,
-    AddressMode_1,
-    AddressMode_2,
+    AddressMode0,
+    AddressMode1,
+    AddressMode2,
 }
 
 #[derive(Clone)]
@@ -61,7 +61,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
             raw: HashMap::new(),
-            mac_address_mode: MacAddressMode::AddressMode_0,
+            mac_address_mode: MacAddressMode::AddressMode0,
             device_role: None,
             device_type: None,
             ranging_interval: DEFAULT_RANGING_INTERVAL,
