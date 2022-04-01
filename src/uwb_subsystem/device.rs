@@ -19,6 +19,28 @@ const MAC_VERSION: u16 = 0x130; // Version 1.3.0
 const PHY_VERSION: u16 = 0x130; // Version 1.3.0
 const TEST_VERSION: u16 = 0x110; // Version 1.1
 
+// Capabilities are vendor defined, Android parses capabilities
+// according to these definitions:
+// /android/packages/modules/Uwb/service/java/com/android/server/uwb/config/CapabilityParam.java
+pub const DEFAULT_CAPS_INFO: &'static [(CapTlvType, &'static [u8])] = &[
+    (CapTlvType::SupportedFiraPhyVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
+    (CapTlvType::SupportedFiraMacVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
+    (CapTlvType::SupportedDeviceRoles, &[0x3]),                // INTIATOR | RESPONDER
+    (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
+    (CapTlvType::SupportedStsConfig, &[0x7]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
+    (CapTlvType::SupportedMultiNodeModes, &[0x0]),
+    (CapTlvType::SupportedBlockStriding, &[0x0]),
+    (CapTlvType::SupportedUwbInitiationTime, &[0x0]),
+    (CapTlvType::SupportedChannels, &[0xff]),
+    (CapTlvType::SupportedRframeConfig, &[0x0]),
+    (CapTlvType::SupportedBprfParameterSets, &[0x0]),
+    (CapTlvType::SupportedHprfParameterSets, &[0x0]),
+    (CapTlvType::SupportedCcConstraintLength, &[0x0]),
+    (CapTlvType::SupportedAoa, &[0x0]),
+    (CapTlvType::SupportedAoaResultReqAntennaInterleaving, &[0x0]),
+    (CapTlvType::SupportedExtendedMacAddress, &[0x0]),
+];
+
 pub struct Device {
     pub mac_address: usize,
     pub position: Position,
@@ -172,19 +194,30 @@ impl Pica {
         cmd: GetCapsInfoCmdPacket,
     ) -> Result<()> {
         println!("[{}] GetCapsInfo", device_handle);
-        if cmd.get_packet_boundary_flag() != PacketBoundaryFlag::NotComplete {
-            self.get_device(device_handle)
-                .tx
-                .send(
-                    GetCapsInfoRspBuilder {
-                        status: StatusCode::UciStatusOk,
-                        tlvs: Vec::new(),
-                    }
-                    .build()
-                    .into(),
-                )
-                .await?
-        }
+        assert_eq!(
+            cmd.get_packet_boundary_flag(),
+            PacketBoundaryFlag::Complete,
+            "Boundary flag is true, implement fragmentation"
+        );
+
+        let caps = DEFAULT_CAPS_INFO
+            .iter()
+            .map(|(id, value)| CapTlv {
+                t: *id,
+                v: (*value).into(),
+            })
+            .collect();
+        self.get_device(device_handle)
+            .tx
+            .send(
+                GetCapsInfoRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                    tlvs: caps,
+                }
+                .build()
+                .into(),
+            )
+            .await?;
         Ok(())
     }
 
