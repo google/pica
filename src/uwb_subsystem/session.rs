@@ -1,4 +1,4 @@
-use crate::uci_packets::{AppConfigTlvType, MacAddressIndicator, SessionState, SessionType};
+use crate::uci_packets::{AppConfigTlvType, SessionState, SessionType};
 use anyhow::Result;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -83,32 +83,40 @@ impl AppConfig {
         // an invalid parameter value is received.
         match id {
             AppConfigTlvType::MacAddressMode => {
-                assert!(value.len() == 1);
-                assert!(value[0] == MacAddressIndicator::ExtendedAddress as u8);
+                self.mac_address_mode = MacAddressMode::from_u8(value[0]).unwrap()
             }
             AppConfigTlvType::RangingInterval => {
-                self.ranging_interval = u32::from_le_bytes(value[..].try_into().unwrap());
+                self.ranging_interval = u32::from_le_bytes(value[..].try_into().unwrap())
             }
             AppConfigTlvType::SlotDuration => {
-                self.slot_duration = u16::from_le_bytes(value[..].try_into().unwrap());
+                self.slot_duration = u16::from_le_bytes(value[..].try_into().unwrap())
             }
-            AppConfigTlvType::ChannelNumber => {
-                self.channel_number = value[0];
-            }
+            AppConfigTlvType::ChannelNumber => self.channel_number = value[0],
             AppConfigTlvType::DstMacAddress => {
-                let mac_address_size = std::mem::size_of::<u64>();
-                assert!(value.len() > 0);
-                assert!((value.len() % mac_address_size) == 0);
-
-                for i in 0..(value.len() / mac_address_size) {
-                    self.dst_mac_addresses
-                        .push(u64::from_le_bytes(value[i..i + 8].try_into().unwrap()));
+                let mac_address_size = match self.mac_address_mode {
+                    MacAddressMode::AddressMode0 => 2,
+                    MacAddressMode::AddressMode1 | MacAddressMode::AddressMode2 => 8,
+                };
+                if value.len() % mac_address_size != 0 {
+                    return Err(StatusCode::UciStatusInvalidParam);
                 }
+                self.dst_mac_addresses = value
+                    .chunks(mac_address_size)
+                    .map(|c| match self.mac_address_mode {
+                        MacAddressMode::AddressMode0 => {
+                            u16::from_le_bytes(c.try_into().unwrap()) as u64
+                        }
+                        MacAddressMode::AddressMode1 | MacAddressMode::AddressMode2 => {
+                            u64::from_le_bytes(c.try_into().unwrap())
+                        }
+                    })
+                    .collect();
             }
             _ => {
                 self.raw.insert(id.to_u8().unwrap(), value.clone());
             }
         };
+
         Ok(())
     }
 
