@@ -23,22 +23,35 @@ const TEST_VERSION: u16 = 0x110; // Version 1.1
 // according to these definitions:
 // /android/packages/modules/Uwb/service/java/com/android/server/uwb/config/CapabilityParam.java
 pub const DEFAULT_CAPS_INFO: &'static [(CapTlvType, &'static [u8])] = &[
+    // Fira params
     (CapTlvType::SupportedFiraPhyVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedFiraMacVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedDeviceRoles, &[0x3]),                // INTIATOR | RESPONDER
     (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
     (CapTlvType::SupportedStsConfig, &[0x7]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
-    (CapTlvType::SupportedMultiNodeModes, &[0x0]),
-    (CapTlvType::SupportedBlockStriding, &[0x0]),
-    (CapTlvType::SupportedUwbInitiationTime, &[0x0]),
+    (CapTlvType::SupportedMultiNodeModes, &[0xff]),
+    (CapTlvType::SupportedBlockStriding, &[0x1]),
+    (CapTlvType::SupportedUwbInitiationTime, &[0x01]),
     (CapTlvType::SupportedChannels, &[0xff]),
-    (CapTlvType::SupportedRframeConfig, &[0x0]),
-    (CapTlvType::SupportedBprfParameterSets, &[0x0]),
-    (CapTlvType::SupportedHprfParameterSets, &[0x0]),
-    (CapTlvType::SupportedCcConstraintLength, &[0x0]),
-    (CapTlvType::SupportedAoa, &[0x0]),
-    (CapTlvType::SupportedAoaResultReqAntennaInterleaving, &[0x0]),
-    (CapTlvType::SupportedExtendedMacAddress, &[0x0]),
+    (CapTlvType::SupportedRframeConfig, &[0xff]),
+    (CapTlvType::SupportedBprfParameterSets, &[0xff]),
+    (CapTlvType::SupportedHprfParameterSets, &[0xff]),
+    (CapTlvType::SupportedCcConstraintLength, &[0xff]),
+    (CapTlvType::SupportedAoa, &[0xff]),
+    (CapTlvType::SupportedAoaResultReqAntennaInterleaving, &[0x1]),
+    (CapTlvType::SupportedExtendedMacAddress, &[0x1]),
+    // CCC params
+    (CapTlvType::CccSupportedVersions, &[1, 0]),
+    (CapTlvType::CccSupportedUwbConfigs, &[0]),
+    (CapTlvType::CccSupportedPulseShapeCombos, &[0]),
+    (CapTlvType::CccSupportedRanMultiplier, &[0, 0, 0, 0]),
+    (CapTlvType::CccSupportedChapsPerSlot, &[0xff]),
+    (CapTlvType::CccSupportedSyncCodes, &[0xff, 0xff, 0xff, 0xff]),
+    (CapTlvType::CccSupportedChannels, &[0xff]),
+    (
+        CapTlvType::CccSupportedHoppingConfigModesAndSequences,
+        &[0xff],
+    ),
 ];
 
 pub struct Device {
