@@ -120,38 +120,24 @@ impl Device {
     pub fn get_session_cnt(&self) -> usize {
         self.sessions.len()
     }
-}
 
-impl Pica {
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
-    pub async fn device_reset(
-        &mut self,
-        device_handle: usize,
-        cmd: DeviceResetCmdPacket,
-    ) -> Result<()> {
+    pub async fn device_reset(&mut self, cmd: DeviceResetCmdPacket) -> Result<()> {
         let reset_config = cmd.get_reset_config();
-        println!("[{}] DeviceReset", device_handle);
+        println!("[{}] DeviceReset", self.mac_address);
         println!("  reset_config={}", reset_config);
-        {
-            let mut device = self.get_device_mut(device_handle);
-            let status = match reset_config {
-                ResetConfig::UwbsReset => StatusCode::UciStatusOk,
-            };
-            device.state = DeviceState::DeviceStateReady;
-            device
-                .tx
-                .send(DeviceResetRspBuilder { status }.build().into())
-                .await?;
-        }
 
-        self.devices.insert(
-            device_handle,
-            Device::new(device_handle, self.devices[&device_handle].tx.clone()),
-        );
-        Ok(self
-            .get_device(device_handle)
-            .tx
+        let status = match reset_config {
+            ResetConfig::UwbsReset => StatusCode::UciStatusOk,
+        };
+        self.state = DeviceState::DeviceStateReady;
+        self.tx
+            .send(DeviceResetRspBuilder { status }.build().into())
+            .await?;
+
+        *self = Device::new(self.mac_address, self.tx.clone());
+        self.tx
             .send(
                 DeviceStatusNtfBuilder {
                     device_state: DeviceState::DeviceStateReady,
@@ -159,19 +145,15 @@ impl Pica {
                 .build()
                 .into(),
             )
-            .await?)
+            .await?;
+        Ok(())
     }
 
-    pub async fn get_device_info(
-        &mut self,
-        device_handle: usize,
-        _cmd: GetDeviceInfoCmdPacket,
-    ) -> Result<()> {
+    pub async fn get_device_info(&self, _cmd: GetDeviceInfoCmdPacket) -> Result<()> {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
-        println!("[{}] GetDeviceInfo", device_handle);
-        let device = self.get_device(device_handle);
-        assert_eq!(device.state, DeviceState::DeviceStateReady);
-        Ok(device
+        println!("[{}] GetDeviceInfo", self.mac_address);
+        assert_eq!(self.state, DeviceState::DeviceStateReady);
+        Ok(self
             .tx
             .send(
                 GetDeviceInfoRspBuilder {
@@ -188,12 +170,8 @@ impl Pica {
             .await?)
     }
 
-    pub async fn get_caps_info(
-        &mut self,
-        device_handle: usize,
-        cmd: GetCapsInfoCmdPacket,
-    ) -> Result<()> {
-        println!("[{}] GetCapsInfo", device_handle);
+    pub async fn get_caps_info(&self, cmd: GetCapsInfoCmdPacket) -> Result<()> {
+        println!("[{}] GetCapsInfo", self.mac_address);
         assert_eq!(
             cmd.get_packet_boundary_flag(),
             PacketBoundaryFlag::Complete,
@@ -207,8 +185,7 @@ impl Pica {
                 v: (*value).into(),
             })
             .collect();
-        self.get_device(device_handle)
-            .tx
+        self.tx
             .send(
                 GetCapsInfoRspBuilder {
                     status: StatusCode::UciStatusOk,
@@ -221,14 +198,9 @@ impl Pica {
         Ok(())
     }
 
-    pub async fn set_config(
-        &mut self,
-        device_handle: usize,
-        cmd: SetConfigCmdPacket,
-    ) -> Result<()> {
-        println!("[{}] SetConfig", device_handle);
-        let device = self.get_device_mut(device_handle);
-        assert_eq!(device.state, DeviceState::DeviceStateReady); // UCI 6.3
+    pub async fn set_config(&mut self, cmd: SetConfigCmdPacket) -> Result<()> {
+        println!("[{}] SetConfig", self.mac_address);
+        assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
         assert_eq!(
             cmd.get_packet_boundary_flag(),
             PacketBoundaryFlag::Complete,
@@ -253,30 +225,25 @@ impl Pica {
         );
 
         let (status, parameters) = if invalid_config_status.is_empty() {
-            device.config.extend(valid_parameters.into_iter());
+            self.config.extend(valid_parameters.into_iter());
             (StatusCode::UciStatusOk, Vec::new())
         } else {
             (StatusCode::UciStatusInvalidParam, invalid_config_status)
         };
 
-        Ok(device
+        Ok(self
             .tx
             .send(SetConfigRspBuilder { status, parameters }.build().into())
             .await?)
     }
 
-    pub async fn get_config(
-        &mut self,
-        device_handle: usize,
-        cmd: GetConfigCmdPacket,
-    ) -> Result<()> {
-        println!("[{}] GetConfig", device_handle);
+    pub async fn get_config(&self, cmd: GetConfigCmdPacket) -> Result<()> {
+        println!("[{}] GetConfig", self.mac_address);
         assert_eq!(
             cmd.get_packet_boundary_flag(),
             PacketBoundaryFlag::Complete,
             "Boundary flag is true, implement fragmentation"
         );
-        let device = self.get_device(device_handle);
         let ids = cmd.get_parameter_ids();
 
         let (valid_parameters, invalid_parameters) = ids.iter().fold(
@@ -287,7 +254,7 @@ impl Pica {
                 // If the status code is ok, return the params
                 // If there is at least one invalid param, return the list of invalid params
                 // If the ID is not present in our config, return the Type with length = 0
-                match device.config.get(id) {
+                match self.config.get(id) {
                     Some(value) => valid_parameters.push(DeviceParameter {
                         id: *id,
                         value: value.clone(),
@@ -308,7 +275,7 @@ impl Pica {
             (StatusCode::UciStatusInvalidParam, invalid_parameters)
         };
 
-        Ok(device
+        Ok(self
             .tx
             .send(GetConfigRspBuilder { status, parameters }.build().into())
             .await?)

@@ -287,16 +287,20 @@ impl Pica {
         match cmd.specialize() {
             UciCommandChild::CoreCommand(core_command) => match core_command.specialize() {
                 CoreCommandChild::DeviceResetCmd(cmd) => {
-                    self.device_reset(device_handle, cmd).await
+                    self.get_device_mut(device_handle).device_reset(cmd).await
                 }
                 CoreCommandChild::GetDeviceInfoCmd(cmd) => {
-                    self.get_device_info(device_handle, cmd).await
+                    self.get_device(device_handle).get_device_info(cmd).await
                 }
                 CoreCommandChild::GetCapsInfoCmd(cmd) => {
-                    self.get_caps_info(device_handle, cmd).await
+                    self.get_device(device_handle).get_caps_info(cmd).await
                 }
-                CoreCommandChild::SetConfigCmd(cmd) => self.set_config(device_handle, cmd).await,
-                CoreCommandChild::GetConfigCmd(cmd) => self.get_config(device_handle, cmd).await,
+                CoreCommandChild::SetConfigCmd(cmd) => {
+                    self.get_device_mut(device_handle).set_config(cmd).await
+                }
+                CoreCommandChild::GetConfigCmd(cmd) => {
+                    self.get_device(device_handle).get_config(cmd).await
+                }
                 CoreCommandChild::None => anyhow::bail!("Unsupported core command"),
             },
             UciCommandChild::SessionCommand(session_command) => {
