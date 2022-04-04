@@ -268,7 +268,7 @@ impl Pica {
             .send(
                 // TODO: support extended address
                 ShortMacTwoWayRangeDataNtfBuilder {
-                    sequence_number: session.sequence_number, //TODO increment
+                    sequence_number: session.sequence_number,
                     session_id: session_id as u32,
                     rcr_indicator: 0,            //TODO
                     current_ranging_interval: 0, //TODO
@@ -279,6 +279,11 @@ impl Pica {
             )
             .await
             .unwrap();
+
+        let device = self.get_device_mut(device_handle);
+        let session = device.get_session_mut(session_id).unwrap();
+
+        session.sequence_number += 1;
     }
 
     async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) -> Result<()> {
