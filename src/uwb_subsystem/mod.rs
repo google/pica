@@ -306,25 +306,30 @@ impl Pica {
             UciCommandChild::SessionCommand(session_command) => {
                 match session_command.specialize() {
                     SessionCommandChild::SessionInitCmd(cmd) => {
-                        self.session_init(device_handle, cmd).await
+                        self.get_device_mut(device_handle).session_init(cmd).await
                     }
                     SessionCommandChild::SessionDeinitCmd(cmd) => {
-                        self.session_deinit(device_handle, cmd).await
+                        self.get_device_mut(device_handle).session_deinit(cmd).await
                     }
                     SessionCommandChild::SessionSetAppConfigCmd(cmd) => {
-                        self.session_set_app_config(device_handle, cmd).await
+                        self.get_device_mut(device_handle)
+                            .session_set_app_config(cmd)
+                            .await
                     }
                     SessionCommandChild::SessionGetAppConfigCmd(cmd) => {
-                        self.session_get_app_config(device_handle, cmd).await
+                        self.get_device(device_handle)
+                            .session_get_app_config(cmd)
+                            .await
                     }
                     SessionCommandChild::SessionGetCountCmd(cmd) => {
-                        self.session_get_count(device_handle, cmd).await
+                        self.get_device(device_handle).session_get_count(cmd).await
                     }
                     SessionCommandChild::SessionGetStateCmd(cmd) => {
-                        self.session_get_state(device_handle, cmd).await
+                        self.get_device(device_handle).session_get_state(cmd).await
                     }
                     SessionCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
-                        self.session_update_controller_multicast_list(device_handle, cmd)
+                        self.get_device_mut(device_handle)
+                            .session_update_controller_multicast_list(cmd)
                             .await
                     }
                     SessionCommandChild::None => anyhow::bail!("Unsupported session command"),
@@ -333,13 +338,18 @@ impl Pica {
             UciCommandChild::RangingCommand(ranging_command) => {
                 match ranging_command.specialize() {
                     RangingCommandChild::RangeStartCmd(cmd) => {
-                        self.range_start(device_handle, cmd).await
+                        let pica_tx = self.tx.clone();
+                        self.get_device_mut(device_handle)
+                            .range_start(cmd, pica_tx)
+                            .await
                     }
                     RangingCommandChild::RangeStopCmd(cmd) => {
-                        self.range_stop(device_handle, cmd).await
+                        self.get_device_mut(device_handle).range_stop(cmd).await
                     }
                     RangingCommandChild::RangeGetRangingCountCmd(cmd) => {
-                        self.range_get_ranging_count(device_handle, cmd).await
+                        self.get_device_mut(device_handle)
+                            .range_get_ranging_count(cmd)
+                            .await
                     }
                     RangingCommandChild::None => anyhow::bail!("Unsupported ranging command"),
                 }
