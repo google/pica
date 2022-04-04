@@ -244,8 +244,9 @@ impl Pica {
 
                     assert!(local.0 == remote.0);
 
-                    measurements.push(ExtendedAddressTwoWayRangingMeasurement {
-                        mac_address: *mac_address,
+                    // TODO: support extended address
+                    measurements.push(ShortAddressTwoWayRangingMeasurement {
+                        mac_address: *mac_address as u16,
                         status: StatusCode::UciStatusOk,
                         nlos: 0, // in Line Of Sight
                         distance: local.0,
@@ -265,7 +266,8 @@ impl Pica {
         device
             .tx
             .send(
-                ExtendedMacTwoWayRangeDataNtfBuilder {
+                // TODO: support extended address
+                ShortMacTwoWayRangeDataNtfBuilder {
                     sequence_number: session.sequence_number, //TODO increment
                     session_id: session_id as u32,
                     rcr_indicator: 0,            //TODO
