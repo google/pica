@@ -142,17 +142,38 @@ class Device:
             for i in range(0, len(l), n):
                 yield l[i:i + n]
 
+        packet = bytes()
+        buffer = bytes()
+        expect = 4
+        have_header = False
+
         while True:
-            packet = await self.reader.read(1024)
+            chunk = await self.reader.read(expect)
+
             # Disconnected from Pica
-            if len(packet) == 0:
+            if len(chunk) == 0:
                 break
-            # Format and print raw response data
-            txt = '\n  '.join([
-                ' '.join(['{:02x}'.format(b) for b in shard]) for
-                shard in chunks(packet, 16)])
-            print(f'Received UCI packet [{len(packet)}]:')
-            print(f'  {txt}')
+
+            # Waiting for more bytes
+            buffer += chunk
+            if len(buffer) < expect:
+                continue
+
+            packet += buffer
+            buffer =  bytes()
+            if not have_header:
+                have_header = True
+                expect = packet[3]
+            else:
+                # Format and print raw response data
+                txt = '\n  '.join([
+                    ' '.join(['{:02x}'.format(b) for b in shard]) for
+                    shard in chunks(packet, 16)])
+                print(f'Received UCI packet [{len(packet)}]:')
+                print(f'  {txt}')
+                packet = bytes()
+                have_header = False
+                expect = 4
 
 async def ainput(prompt: str = ''):
     with ThreadPoolExecutor(1, 'ainput') as executor:
