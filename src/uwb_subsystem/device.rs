@@ -55,6 +55,7 @@ pub const DEFAULT_CAPS_INFO: &'static [(CapTlvType, &'static [u8])] = &[
 ];
 
 pub struct Device {
+    pub handle: usize,
     pub mac_address: usize,
     pub position: Position,
     pub state: DeviceState,
@@ -67,6 +68,7 @@ pub struct Device {
 impl Device {
     pub fn new(device_handle: usize, tx: mpsc::Sender<UciPacketPacket>) -> Self {
         Device {
+            handle: device_handle,
             mac_address: device_handle,
             position: Position::default(),
             state: DeviceState::DeviceStateReady,
@@ -138,7 +140,7 @@ impl Device {
     // send a notification once the reset is done
     pub async fn device_reset(&mut self, cmd: DeviceResetCmdPacket) -> Result<()> {
         let reset_config = cmd.get_reset_config();
-        println!("[{}] DeviceReset", self.mac_address);
+        println!("[{}] DeviceReset", self.handle);
         println!("  reset_config={}", reset_config);
 
         let status = match reset_config {
@@ -149,7 +151,7 @@ impl Device {
             .send(DeviceResetRspBuilder { status }.build().into())
             .await?;
 
-        *self = Device::new(self.mac_address, self.tx.clone());
+        *self = Device::new(self.handle, self.tx.clone());
         self.tx
             .send(
                 DeviceStatusNtfBuilder {
@@ -164,7 +166,7 @@ impl Device {
 
     pub async fn get_device_info(&self, _cmd: GetDeviceInfoCmdPacket) -> Result<()> {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
-        println!("[{}] GetDeviceInfo", self.mac_address);
+        println!("[{}] GetDeviceInfo", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady);
         Ok(self
             .tx
@@ -184,7 +186,7 @@ impl Device {
     }
 
     pub async fn get_caps_info(&self, cmd: GetCapsInfoCmdPacket) -> Result<()> {
-        println!("[{}] GetCapsInfo", self.mac_address);
+        println!("[{}] GetCapsInfo", self.handle);
         assert_eq!(
             cmd.get_packet_boundary_flag(),
             PacketBoundaryFlag::Complete,
@@ -212,7 +214,7 @@ impl Device {
     }
 
     pub async fn set_config(&mut self, cmd: SetConfigCmdPacket) -> Result<()> {
-        println!("[{}] SetConfig", self.mac_address);
+        println!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
         assert_eq!(
             cmd.get_packet_boundary_flag(),
@@ -251,7 +253,7 @@ impl Device {
     }
 
     pub async fn get_config(&self, cmd: GetConfigCmdPacket) -> Result<()> {
-        println!("[{}] GetConfig", self.mac_address);
+        println!("[{}] GetConfig", self.handle);
         assert_eq!(
             cmd.get_packet_boundary_flag(),
             PacketBoundaryFlag::Complete,
@@ -292,5 +294,321 @@ impl Device {
             .tx
             .send(GetConfigRspBuilder { status, parameters }.build().into())
             .await?)
+    }
+
+    pub async fn session_init(&mut self, cmd: SessionInitCmdPacket) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        let session_type = cmd.get_session_type();
+        println!("[{}] Session init", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+        println!("  session_type={}", session_type);
+
+        let mut session = Session::default();
+        session.state = SessionState::SessionStateInit;
+        session.id = session_id;
+        session.session_type = session_type;
+        let status = self.add_session(session);
+
+        self.tx
+            .send(SessionInitRspBuilder { status }.build().into())
+            .await?;
+
+        if status == StatusCode::UciStatusOk {
+            self.send_session_status_notification(
+                session_id,
+                SessionState::SessionStateInit,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn session_deinit(&mut self, cmd: SessionDeinitCmdPacket) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session deinit", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let status = match self.remove_session(session_id) {
+            Ok(_) => StatusCode::UciStatusOk,
+            Err(_) => StatusCode::UciStatusSesssionNotExist,
+        };
+
+        self.tx
+            .send(SessionDeinitRspBuilder { status }.build().into())
+            .await?;
+
+        if status == StatusCode::UciStatusOk {
+            self.send_session_status_notification(
+                session_id,
+                SessionState::SessionStateDeinit,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn session_set_app_config(
+        &mut self,
+        cmd: SessionSetAppConfigCmdPacket,
+    ) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session set app config", self.handle);
+        println!("  session_id=0x{}", session_id);
+        assert_eq!(
+            cmd.get_packet_boundary_flag(),
+            PacketBoundaryFlag::Complete,
+            "Boundary flag is true, implement fragmentation"
+        );
+
+        let (status, session_state, parameters) = match self.get_session_mut(session_id) {
+            Some(session)
+                if session.state == SessionState::SessionStateInit
+                    && session.session_type == SessionType::FiraRangingSession =>
+            {
+                session.state = SessionState::SessionStateIdle;
+                let mut app_config = session.app_config.clone();
+                let invalid_parameters = app_config.extend(cmd.get_parameters());
+                let status = if invalid_parameters.is_empty() {
+                    session.app_config = app_config;
+                    session.state = SessionState::SessionStateIdle;
+                    StatusCode::UciStatusOk
+                } else {
+                    StatusCode::UciStatusInvalidParam
+                };
+
+                (status, session.state, invalid_parameters)
+            }
+            Some(_) => (
+                StatusCode::UciStatusSesssionActive,
+                SessionState::SessionStateActive,
+                Vec::new(),
+            ),
+            None => (
+                StatusCode::UciStatusSesssionNotExist,
+                SessionState::SessionStateDeinit,
+                Vec::new(),
+            ),
+        };
+
+        self.tx
+            .send(
+                SessionSetAppConfigRspBuilder { status, parameters }
+                    .build()
+                    .into(),
+            )
+            .await?;
+
+        if status == StatusCode::UciStatusOk {
+            self.send_session_status_notification(
+                session_id,
+                session_state,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            )
+            .await?
+        }
+        Ok(())
+    }
+
+    pub async fn session_get_app_config(&self, cmd: SessionGetAppConfigCmdPacket) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session get app config", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let (status, parameters) = match self.get_session(session_id) {
+            Some(session) => {
+                let (valid_parameters, invalid_parameters) = cmd.get_parameters().iter().fold(
+                    (Vec::new(), Vec::new()),
+                    |(mut valid_parameters, mut invalid_parameters), config_id| {
+                        match AppConfigTlvType::from_u8(*config_id)
+                            .and_then(|id| session.app_config.get_config(id))
+                        {
+                            Some(value) => valid_parameters.push(AppConfigParameter {
+                                id: *config_id,
+                                value,
+                            }),
+                            None => invalid_parameters.push(AppConfigParameter {
+                                id: *config_id,
+                                value: Vec::new(),
+                            }),
+                        }
+                        (valid_parameters, invalid_parameters)
+                    },
+                );
+
+                if invalid_parameters.is_empty() {
+                    (StatusCode::UciStatusOk, valid_parameters)
+                } else {
+                    (StatusCode::UciStatusFailed, invalid_parameters)
+                }
+            }
+            None => (StatusCode::UciStatusSesssionNotExist, Vec::new()),
+        };
+
+        self.tx
+            .send(
+                SessionGetAppConfigRspBuilder { status, parameters }
+                    .build()
+                    .into(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn session_get_count(&self, _cmd: SessionGetCountCmdPacket) -> Result<()> {
+        println!("[{}] Session get count", self.handle);
+
+        let session_count = self.get_session_cnt() as u8;
+        self.tx
+            .send(
+                SessionGetCountRspBuilder {
+                    status: StatusCode::UciStatusOk,
+                    session_count,
+                }
+                .build()
+                .into(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn session_get_state(&self, cmd: SessionGetStateCmdPacket) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session get state", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let (status, session_state) = match self.get_session(session_id).map(|s| s.state) {
+            Some(state) => (StatusCode::UciStatusOk, state),
+            None => (
+                StatusCode::UciStatusSesssionNotExist,
+                SessionState::SessionStateInit,
+            ),
+        };
+        self.tx
+            .send(
+                SessionGetStateRspBuilder {
+                    status,
+                    session_state,
+                }
+                .build()
+                .into(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn session_update_controller_multicast_list(
+        &mut self,
+        cmd: SessionUpdateControllerMulticastListCmdPacket,
+    ) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Session get state", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        Ok(())
+    }
+
+    pub async fn range_start(
+        &mut self,
+        cmd: RangeStartCmdPacket,
+        pica_tx: mpsc::Sender<PicaCommand>,
+    ) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Range start", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let device_handle = self.handle;
+        let status = match self.get_session_mut(session_id) {
+            Some(session) if session.state == SessionState::SessionStateIdle => {
+                session.start_ranging(device_handle, pica_tx);
+                session.state = SessionState::SessionStateActive;
+                StatusCode::UciStatusOk
+            }
+            Some(session) if session.state == SessionState::SessionStateActive => {
+                StatusCode::UciStatusSesssionActive
+            }
+            Some(_) => StatusCode::UciStatusFailed,
+            None => StatusCode::UciStatusSesssionNotExist,
+        };
+
+        self.tx
+            .send(RangeStartRspBuilder { status }.build().into())
+            .await?;
+
+        if status == StatusCode::UciStatusOk {
+            self.send_session_status_notification(
+                session_id,
+                SessionState::SessionStateActive,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            )
+            .await?;
+            // TODO when one session becomes active
+            self.send_device_status_notification(DeviceState::DeviceStateActive)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn range_stop(&mut self, cmd: RangeStopCmdPacket) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Range stop", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let status = match self.get_session_mut(session_id) {
+            Some(session) if session.state == SessionState::SessionStateActive => {
+                session.stop_ranging();
+                session.state = SessionState::SessionStateIdle;
+                StatusCode::UciStatusOk
+            }
+            Some(_) => StatusCode::UciStatusFailed,
+            None => StatusCode::UciStatusSesssionNotExist,
+        };
+
+        self.tx
+            .send(RangeStopRspBuilder { status }.build().into())
+            .await?;
+
+        if status == StatusCode::UciStatusOk {
+            self.send_session_status_notification(
+                session_id,
+                SessionState::SessionStateIdle,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            )
+            .await?;
+            // TODO when all sessions becomes idle
+            self.send_device_status_notification(DeviceState::DeviceStateReady)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn range_get_ranging_count(
+        &mut self,
+        cmd: RangeGetRangingCountCmdPacket,
+    ) -> Result<()> {
+        let session_id = cmd.get_session_id();
+        println!("[{}] Range get count", self.handle);
+        println!("  session_id=0x{:x}", session_id);
+
+        let (status, count) = match self.get_session(session_id) {
+            Some(session) if session.state == SessionState::SessionStateActive => {
+                (StatusCode::UciStatusOk, session.sequence_number as u32)
+            }
+            Some(_) => (StatusCode::UciStatusFailed, 0),
+            None => (StatusCode::UciStatusSesssionNotExist, 0),
+        };
+
+        self.tx
+            .send(
+                RangeGetRangingCountRspBuilder { status, count }
+                    .build()
+                    .into(),
+            )
+            .await?;
+        Ok(())
     }
 }
