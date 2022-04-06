@@ -59,22 +59,25 @@ Pica implements vendor commands in the group `0x09` to let hosts report their
 MAC address and current position. Other commands allow the hosts to create and
 modify beacons.
 
+## Position
+
+The position encodes the physical localization and orientation of an UWB
+device.
+
+| Position Fields | Length   | Value/Description                               |
+|-----------------|----------|-------------------------------------------------|
+| X               | 2 Octets | X Coordinate                                    |
+| Y               | 2 Octets | Y Coordinate                                    |
+| Z               | 2 Octets | Z Coordinate                                    |
+| Azimuth         | 2 Octets | Azimuth                                         |
+| Elevation       | 1 Octets | Elevation                                       |
+
 ## PICA_INIT_DEVICE_CMD (`0x00`)
 
 | Payload Fields | Length   | Value/Description                                |
 |----------------|----------|--------------------------------------------------|
-| Mac Address    | 8 Octets | Replace the generated mac address for the UWB    |
-:                :          : subsystem. The default mac address is a counter  :
-:                :          : incremented for  each new connection.            :
+| Mac Address    | 8 Octets | Replace the generated mac address for the UWB subsystem. The default mac address is a counter  incremented for  each new connection. |
 | Position       | 9 Octets | Report the initial position of the UWB device.   |
-:                :          : The position encodes, in this order, the         :
-:                :          : position (X,Y,Z),  azimuth, and elevation of the :
-:                :          : device.                                          :
-:                :          :  - X: 2 Octets,                                  :
-:                :          :  - Y: 2 Octets,                                  :
-:                :          :  - Z: 2 Octets,                                  :
-:                :          :  - Azimuth: 2 Octets,                            :
-:                :          :  - Elevation: 1 Octet                            :
 
 ## PICA_INIT_DEVICE_RSP (`0x00`)
 
@@ -87,14 +90,6 @@ modify beacons.
 | Payload Fields | Length   | Value/Description                                |
 |----------------|----------|--------------------------------------------------|
 | Position       | 9 Octets | Report the current position of the UWB device.   |
-:                :          : The position encodes, in this order, the         :
-:                :          : position (X,Y,Z),  azimuth, and elevation of the :
-:                :          : device.                                          :
-:                :          :  - X: 2 Octets,                                  :
-:                :          :  - Y: 2 Octets,                                  :
-:                :          :  - Z: 2 Octets,                                  :
-:                :          :  - Azimuth: 2 Octets,                            :
-:                :          :  - Elevation: 1 Octet                            :
 
 ## PICA_SET_DEVICE_POSITION_RSP (`0x01`)
 
@@ -108,14 +103,6 @@ modify beacons.
 |----------------|----------|--------------------------------------------------|
 | Mac Address    | 8 Octets | Selected mac address for the UWB beacon.         |
 | Position       | 9 Octets | Report the initial position of the UWB beacon.   |
-:                :          : The position encodes, in this order, the         :
-:                :          : position (X,Y,Z),  azimuth, and elevation of the :
-:                :          : device.                                          :
-:                :          :  - X: 2 Octets,                                  :
-:                :          :  - Y: 2 Octets,                                  :
-:                :          :  - Z: 2 Octets,                                  :
-:                :          :  - Azimuth: 2 Octets,                            :
-:                :          :  - Elevation: 1 Octet                            :
 
 ## PICA_CREATE_BEACON_RSP (`0x02`)
 
@@ -129,14 +116,6 @@ modify beacons.
 |----------------|----------|--------------------------------------------------|
 | Mac Address    | 8 Octets | Mac address of the UWB beacon to edit.           |
 | Position       | 9 Octets | Report the current position of the UWB beacon.   |
-:                :          : The position encodes, in this order, the         :
-:                :          : position (X,Y,Z),  azimuth, and elevation of the :
-:                :          : device.                                          :
-:                :          :  - X: 2 Octets,                                  :
-:                :          :  - Y: 2 Octets,                                  :
-:                :          :  - Z: 2 Octets,                                  :
-:                :          :  - Azimuth: 2 Octets,                            :
-:                :          :  - Elevation: 1 Octet                            :
 
 ## PICA_SET_BEACON_POSITION_RSP (`0x03`)
 
