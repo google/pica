@@ -49,7 +49,6 @@ class Device:
         self.writer = writer
 
     def _send_command(self, cmd: bytes):
-        print(f"Sending: {[b for b in cmd]}")
         self.writer.write(cmd)
 
     def device_reset(self, **kargs):
@@ -169,8 +168,15 @@ class Device:
                 txt = '\n  '.join([
                     ' '.join(['{:02x}'.format(b) for b in shard]) for
                     shard in chunks(packet, 16)])
+
+                command_buffer = readline.get_line_buffer()
+                print('\r', end='')
                 print(f'Received UCI packet [{len(packet)}]:')
                 print(f'  {txt}')
+                uci_packet = uci_packets.UciPacket.parse(packet)
+                pprint.pprint(uci_packet, compact=False)
+                print(f'--> {command_buffer}', end='', flush=True)
+
                 packet = bytes()
                 have_header = False
                 expect = 4
