@@ -12,6 +12,10 @@ Pica supports the following features:
 - Pica provides additional vendor commands to create and configure
   virtual beacons.
 
+# Project
+
+To follow the project development, go to our [Table workspace](https://tables.area120.google.com/u/0/workspace/bfwweREaj8B6VK-gSOG4Qm/table/8sIowZVeFFi23ptG2Ej_uL).
+
 # Architecture
 
 - *Device* UWB subsystem created for a connected host.
