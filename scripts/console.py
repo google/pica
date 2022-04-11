@@ -5,17 +5,19 @@ import readline
 import socket
 import sys
 import time
+import struct
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 MAX_PAYLOAD_SIZE = 1024
 
-def encode_position(x: str, y: str, z: str, azimuth: str, elevation: str) -> bytes:
-    return (int(x).to_bytes(2, byteorder='little')
-        + int(y).to_bytes(2, byteorder='little')
-        + int(z).to_bytes(2, byteorder='little')
-        + int(azimuth).to_bytes(2, byteorder='little')
-        + int(elevation).to_bytes(1, byteorder='little'))
+def encode_position(x: int, y: int, z: int, yaw: int, pitch: int, roll: int) -> bytes:
+    return (struct.pack('<h', x)
+        + struct.pack('<h', y)
+        + struct.pack('<h', z)
+        + struct.pack('<h', yaw)
+        + struct.pack('<b', pitch)
+        + struct.pack('<h', roll))
 
 def encode_session_id(session_id: str) -> bytes:
     return int(session_id).to_bytes(4, byteorder='little')
@@ -123,17 +125,18 @@ class Device:
     def pica_create_beacon(
         self,
         mac_address: str = '0',
-        x: str = '0',
-        y: str= '0',
-        z: str = '0',
-        azimuth: str = '0',
-        elevation: str = '0',
+        x: str = "0",
+        y: str = "0",
+        z: str = "0",
+        yaw: str = "0",
+        pitch: str = "0",
+        roll: str = "0",
         **kargs):
         """Create a Pica beacon"""
         self._send_command(
             bytes([0x29, 0x2, 0x0, 17]) +
             encode_mac_address(mac_address) +
-            encode_position(int(x), int(y), int(z), int(azimuth), int(elevation)))
+            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
 
 
     async def read_responses_and_notifications(self):

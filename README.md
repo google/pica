@@ -68,73 +68,74 @@ modify beacons.
 The position encodes the physical localization and orientation of an UWB
 device.
 
-| Position Fields | Length   | Value/Description                               |
-|-----------------|----------|-------------------------------------------------|
-| X               | 2 Octets | X Coordinate                                    |
-| Y               | 2 Octets | Y Coordinate                                    |
-| Z               | 2 Octets | Z Coordinate                                    |
-| Azimuth         | 2 Octets | Azimuth                                         |
-| Elevation       | 1 Octets | Elevation                                       |
+| Position Fields | Length   | Value/Description                            |
+|-----------------|----------|----------------------------------------------|
+| X               | 2 Octets | X Coordinate                                 |
+| Y               | 2 Octets | Y Coordinate                                 |
+| Z               | 2 Octets | Z Coordinate                                 |
+| Yaw             | 2 Octets | Yaw angle (Y-axis) in degrees (-180 to 180)  |
+| Pitch           | 1 Octet  | Pitch angle (X-axis) in degrees (-90 to 90)  |
+| Roll            | 2 Octets | Roll angle (Z-axis) in degrees (-180 to 180) |
 
 ## PICA_INIT_DEVICE_CMD (`0x00`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Mac Address    | 8 Octets | Replace the generated mac address for the UWB subsystem. The default mac address is a counter  incremented for  each new connection. |
-| Position       | 9 Octets | Report the initial position of the UWB device.   |
+| Payload Fields | Length    | Value/Description                                                                                                                  |
+|----------------|-----------|------------------------------------------------------------------------------------------------------------------------------------|
+| Mac Address    | 8 Octets  | Replace the generated mac address for the UWB subsystem. The default mac address is a counter incremented for each new connection. |
+| Position       | 11 Octets | Report the initial position of the UWB device.                                                                                     |
 
 ## PICA_INIT_DEVICE_RSP (`0x00`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Status         | 1 Octet  | Status code                                      |
+| Payload Fields | Length  | Value/Description |
+|----------------|---------|-------------------|
+| Status         | 1 Octet | Status code       |
 
 ## PICA_SET_DEVICE_POSITION_CMD (`0x01`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Position       | 9 Octets | Report the current position of the UWB device.   |
+| Payload Fields | Length    | Value/Description                              |
+|----------------|-----------|------------------------------------------------|
+| Position       | 11 Octets | Report the current position of the UWB device. |
 
 ## PICA_SET_DEVICE_POSITION_RSP (`0x01`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Status         | 1 Octet  | Status code                                      |
+| Payload Fields | Length  | Value/Description |
+|----------------|---------|-------------------|
+| Status         | 1 Octet | Status code       |
 
 ## PICA_CREATE_BEACON_CMD (`0x02`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Mac Address    | 8 Octets | Selected mac address for the UWB beacon.         |
-| Position       | 9 Octets | Report the initial position of the UWB beacon.   |
+| Payload Fields | Length    | Value/Description                              |
+|----------------|-----------|------------------------------------------------|
+| Mac Address    | 8 Octets  | Selected mac address for the UWB beacon.       |
+| Position       | 11 Octets | Report the initial position of the UWB beacon. |
 
 ## PICA_CREATE_BEACON_RSP (`0x02`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Status         | 1 Octet  | Status code                                      |
+| Payload Fields | Length  | Value/Description |
+|----------------|---------|-------------------|
+| Status         | 1 Octet | Status code       |
 
 ## PICA_SET_BEACON_POSITION_CMD (`0x03`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Mac Address    | 8 Octets | Mac address of the UWB beacon to edit.           |
-| Position       | 9 Octets | Report the current position of the UWB beacon.   |
+| Payload Fields | Length    | Value/Description                              |
+|----------------|-----------|------------------------------------------------|
+| Mac Address    | 8 Octets  | Mac address of the UWB beacon to edit.         |
+| Position       | 11 Octets | Report the current position of the UWB beacon. |
 
 ## PICA_SET_BEACON_POSITION_RSP (`0x03`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Status         | 1 Octet  | Status code                                      |
+| Payload Fields | Length  | Value/Description |
+|----------------|---------|-------------------|
+| Status         | 1 Octet | Status code       |
 
 ## PICA_DESTROY_BEACON_CMD (`0x04`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Mac Address    | 8 Octets | Mac address of the UWB beacon to remove.         |
+| Payload Fields | Length   | Value/Description                        |
+|----------------|----------|------------------------------------------|
+| Mac Address    | 8 Octets | Mac address of the UWB beacon to remove. |
 
 ## PICA_DESTROY_BEACON_RSP (`0x04`)
 
-| Payload Fields | Length   | Value/Description                                |
-|----------------|----------|--------------------------------------------------|
-| Status         | 1 Octet  | Status code                                      |
+| Payload Fields | Length  | Value/Description |
+|----------------|---------|-------------------|
+| Status         | 1 Octet | Status code       |

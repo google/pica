@@ -769,8 +769,9 @@ struct PicaPosition {
     x: 16,
     y: 16,
     z: 16,
-    azimuth: 16,
-    elevation: 8,
+    yaw: 16,
+    pitch: 8,
+    roll: 16,
 }
 
 packet PicaInitDeviceCmd: PicaCommand (opcode = 0x0) { // PICA_INIT_DEVICE

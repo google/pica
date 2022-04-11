@@ -81,14 +81,15 @@ async fn handle(
                 x: i16,
                 y: i16,
                 z: i16,
-                azimuth: i16,
-                elevation: i8,
+                yaw: i16,
+                pitch: i8,
+                roll: i16,
             }
 
             let body = body::to_bytes(req.body_mut()).await.unwrap();
             let body: SetPositionBody = serde_json::from_slice(&body).unwrap();
 
-            let position = Position::new(body.x, body.y, body.z, body.azimuth, body.elevation);
+            let position = Position::new(body.x, body.y, body.z, body.yaw, body.pitch, body.roll);
 
             tx.send(PicaCommand::SetPosition(body.mac_address, position))
                 .await

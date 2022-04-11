@@ -59,20 +59,22 @@ export class Orientation extends LitElement {
   `;
 
   static properties = {
-    azimuth: { type: Number },
-    elevation: { type: Number },
+    yaw: { type: Number },
+    pitch: { type: Number },
+    roll: {type: Number },
   };
 
   constructor() {
     super();
-    this.azimuth = 0;
-    this.elevation = 0;
+    this.yaw = 0;
+    this.pitch = 0;
+    this.roll = 0;
   }
 
   render() {
     const a = (0.5 / Math.PI) * 360 * 4;
 
-    const { azimuth, elevation } = this;
+    const { yaw, pitch } = this;
 
     return html`
       <div class="axis arrow x" style="transform: rotateZ(-180deg)"></div>
@@ -81,12 +83,12 @@ export class Orientation extends LitElement {
       <svg
         viewBox="${-a / 2} ${-a / 2} ${a} ${a}"
         class="circle"
-        style="transform: rotateZ(90deg) rotateX(${azimuth > 0 ? 0 : 180}deg)"
+        style="transform: rotateZ(90deg) rotateX(${yaw < 0 ? 0 : 180}deg)"
       >
         <circle
           r="${a / 4}"
           stroke-width="${a / 2}"
-          stroke-dasharray="${Math.abs(azimuth)} 360"
+          stroke-dasharray="${Math.abs(yaw)} 360"
           stroke="blue"
           fill="none"
         />
@@ -94,27 +96,23 @@ export class Orientation extends LitElement {
       <svg
         viewBox="${-a / 2} ${-a / 2} ${a} ${a}"
         class="circle"
-        style="transform: rotateZ(${90 + azimuth}deg) rotateX(${Math.sign(
-          elevation
-        ) * 90}deg)"
+        style="transform: rotateZ(${90 - yaw}deg) rotateX(${Math.sign(pitch) * 90}deg)"
       >
         <circle
           r="${a / 4}"
           stroke-width="${a / 2}"
-          stroke-dasharray="${Math.abs(elevation)} 360"
+          stroke-dasharray="${Math.abs(pitch)} 360"
           stroke="red"
           fill="none"
         />
       </svg>
       <div
         class="axis value"
-        style="transform: rotateZ(${180 +
-        azimuth}deg) rotateX(${-elevation}deg) rotateY(90deg)"
+        style="transform: rotateZ(${180 - yaw}deg) rotateX(${-pitch}deg) rotateY(90deg)"
       ></div>
       <div
         class="axis value"
-        style="transform: rotateZ(${180 +
-        azimuth}deg) rotateX(${-elevation}deg)"
+        style="transform: rotateZ(${180 - yaw}deg) rotateX(${-pitch}deg)"
       ></div>
     `;
   }

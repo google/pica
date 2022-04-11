@@ -1934,8 +1934,9 @@ pub struct PicaPosition {
     pub x: u16,
     pub y: u16,
     pub z: u16,
-    pub azimuth: u16,
-    pub elevation: u8,
+    pub yaw: u16,
+    pub pitch: u8,
+    pub roll: u16,
 }
 impl PicaPosition {
     fn conforms(bytes: &[u8]) -> bool {
@@ -1972,27 +1973,37 @@ impl PicaPosition {
         if bytes.len() < 8 {
             return Err(Error::InvalidLengthError {
                 obj: "PicaPosition".to_string(),
-                field: "azimuth".to_string(),
+                field: "yaw".to_string(),
                 wanted: 8,
                 got: bytes.len(),
             });
         }
-        let azimuth = u16::from_le_bytes([bytes[6], bytes[7]]);
+        let yaw = u16::from_le_bytes([bytes[6], bytes[7]]);
         if bytes.len() < 9 {
             return Err(Error::InvalidLengthError {
                 obj: "PicaPosition".to_string(),
-                field: "elevation".to_string(),
+                field: "pitch".to_string(),
                 wanted: 9,
                 got: bytes.len(),
             });
         }
-        let elevation = u8::from_le_bytes([bytes[8]]);
+        let pitch = u8::from_le_bytes([bytes[8]]);
+        if bytes.len() < 11 {
+            return Err(Error::InvalidLengthError {
+                obj: "PicaPosition".to_string(),
+                field: "roll".to_string(),
+                wanted: 11,
+                got: bytes.len(),
+            });
+        }
+        let roll = u16::from_le_bytes([bytes[9], bytes[10]]);
         Ok(Self {
             x,
             y,
             z,
-            azimuth,
-            elevation,
+            yaw,
+            pitch,
+            roll,
         })
     }
     fn write_to(&self, buffer: &mut [u8]) {
@@ -2002,14 +2013,16 @@ impl PicaPosition {
         buffer[2..4].copy_from_slice(&y.to_le_bytes()[0..2]);
         let z = self.z;
         buffer[4..6].copy_from_slice(&z.to_le_bytes()[0..2]);
-        let azimuth = self.azimuth;
-        buffer[6..8].copy_from_slice(&azimuth.to_le_bytes()[0..2]);
-        let elevation = self.elevation;
-        buffer[8..9].copy_from_slice(&elevation.to_le_bytes()[0..1]);
+        let yaw = self.yaw;
+        buffer[6..8].copy_from_slice(&yaw.to_le_bytes()[0..2]);
+        let pitch = self.pitch;
+        buffer[8..9].copy_from_slice(&pitch.to_le_bytes()[0..1]);
+        let roll = self.roll;
+        buffer[9..11].copy_from_slice(&roll.to_le_bytes()[0..2]);
     }
     fn get_total_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 9;
+        let ret = ret + 11;
         ret
     }
 }
@@ -13287,7 +13300,7 @@ pub struct PicaInitDeviceCmdBuilder {
 }
 impl PicaInitDeviceCmdData {
     fn conforms(bytes: &[u8]) -> bool {
-        if !PicaPosition::conforms(&bytes[12..21]) {
+        if !PicaPosition::conforms(&bytes[12..23]) {
             return false;
         }
         true
@@ -13304,7 +13317,7 @@ impl PicaInitDeviceCmdData {
         let mac_address = u64::from_le_bytes([
             bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
         ]);
-        let position = PicaPosition::parse(&bytes[12..21])?;
+        let position = PicaPosition::parse(&bytes[12..23])?;
         Ok(Self {
             mac_address,
             position,
@@ -13313,7 +13326,7 @@ impl PicaInitDeviceCmdData {
     fn write_to(&self, buffer: &mut BytesMut) {
         let mac_address = self.mac_address;
         buffer[4..12].copy_from_slice(&mac_address.to_le_bytes()[0..8]);
-        let position = &mut buffer[12..21];
+        let position = &mut buffer[12..23];
         self.position.write_to(position);
     }
     fn get_total_size(&self) -> usize {
@@ -13321,7 +13334,7 @@ impl PicaInitDeviceCmdData {
     }
     fn get_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 17;
+        let ret = ret + 19;
         ret
     }
 }
@@ -13630,17 +13643,17 @@ pub struct PicaSetDevicePositionCmdBuilder {
 }
 impl PicaSetDevicePositionCmdData {
     fn conforms(bytes: &[u8]) -> bool {
-        if !PicaPosition::conforms(&bytes[4..13]) {
+        if !PicaPosition::conforms(&bytes[4..15]) {
             return false;
         }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
-        let position = PicaPosition::parse(&bytes[4..13])?;
+        let position = PicaPosition::parse(&bytes[4..15])?;
         Ok(Self { position })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
-        let position = &mut buffer[4..13];
+        let position = &mut buffer[4..15];
         self.position.write_to(position);
     }
     fn get_total_size(&self) -> usize {
@@ -13648,7 +13661,7 @@ impl PicaSetDevicePositionCmdData {
     }
     fn get_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 9;
+        let ret = ret + 11;
         ret
     }
 }
@@ -13955,7 +13968,7 @@ pub struct PicaCreateBeaconCmdBuilder {
 }
 impl PicaCreateBeaconCmdData {
     fn conforms(bytes: &[u8]) -> bool {
-        if !PicaPosition::conforms(&bytes[12..21]) {
+        if !PicaPosition::conforms(&bytes[12..23]) {
             return false;
         }
         true
@@ -13972,7 +13985,7 @@ impl PicaCreateBeaconCmdData {
         let mac_address = u64::from_le_bytes([
             bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
         ]);
-        let position = PicaPosition::parse(&bytes[12..21])?;
+        let position = PicaPosition::parse(&bytes[12..23])?;
         Ok(Self {
             mac_address,
             position,
@@ -13981,7 +13994,7 @@ impl PicaCreateBeaconCmdData {
     fn write_to(&self, buffer: &mut BytesMut) {
         let mac_address = self.mac_address;
         buffer[4..12].copy_from_slice(&mac_address.to_le_bytes()[0..8]);
-        let position = &mut buffer[12..21];
+        let position = &mut buffer[12..23];
         self.position.write_to(position);
     }
     fn get_total_size(&self) -> usize {
@@ -13989,7 +14002,7 @@ impl PicaCreateBeaconCmdData {
     }
     fn get_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 17;
+        let ret = ret + 19;
         ret
     }
 }
@@ -14300,7 +14313,7 @@ pub struct PicaSetBeaconPositionCmdBuilder {
 }
 impl PicaSetBeaconPositionCmdData {
     fn conforms(bytes: &[u8]) -> bool {
-        if !PicaPosition::conforms(&bytes[12..21]) {
+        if !PicaPosition::conforms(&bytes[12..23]) {
             return false;
         }
         true
@@ -14317,7 +14330,7 @@ impl PicaSetBeaconPositionCmdData {
         let mac_address = u64::from_le_bytes([
             bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
         ]);
-        let position = PicaPosition::parse(&bytes[12..21])?;
+        let position = PicaPosition::parse(&bytes[12..23])?;
         Ok(Self {
             mac_address,
             position,
@@ -14326,7 +14339,7 @@ impl PicaSetBeaconPositionCmdData {
     fn write_to(&self, buffer: &mut BytesMut) {
         let mac_address = self.mac_address;
         buffer[4..12].copy_from_slice(&mac_address.to_le_bytes()[0..8]);
-        let position = &mut buffer[12..21];
+        let position = &mut buffer[12..23];
         self.position.write_to(position);
     }
     fn get_total_size(&self) -> usize {
@@ -14334,7 +14347,7 @@ impl PicaSetBeaconPositionCmdData {
     }
     fn get_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 17;
+        let ret = ret + 19;
         ret
     }
 }

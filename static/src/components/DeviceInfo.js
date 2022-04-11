@@ -81,8 +81,17 @@ export class DeviceInfo extends LitElement {
     this.device = null;
   }
 
-  setAzimuth(event) {
-    this.device.azimuth = Number(event.target.value);
+  setYaw(event) {
+    this.device.yaw = Number(event.target.value);
+    this.update();
+  }
+
+  setPitch(event) {
+    this.device.pitch = Number(event.target.value);
+    this.update();
+  }
+  setRoll(event) {
+    this.device.roll = Number(event.target.value);
     this.update();
   }
 
@@ -118,28 +127,40 @@ export class DeviceInfo extends LitElement {
             <div class="orientation">
               <span class="center">Device Orientation</span>
               <pika-orientation
-                azimuth=${this.device.azimuth}
-                elevation=${this.device.elevation}
+                yaw=${this.device.yaw}
+                pitch=${this.device.pitch}
+                roll=${this.device.roll}
               ></pika-orientation>
               <label>
-                <span>Azimuth (${this.device.azimuth})</span>
+                <span>Yaw (${this.device.yaw})</span>
                 <input
                   type="range"
                   min="-180"
                   max="180"
-                  value=${this.device.azimuth}
-                  @input=${this.setAzimuth}
+                  value=${this.device.yaw}
+                  @input=${this.setYaw}
                   @change=${this.notifyChange}
                 />
               </label>
               <label>
-                <span>Elevation (${this.device.elevation})</span>
+                <span>Pitch (${this.device.pitch})</span>
                 <input
                   type="range"
                   min="-90"
                   max="90"
-                  value=${this.device.elevation}
-                  @input=${this.setElevation}
+                  value=${this.device.pitch}
+                  @input=${this.setPitch}
+                  @change=${this.notifyChange}
+                />
+              </label>
+              <label>
+                <span>Roll (${this.device.roll})</span>
+                <input
+                  type="range"
+                  min="-180"
+                  max="180"
+                  value=${this.device.roll}
+                  @input=${this.setRoll}
                   @change=${this.notifyChange}
                 />
               </label>
@@ -150,8 +171,8 @@ export class DeviceInfo extends LitElement {
                   ({ mac_address, distance, azimuth, elevation }) => html`
                   <li>
                     <pika-orientation
-                      azimuth="${azimuth}"
-                      elevation="${elevation}"
+                      yaw="${-azimuth}"
+                      pitch="${elevation}"
                     ></pika-orientation>
                     <table>
                       <tr>

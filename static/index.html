@@ -34,7 +34,7 @@
     --background: #cbd5e1;
     --grid-line-color: #fbbf24;
     --grid-background-color: #f8fafc;
-    --sidebar-color: #f0abfc;
+    --sidebar-color: #ea8ca8;
     --selection-color: #f0abfc;
   }
 </style>
@@ -70,8 +70,7 @@
   function set_position({
     mac_address,
     position: { x, y, z },
-    azimuth,
-    elevation,
+    yaw, pitch, roll,
   }) {
     fetch("/set_position", {
       method: "POST",
@@ -83,8 +82,9 @@
         x,
         y,
         z,
-        azimuth,
-        elevation,
+        yaw,
+        pitch,
+        roll
       }),
     });
   }
@@ -104,14 +104,13 @@
     const data = JSON.parse(event.data);
     console.log("Add Device", data);
 
-    const { mac_address, x, y, z, azimuth, elevation } = data;
+    const { mac_address, x, y, z, yaw, pitch, roll } = data;
     map.devices = [
       ...map.devices,
       {
         mac_address,
         position: { x, y, z },
-        azimuth,
-        elevation,
+        yaw, pitch, roll,
         neighbors: [],
       },
     ];
@@ -135,15 +134,16 @@
     const data = JSON.parse(event.data);
     console.log("Update Position", data);
 
-    const { mac_address, x, y, z, azimuth, elevation } = data;
+    const { mac_address, x, y, z, yaw, pitch, roll } = data;
 
     const device = map.devices.find(
       (device) => device.mac_address === mac_address
     );
 
     device.position = { x, y, z };
-    device.azimuth = azimuth;
-    device.elevation;
+    device.yaw = yaw,
+    device.pitch = pitch,
+    device.roll = roll,
 
     map.update();
     info.update();
