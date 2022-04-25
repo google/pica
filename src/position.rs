@@ -79,8 +79,8 @@ impl Position {
         let azimuth = azimuth(direction).to_degrees().round();
         let elevation = elevation(direction).to_degrees().round();
 
-        assert!(azimuth >= -180. && azimuth <= 180.);
-        assert!(elevation >= -90. && elevation <= 90.);
+        assert!((-180. ..=180.).contains(&azimuth));
+        assert!((-90. ..=90.).contains(&elevation));
 
         (
             f32::min(distance, u16::MAX as f32) as u16,

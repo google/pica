@@ -9,11 +9,12 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 use crate::position::Position;
-use crate::uwb_subsystem::{MacAddress, PicaCommand, PicaEvent};
+use crate::{MacAddress, PicaCommand, PicaEvent};
+use PicaEvent::{AddDevice, RemoveDevice, UpdateNeighbor, UpdatePosition};
 
 const WEB_PORT: u16 = 3000;
 
-const STATIC_FILES: &'static [(&'static str, &'static str, &'static str)] = &[
+const STATIC_FILES: &[(&str, &str, &str)] = &[
     ("/", "text/html", include_str!("../static/index.html")),
     (
         "/src/components/Map.js",
@@ -33,7 +34,6 @@ const STATIC_FILES: &'static [(&'static str, &'static str, &'static str)] = &[
 ];
 
 fn event_name(event: &PicaEvent) -> &'static str {
-    use PicaEvent::*;
     match event {
         AddDevice { .. } => "add-device",
         RemoveDevice { .. } => "remove-device",

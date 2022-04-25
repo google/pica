@@ -1,12 +1,11 @@
-use crate::uci_packets::{
-    DeviceConfigId, DeviceConfigStatus, DeviceParameter, DeviceState, UciPacketPacket,
-};
-use crate::uwb_subsystem::*;
+use crate::position::Position;
+use crate::uci_packets::*;
+use crate::PicaCommand;
+
 use std::collections::HashMap;
 use std::iter::Extend;
 
-use crate::position::Position;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use tokio::sync::mpsc;
 
 use num_traits::FromPrimitive;
@@ -22,7 +21,7 @@ const TEST_VERSION: u16 = 0x110; // Version 1.1
 // Capabilities are vendor defined, Android parses capabilities
 // according to these definitions:
 // /android/packages/modules/Uwb/service/java/com/android/server/uwb/config/CapabilityParam.java
-pub const DEFAULT_CAPS_INFO: &'static [(CapTlvType, &'static [u8])] = &[
+pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     // Fira params
     (CapTlvType::SupportedFiraPhyVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedFiraMacVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
@@ -117,7 +116,7 @@ impl Device {
     }
 
     pub fn remove_session(&mut self, session_id: u32) -> Result<()> {
-        if let Some(_) = self.sessions.remove(&session_id) {
+        if self.sessions.remove(&session_id).is_some() {
             Ok(())
         } else {
             Err(anyhow!("Could not find session"))

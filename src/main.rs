@@ -3,18 +3,13 @@ extern crate num_derive;
 extern crate num_traits;
 extern crate thiserror;
 
-mod position;
-mod uci_packets;
-mod uwb_subsystem;
-mod web;
+use pica::{web, Pica, PicaCommand};
 
 use anyhow::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio::try_join;
-
-use uwb_subsystem::*;
 
 const UCI_PORT: u16 = 7000;
 

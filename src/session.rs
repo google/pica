@@ -1,12 +1,13 @@
-use crate::uci_packets::{AppConfigTlvType, SessionState, SessionType};
+use crate::uci_packets::*;
+use crate::{MacAddress, PicaCommand};
+use std::collections::HashMap;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time;
 
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
-
-use crate::uwb_subsystem::*;
 
 pub const MAX_SESSION: usize = 255;
 pub const DEFAULT_CHANNEL_NUMBER: u8 = 9;
@@ -76,7 +77,7 @@ impl AppConfig {
     fn set_config(
         &mut self,
         id: AppConfigTlvType,
-        value: &Vec<u8>,
+        value: &[u8],
     ) -> std::result::Result<(), StatusCode> {
         // TODO: raise Err(StatusCode::UciStatusInvalidParam) when
         // an invalid parameter value is received.
@@ -112,7 +113,7 @@ impl AppConfig {
                     .collect();
             }
             _ => {
-                self.raw.insert(id.to_u8().unwrap(), value.clone());
+                self.raw.insert(id.to_u8().unwrap(), value.to_vec());
             }
         };
 
@@ -133,11 +134,11 @@ impl AppConfig {
                         value
                     })
             }
-            _ => return self.raw.get(&id.to_u8().unwrap()).map(|v| v.clone()),
+            _ => return self.raw.get(&id.to_u8().unwrap()).cloned(),
         })
     }
 
-    pub fn extend(&mut self, configs: &Vec<AppConfigParameter>) -> Vec<AppConfigStatus> {
+    pub fn extend(&mut self, configs: &[AppConfigParameter]) -> Vec<AppConfigStatus> {
         configs
             .iter()
             .fold(Vec::new(), |mut invalid_parameters, config| {

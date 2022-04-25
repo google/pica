@@ -6,14 +6,19 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::position::*;
-use crate::uci_packets::*;
+mod position;
+use position::Position;
+
+mod uci_packets;
+use uci_packets::*;
 
 mod device;
 use device::{Device, MAX_DEVICE};
 
 mod session;
 use session::MAX_SESSION;
+
+pub mod web;
 
 const MAX_PAYLOAD_SIZE: usize = 4096;
 
@@ -132,7 +137,6 @@ impl Pica {
     }
 
     fn get_device_mut_by_mac(&mut self, mac_address: MacAddress) -> Option<&mut Device> {
-        // FIXME: this assumes that mac_address is the same as the device_handle
         self.devices
             .values_mut()
             .find(|d| d.mac_address as u64 == mac_address)
@@ -535,7 +539,7 @@ impl Pica {
             StatusCode::UciStatusFailed
         } else {
             self.send_event(PicaEvent::AddDevice {
-                mac_address: mac_address.clone(),
+                mac_address,
                 position: Position::from(position),
             });
             assert!(self
