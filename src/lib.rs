@@ -147,18 +147,18 @@ impl Pica {
         self.tx.clone()
     }
 
-    fn get_device_mut(&mut self, device_handle: usize) -> &mut Device {
-        self.devices.get_mut(&device_handle).unwrap()
+    fn get_device_mut(&mut self, device_handle: usize) -> Option<&mut Device> {
+        self.devices.get_mut(&device_handle)
     }
 
-    fn get_device(&self, device_handle: usize) -> &Device {
-        self.devices.get(&device_handle).unwrap()
+    fn get_device(&self, device_handle: usize) -> Option<&Device> {
+        self.devices.get(&device_handle)
     }
 
     fn get_device_mut_by_mac(&mut self, mac_address: MacAddress) -> Option<&mut Device> {
         self.devices
             .values_mut()
-            .find(|d| d.mac_address as u64 == mac_address)
+            .find(|d| d.mac_address == mac_address)
     }
 
     fn send_event(&self, event: PicaEvent) {
@@ -176,7 +176,8 @@ impl Pica {
         println!("[{}] Connecting device", device_handle);
 
         self.counter += 1;
-        let device = Device::new(device_handle, packet_tx);
+        let mut device = Device::new(device_handle, packet_tx, self.tx.clone());
+        device.init();
 
         self.send_event(PicaEvent::AddDevice {
             mac_address: device.mac_address as u64,
@@ -223,22 +224,6 @@ impl Pica {
                 .await
                 .unwrap()
         });
-
-        // Send device status notification with state Ready as required
-        // by the UCI specification (section 6.1 Initialization of UWBS).
-        self.devices
-            .get(&device_handle)
-            .unwrap()
-            .tx
-            .send(
-                DeviceStatusNtfBuilder {
-                    device_state: DeviceState::DeviceStateReady,
-                }
-                .build()
-                .into(),
-            )
-            .await
-            .unwrap()
     }
 
     fn disconnect(&mut self, device_handle: usize) -> Result<()> {
@@ -247,7 +232,7 @@ impl Pica {
         let device = self.devices.get(&device_handle).context("Unknown device")?;
 
         self.send_event(PicaEvent::RemoveDevice {
-            mac_address: device.mac_address as u64,
+            mac_address: device.mac_address,
         });
 
         self.devices.remove(&device_handle);
@@ -259,7 +244,7 @@ impl Pica {
         println!("[{}] Ranging event", device_handle);
         println!("  session_id={}", session_id);
 
-        let device = self.get_device(device_handle);
+        let device = self.get_device(device_handle).unwrap();
         let session = device.get_session(session_id).unwrap();
 
         let mut measurements = Vec::new();
@@ -313,118 +298,45 @@ impl Pica {
             .await
             .unwrap();
 
-        let device = self.get_device_mut(device_handle);
+        let device = self.get_device_mut(device_handle).unwrap();
         let session = device.get_session_mut(session_id).unwrap();
 
         session.sequence_number += 1;
     }
 
     async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) -> Result<()> {
-        if !self.devices.contains_key(&device_handle) {
-            anyhow::bail!("Received command for disconnected device {}", device_handle);
-        }
+        // TODO: implement fragmentation support
+        assert_eq!(
+            cmd.get_packet_boundary_flag(),
+            PacketBoundaryFlag::Complete,
+            "Boundary flag is true, implement fragmentation"
+        );
 
-        match cmd.specialize() {
-            UciCommandChild::CoreCommand(core_command) => match core_command.specialize() {
-                CoreCommandChild::DeviceResetCmd(cmd) => {
-                    self.get_device_mut(device_handle).device_reset(cmd).await
-                }
-                CoreCommandChild::GetDeviceInfoCmd(cmd) => {
-                    self.get_device(device_handle).get_device_info(cmd).await
-                }
-                CoreCommandChild::GetCapsInfoCmd(cmd) => {
-                    self.get_device(device_handle).get_caps_info(cmd).await
-                }
-                CoreCommandChild::SetConfigCmd(cmd) => {
-                    self.get_device_mut(device_handle).set_config(cmd).await
-                }
-                CoreCommandChild::GetConfigCmd(cmd) => {
-                    self.get_device(device_handle).get_config(cmd).await
-                }
-                CoreCommandChild::None => anyhow::bail!("Unsupported core command"),
-            },
-            UciCommandChild::SessionCommand(session_command) => {
-                match session_command.specialize() {
-                    SessionCommandChild::SessionInitCmd(cmd) => {
-                        self.get_device_mut(device_handle).session_init(cmd).await
-                    }
-                    SessionCommandChild::SessionDeinitCmd(cmd) => {
-                        self.get_device_mut(device_handle).session_deinit(cmd).await
-                    }
-                    SessionCommandChild::SessionSetAppConfigCmd(cmd) => {
-                        self.get_device_mut(device_handle)
-                            .session_set_app_config(cmd)
-                            .await
-                    }
-                    SessionCommandChild::SessionGetAppConfigCmd(cmd) => {
-                        self.get_device(device_handle)
-                            .session_get_app_config(cmd)
-                            .await
-                    }
-                    SessionCommandChild::SessionGetCountCmd(cmd) => {
-                        self.get_device(device_handle).session_get_count(cmd).await
-                    }
-                    SessionCommandChild::SessionGetStateCmd(cmd) => {
-                        self.get_device(device_handle).session_get_state(cmd).await
-                    }
-                    SessionCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
-                        self.get_device_mut(device_handle)
-                            .session_update_controller_multicast_list(cmd)
-                            .await
-                    }
-                    SessionCommandChild::None => anyhow::bail!("Unsupported session command"),
-                }
-            }
-            UciCommandChild::RangingCommand(ranging_command) => {
-                match ranging_command.specialize() {
-                    RangingCommandChild::RangeStartCmd(cmd) => {
-                        let pica_tx = self.tx.clone();
-                        self.get_device_mut(device_handle)
-                            .range_start(cmd, pica_tx)
-                            .await
-                    }
-                    RangingCommandChild::RangeStopCmd(cmd) => {
-                        self.get_device_mut(device_handle).range_stop(cmd).await
-                    }
-                    RangingCommandChild::RangeGetRangingCountCmd(cmd) => {
-                        self.get_device_mut(device_handle)
-                            .range_get_ranging_count(cmd)
-                            .await
-                    }
-                    RangingCommandChild::None => anyhow::bail!("Unsupported ranging command"),
-                }
-            }
+        let response = match cmd.specialize() {
+            // Handle UCI commands for Pica here:
             UciCommandChild::PicaCommand(pica_command) => match pica_command.specialize() {
                 PicaCommandChild::PicaInitDeviceCmd(cmd) => {
-                    self.init_device(device_handle, cmd).await
+                    self.init_device(device_handle, cmd).into()
                 }
                 PicaCommandChild::PicaSetDevicePositionCmd(cmd) => {
-                    self.set_device_position(device_handle, cmd).await
+                    self.set_device_position(device_handle, cmd).into()
                 }
-                PicaCommandChild::PicaCreateBeaconCmd(cmd) => {
-                    self.create_beacon(device_handle, cmd).await
-                }
+                PicaCommandChild::PicaCreateBeaconCmd(cmd) => self.create_beacon(cmd).into(),
                 PicaCommandChild::PicaSetBeaconPositionCmd(cmd) => {
-                    self.set_beacon_position(device_handle, cmd).await
+                    self.set_beacon_position(cmd).into()
                 }
-                PicaCommandChild::PicaDestroyBeaconCmd(cmd) => {
-                    self.destroy_beacon(device_handle, cmd).await
-                }
+                PicaCommandChild::PicaDestroyBeaconCmd(cmd) => self.destroy_beacon(cmd).into(),
                 PicaCommandChild::None => anyhow::bail!("Unsupported Pica command"),
             },
-            UciCommandChild::AndroidCommand(android_command) => {
-                match android_command.specialize() {
-                    AndroidCommandChild::AndroidSetCountryCodeCmd(cmd) => {
-                        self.set_country_code(device_handle, cmd).await
-                    }
-                    AndroidCommandChild::AndroidGetPowerStatsCmd(cmd) => {
-                        self.get_power_stats(device_handle, cmd).await
-                    }
-                    AndroidCommandChild::None => anyhow::bail!("Unsupported ranging command"),
-                }
+            // Forward other UCI commands to the proper device:
+            _ => {
+                let device = self.get_device_mut(device_handle).unwrap();
+                device.command(cmd).into()
             }
-            _ => anyhow::bail!("Unsupported command type"),
-        }
+        };
+
+        let device = self.get_device_mut(device_handle).unwrap();
+        Ok(device.tx.send(response).await?)
     }
 
     pub async fn run(&mut self) -> Result<()> {
@@ -443,32 +355,27 @@ impl Pica {
         }
     }
 
-    async fn init_device(
+    fn init_device(
         &mut self,
         device_handle: usize,
         cmd: PicaInitDeviceCmdPacket,
-    ) -> Result<()> {
+    ) -> PicaInitDeviceRspPacket {
         let mac_address = cmd.get_mac_address();
-        let position = cmd.get_position();
+        let position: Position = cmd.get_position().into();
+
         println!("[_] Init device");
         println!("  mac_address=0x{:x}", mac_address);
         println!("  position={:?}", position);
 
-        let device = self.get_device_mut(device_handle);
-        device.mac_address = mac_address as usize;
+        let device = self.get_device_mut(device_handle).unwrap();
+        device.mac_address = mac_address;
         device.position = Position::from(cmd.get_position());
         // FIXME: send event for the mac_address change
-        Ok(self
-            .get_device(device_handle)
-            .tx
-            .send(
-                PicaInitDeviceRspBuilder {
-                    status: StatusCode::UciStatusOk,
-                }
-                .build()
-                .into(),
-            )
-            .await?)
+        PicaInitDeviceRspBuilder {
+            status: StatusCode::UciStatusOk,
+        }
+        .build()
+        .into()
     }
 
     fn update_position(&self, mac_address: MacAddress, position: Position) {
@@ -480,7 +387,7 @@ impl Pica {
         let devices = self
             .devices
             .values()
-            .map(|d| (d.mac_address as MacAddress, d.position.clone()));
+            .map(|d| (d.mac_address, d.position.clone()));
         let beacons = self
             .beacons
             .values()
@@ -526,37 +433,27 @@ impl Pica {
         Ok(())
     }
 
-    async fn set_device_position(
+    fn set_device_position(
         &mut self,
         device_handle: usize,
         cmd: PicaSetDevicePositionCmdPacket,
-    ) -> Result<()> {
-        let mut device = self.get_device_mut(device_handle);
+    ) -> PicaSetDevicePositionRspPacket {
+        let mut device = self.get_device_mut(device_handle).unwrap();
         device.position = cmd.get_position().into();
 
         let position = device.position.clone();
-        let mac_address = device.mac_address as u64;
+        let mac_address = device.mac_address;
 
         self.update_position(mac_address, position);
 
-        Ok(self
-            .get_device(device_handle)
-            .tx
-            .send(
-                PicaSetDevicePositionRspBuilder {
-                    status: StatusCode::UciStatusOk,
-                }
-                .build()
-                .into(),
-            )
-            .await?)
+        PicaSetDevicePositionRspBuilder {
+            status: StatusCode::UciStatusOk,
+        }
+        .build()
+        .into()
     }
 
-    async fn create_beacon(
-        &mut self,
-        device_handle: usize,
-        cmd: PicaCreateBeaconCmdPacket,
-    ) -> Result<()> {
+    fn create_beacon(&mut self, cmd: PicaCreateBeaconCmdPacket) -> PicaCreateBeaconRspPacket {
         let mac_address = cmd.get_mac_address();
         let position = cmd.get_position();
         println!("[_] Create beacon");
@@ -583,18 +480,13 @@ impl Pica {
             StatusCode::UciStatusOk
         };
 
-        Ok(self
-            .get_device(device_handle)
-            .tx
-            .send(PicaCreateBeaconRspBuilder { status }.build().into())
-            .await?)
+        PicaCreateBeaconRspBuilder { status }.build().into()
     }
 
-    async fn set_beacon_position(
+    fn set_beacon_position(
         &mut self,
-        device_handle: usize,
         cmd: PicaSetBeaconPositionCmdPacket,
-    ) -> Result<()> {
+    ) -> PicaSetBeaconPositionRspPacket {
         let mac_address = cmd.get_mac_address();
         let position = cmd.get_position();
         println!("[_] Set beacon position");
@@ -611,18 +503,10 @@ impl Pica {
         if status == StatusCode::UciStatusOk {
             self.update_position(mac_address, Position::from(position));
         }
-        Ok(self
-            .get_device(device_handle)
-            .tx
-            .send(PicaSetBeaconPositionRspBuilder { status }.build().into())
-            .await?)
+        PicaSetBeaconPositionRspBuilder { status }.build().into()
     }
 
-    async fn destroy_beacon(
-        &mut self,
-        device_handle: usize,
-        cmd: PicaDestroyBeaconCmdPacket,
-    ) -> Result<()> {
+    fn destroy_beacon(&mut self, cmd: PicaDestroyBeaconCmdPacket) -> PicaDestroyBeaconRspPacket {
         let mac_address = cmd.get_mac_address();
         println!("[_] Destroy beacon");
         println!("  mac_address=0x{:x}", mac_address);
@@ -634,60 +518,6 @@ impl Pica {
             StatusCode::UciStatusFailed
         };
 
-        Ok(self
-            .get_device(device_handle)
-            .tx
-            .send(PicaDestroyBeaconRspBuilder { status }.build().into())
-            .await?)
-    }
-
-    async fn set_country_code(
-        &mut self,
-        device_handle: usize,
-        cmd: AndroidSetCountryCodeCmdPacket,
-    ) -> Result<()> {
-        let country_code = *cmd.get_country_code();
-        println!("[{}] Set country code", device_handle);
-        println!("  country_code={},{}", country_code[0], country_code[1]);
-
-        let device = self.get_device_mut(device_handle);
-        device.country_code = country_code;
-        Ok(device
-            .tx
-            .send(
-                AndroidSetCountryCodeRspBuilder {
-                    status: StatusCode::UciStatusOk,
-                }
-                .build()
-                .into(),
-            )
-            .await?)
-    }
-
-    async fn get_power_stats(
-        &mut self,
-        device_handle: usize,
-        _cmd: AndroidGetPowerStatsCmdPacket,
-    ) -> Result<()> {
-        println!("[{}] Get power stats", device_handle);
-
-        // TODO
-        let device = self.get_device(device_handle);
-        Ok(device
-            .tx
-            .send(
-                AndroidGetPowerStatsRspBuilder {
-                    stats: PowerStats {
-                        status: StatusCode::UciStatusOk,
-                        idle_time_ms: 0,
-                        tx_time_ms: 0,
-                        rx_time_ms: 0,
-                        total_wake_count: 0,
-                    },
-                }
-                .build()
-                .into(),
-            )
-            .await?)
+        PicaDestroyBeaconRspBuilder { status }.build().into()
     }
 }

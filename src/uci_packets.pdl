@@ -23,7 +23,7 @@ enum GroupId : 4 {
 enum CoreOpCode : 6 {
     CORE_DEVICE_RESET = 0x00,
     CORE_DEVICE_STATUS_NTF = 0x01,
-    CORE_DEVICE_INFO = 0x02,
+    CORE_GET_DEVICE_INFO = 0x02,
     CORE_GET_CAPS_INFO = 0x03,
     CORE_SET_CONFIG = 0x04,
     CORE_GET_CONFIG = 0x05,
@@ -83,11 +83,15 @@ enum StatusCode : 8 {
     UCI_STATUS_COMMAND_RETRY = 0x0A,
 
     // UWB Session Specific Status Codes
-    UCI_STATUS_SESSSION_NOT_EXIST = 0x11,
-    UCI_STATUS_SESSSION_DUPLICATE = 0x12,
-    UCI_STATUS_SESSSION_ACTIVE = 0x13,
-    UCI_STATUS_MAX_SESSSIONS_EXCEEDED = 0x14,
+    UCI_STATUS_SESSION_NOT_EXIST = 0x11,
+    UCI_STATUS_SESSION_DUPLICATE = 0x12,
+    UCI_STATUS_SESSION_ACTIVE = 0x13,
+    UCI_STATUS_MAX_SESSIONS_EXCEEDED = 0x14,
     UCI_STATUS_SESSION_NOT_CONFIGURED = 0x15,
+    UCI_STATUS_ACTIVE_SESSION_ONGOING = 0x16,
+    UCI_STATUS_MULTICAST_LIST_FULL = 0x17,
+    UCI_STATUS_ADDRESS_NOT_FOUND = 0x18,
+    UCI_STATUS_ADDRESS_ALREADY_PRESENT = 0x19,
 
     // UWB Ranging Session Specific Status Codes
     UCI_STATUS_RANGING_TX_FAILED = 0x20,
@@ -320,6 +324,7 @@ packet SessionNotification : UciNotification (group_id = SESSION_CONFIG) {
 }
 
 packet RangingCommand : UciCommand (group_id = RANGING_SESSION_CONTROL) {
+    session_id: 32,
     _body_,
 }
 
@@ -376,14 +381,14 @@ test DeviceStatusNtf {
     "\x60\x01\x00\x01\x01",
 }
 
-packet GetDeviceInfoCmd : CoreCommand (opcode = 0x2) { //CORE_DEVICE_INFO
+packet GetDeviceInfoCmd : CoreCommand (opcode = 0x2) { //CORE_GET_DEVICE_INFO
 }
 
 test GetDeviceInfoCmd {
     "\x20\x02\x00\x00",
 }
 
-packet GetDeviceInfoRsp : CoreResponse (opcode = 0x2) { //CORE_DEVICE_INFO
+packet GetDeviceInfoRsp : CoreResponse (opcode = 0x2) { //CORE_GET_DEVICE_INFO
     status: StatusCode,
     uci_version: 16,
     mac_version: 16,
@@ -648,7 +653,6 @@ test SessionUpdateControllerMulticastListNtf {
 
 
 packet RangeStartCmd : RangingCommand (opcode = 0x0) { //RANGE_START
-    session_id: 32,
 }
 
 test RangeStartCmd {
@@ -733,7 +737,6 @@ test ExtendedMacTwoWayRangeDataNtf {
 }
 
 packet RangeStopCmd : RangingCommand (opcode = 0x1) { //RANGE_STOP
-    session_id: 32,
 }
 
 test RangeStopCmd {
@@ -749,7 +752,6 @@ test RangeStopRsp {
 }
 
 packet RangeGetRangingCountCmd : RangingCommand (opcode = 0x3) { //RANGE_GET_RANGING_COUNT
-    session_id: 32,
 }
 
 test RangeGetRangingCountCmd {

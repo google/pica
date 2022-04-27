@@ -128,6 +128,12 @@
     map.devices = map.devices.filter(
       (device) => device.mac_address !== mac_address
     );
+
+    map.devices.forEach((device) => {
+      device.neighbors = device.neighbors.filter(
+        (neighbor) => neighbor.mac_address !== mac_address
+      );
+    });
   });
 
   events.addEventListener("update-position", (event) => {

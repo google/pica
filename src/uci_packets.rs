@@ -117,7 +117,7 @@ impl fmt::Display for GroupId {
 pub enum CoreOpCode {
     CoreDeviceReset = 0x0,
     CoreDeviceStatusNtf = 0x1,
-    CoreDeviceInfo = 0x2,
+    CoreGetDeviceInfo = 0x2,
     CoreGetCapsInfo = 0x3,
     CoreSetConfig = 0x4,
     CoreGetConfig = 0x5,
@@ -133,8 +133,8 @@ impl fmt::Display for CoreOpCode {
             CoreOpCode::CoreDeviceStatusNtf => {
                 write!(f, "{:#04X} (CORE_DEVICE_STATUS_NTF)", self.to_u8().unwrap())
             }
-            CoreOpCode::CoreDeviceInfo => {
-                write!(f, "{:#04X} (CORE_DEVICE_INFO)", self.to_u8().unwrap())
+            CoreOpCode::CoreGetDeviceInfo => {
+                write!(f, "{:#04X} (CORE_GET_DEVICE_INFO)", self.to_u8().unwrap())
             }
             CoreOpCode::CoreGetCapsInfo => {
                 write!(f, "{:#04X} (CORE_GET_CAPS_INFO)", self.to_u8().unwrap())
@@ -314,11 +314,15 @@ pub enum StatusCode {
     UciStatusUnknownOid = 0x8,
     UciStatusReadOnly = 0x9,
     UciStatusCommandRetry = 0xa,
-    UciStatusSesssionNotExist = 0x11,
-    UciStatusSesssionDuplicate = 0x12,
-    UciStatusSesssionActive = 0x13,
-    UciStatusMaxSesssionsExceeded = 0x14,
+    UciStatusSessionNotExist = 0x11,
+    UciStatusSessionDuplicate = 0x12,
+    UciStatusSessionActive = 0x13,
+    UciStatusMaxSessionsExceeded = 0x14,
     UciStatusSessionNotConfigured = 0x15,
+    UciStatusActiveSessionOngoing = 0x16,
+    UciStatusMulticastListFull = 0x17,
+    UciStatusAddressNotFound = 0x18,
+    UciStatusAddressAlreadyPresent = 0x19,
     UciStatusRangingTxFailed = 0x20,
     UciStatusRangingRxTimeout = 0x21,
     UciStatusRangingRxPhyDecFailed = 0x22,
@@ -376,29 +380,49 @@ impl fmt::Display for StatusCode {
                 "{:#04X} (UCI_STATUS_COMMAND_RETRY)",
                 self.to_u8().unwrap()
             ),
-            StatusCode::UciStatusSesssionNotExist => write!(
+            StatusCode::UciStatusSessionNotExist => write!(
                 f,
-                "{:#04X} (UCI_STATUS_SESSSION_NOT_EXIST)",
+                "{:#04X} (UCI_STATUS_SESSION_NOT_EXIST)",
                 self.to_u8().unwrap()
             ),
-            StatusCode::UciStatusSesssionDuplicate => write!(
+            StatusCode::UciStatusSessionDuplicate => write!(
                 f,
-                "{:#04X} (UCI_STATUS_SESSSION_DUPLICATE)",
+                "{:#04X} (UCI_STATUS_SESSION_DUPLICATE)",
                 self.to_u8().unwrap()
             ),
-            StatusCode::UciStatusSesssionActive => write!(
+            StatusCode::UciStatusSessionActive => write!(
                 f,
-                "{:#04X} (UCI_STATUS_SESSSION_ACTIVE)",
+                "{:#04X} (UCI_STATUS_SESSION_ACTIVE)",
                 self.to_u8().unwrap()
             ),
-            StatusCode::UciStatusMaxSesssionsExceeded => write!(
+            StatusCode::UciStatusMaxSessionsExceeded => write!(
                 f,
-                "{:#04X} (UCI_STATUS_MAX_SESSSIONS_EXCEEDED)",
+                "{:#04X} (UCI_STATUS_MAX_SESSIONS_EXCEEDED)",
                 self.to_u8().unwrap()
             ),
             StatusCode::UciStatusSessionNotConfigured => write!(
                 f,
                 "{:#04X} (UCI_STATUS_SESSION_NOT_CONFIGURED)",
+                self.to_u8().unwrap()
+            ),
+            StatusCode::UciStatusActiveSessionOngoing => write!(
+                f,
+                "{:#04X} (UCI_STATUS_ACTIVE_SESSION_ONGOING)",
+                self.to_u8().unwrap()
+            ),
+            StatusCode::UciStatusMulticastListFull => write!(
+                f,
+                "{:#04X} (UCI_STATUS_MULTICAST_LIST_FULL)",
+                self.to_u8().unwrap()
+            ),
+            StatusCode::UciStatusAddressNotFound => write!(
+                f,
+                "{:#04X} (UCI_STATUS_ADDRESS_NOT_FOUND)",
+                self.to_u8().unwrap()
+            ),
+            StatusCode::UciStatusAddressAlreadyPresent => write!(
+                f,
+                "{:#04X} (UCI_STATUS_ADDRESS_ALREADY_PRESENT)",
                 self.to_u8().unwrap()
             ),
             StatusCode::UciStatusRangingTxFailed => write!(
@@ -4464,6 +4488,7 @@ pub enum RangingCommandChild {
 }
 #[derive(Debug)]
 struct RangingCommandData {
+    session_id: u32,
     child: RangingCommandDataChild,
 }
 #[derive(Debug, Clone)]
@@ -4475,12 +4500,22 @@ pub struct RangingCommandPacket {
 #[derive(Debug)]
 pub struct RangingCommandBuilder {
     pub opcode: u8,
+    pub session_id: u32,
 }
 impl RangingCommandData {
     fn conforms(bytes: &[u8]) -> bool {
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
+        if bytes.len() < 8 {
+            return Err(Error::InvalidLengthError {
+                obj: "RangingCommand".to_string(),
+                field: "session_id".to_string(),
+                wanted: 8,
+                got: bytes.len(),
+            });
+        }
+        let session_id = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let child = match (opcode) {
             (0) if RangeStartCmdData::conforms(&bytes[..]) => {
                 RangingCommandDataChild::RangeStartCmd(Arc::new(RangeStartCmdData::parse(
@@ -4497,9 +4532,11 @@ impl RangingCommandData {
             }
             (_) => return Err(Error::InvalidPacketError),
         };
-        Ok(Self { child })
+        Ok(Self { session_id, child })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
+        let session_id = self.session_id;
+        buffer[4..8].copy_from_slice(&session_id.to_le_bytes()[0..4]);
         match &self.child {
             RangingCommandDataChild::RangeStartCmd(value) => value.write_to(buffer),
             RangingCommandDataChild::RangeStopCmd(value) => value.write_to(buffer),
@@ -4512,6 +4549,7 @@ impl RangingCommandData {
     }
     fn get_size(&self) -> usize {
         let ret = 0;
+        let ret = ret + 4;
         ret
     }
 }
@@ -4587,6 +4625,9 @@ impl RangingCommandPacket {
     pub fn get_opcode(&self) -> u8 {
         self.uci_packet.as_ref().opcode
     }
+    pub fn get_session_id(&self) -> u32 {
+        self.ranging_command.as_ref().session_id
+    }
 }
 impl Into<UciPacketPacket> for RangingCommandPacket {
     fn into(self) -> UciPacketPacket {
@@ -4601,6 +4642,7 @@ impl Into<UciCommandPacket> for RangingCommandPacket {
 impl RangingCommandBuilder {
     pub fn build(self) -> RangingCommandPacket {
         let ranging_command = Arc::new(RangingCommandData {
+            session_id: self.session_id,
             child: RangingCommandDataChild::None,
         });
         let uci_command = Arc::new(UciCommandData {
@@ -11394,9 +11436,7 @@ SessionNotificationChild::SessionUpdateControllerMulticastListNtf(packet) => {le
 session_update_controller_multicast_list_ntf_builder_tests! { session_update_controller_multicast_list_ntf_builder_test_00: b"\x61\x07\x00\x06\x00\x01\x02\x03\x04\x00",}
 
 #[derive(Debug)]
-struct RangeStartCmdData {
-    session_id: u32,
-}
+struct RangeStartCmdData {}
 #[derive(Debug, Clone)]
 pub struct RangeStartCmdPacket {
     uci_packet: Arc<UciPacketData>,
@@ -11413,27 +11453,14 @@ impl RangeStartCmdData {
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::InvalidLengthError {
-                obj: "RangeStartCmd".to_string(),
-                field: "session_id".to_string(),
-                wanted: 8,
-                got: bytes.len(),
-            });
-        }
-        let session_id = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        Ok(Self { session_id })
+        Ok(Self {})
     }
-    fn write_to(&self, buffer: &mut BytesMut) {
-        let session_id = self.session_id;
-        buffer[4..8].copy_from_slice(&session_id.to_le_bytes()[0..4]);
-    }
+    fn write_to(&self, buffer: &mut BytesMut) {}
     fn get_total_size(&self) -> usize {
         self.get_size()
     }
     fn get_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 4;
         ret
     }
 }
@@ -11499,7 +11526,7 @@ impl RangeStartCmdPacket {
         self.uci_packet.as_ref().opcode
     }
     pub fn get_session_id(&self) -> u32 {
-        self.range_start_cmd.as_ref().session_id
+        self.ranging_command.as_ref().session_id
     }
 }
 impl Into<UciPacketPacket> for RangeStartCmdPacket {
@@ -11519,10 +11546,9 @@ impl Into<RangingCommandPacket> for RangeStartCmdPacket {
 }
 impl RangeStartCmdBuilder {
     pub fn build(self) -> RangeStartCmdPacket {
-        let range_start_cmd = Arc::new(RangeStartCmdData {
-            session_id: self.session_id,
-        });
+        let range_start_cmd = Arc::new(RangeStartCmdData {});
         let ranging_command = Arc::new(RangingCommandData {
+            session_id: self.session_id,
             child: RangingCommandDataChild::RangeStartCmd(range_start_cmd),
         });
         let uci_command = Arc::new(UciCommandData {
@@ -12577,9 +12603,7 @@ RangeDataNtfChild::ExtendedMacTwoWayRangeDataNtf(packet) => {let rebuilder = Ext
 extended_mac_two_way_range_data_ntf_builder_tests! { extended_mac_two_way_range_data_ntf_builder_test_00: b"\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",}
 
 #[derive(Debug)]
-struct RangeStopCmdData {
-    session_id: u32,
-}
+struct RangeStopCmdData {}
 #[derive(Debug, Clone)]
 pub struct RangeStopCmdPacket {
     uci_packet: Arc<UciPacketData>,
@@ -12596,27 +12620,14 @@ impl RangeStopCmdData {
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::InvalidLengthError {
-                obj: "RangeStopCmd".to_string(),
-                field: "session_id".to_string(),
-                wanted: 8,
-                got: bytes.len(),
-            });
-        }
-        let session_id = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        Ok(Self { session_id })
+        Ok(Self {})
     }
-    fn write_to(&self, buffer: &mut BytesMut) {
-        let session_id = self.session_id;
-        buffer[4..8].copy_from_slice(&session_id.to_le_bytes()[0..4]);
-    }
+    fn write_to(&self, buffer: &mut BytesMut) {}
     fn get_total_size(&self) -> usize {
         self.get_size()
     }
     fn get_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 4;
         ret
     }
 }
@@ -12682,7 +12693,7 @@ impl RangeStopCmdPacket {
         self.uci_packet.as_ref().opcode
     }
     pub fn get_session_id(&self) -> u32 {
-        self.range_stop_cmd.as_ref().session_id
+        self.ranging_command.as_ref().session_id
     }
 }
 impl Into<UciPacketPacket> for RangeStopCmdPacket {
@@ -12702,10 +12713,9 @@ impl Into<RangingCommandPacket> for RangeStopCmdPacket {
 }
 impl RangeStopCmdBuilder {
     pub fn build(self) -> RangeStopCmdPacket {
-        let range_stop_cmd = Arc::new(RangeStopCmdData {
-            session_id: self.session_id,
-        });
+        let range_stop_cmd = Arc::new(RangeStopCmdData {});
         let ranging_command = Arc::new(RangingCommandData {
+            session_id: self.session_id,
             child: RangingCommandDataChild::RangeStopCmd(range_stop_cmd),
         });
         let uci_command = Arc::new(UciCommandData {
@@ -12921,9 +12931,7 @@ RangingResponseChild::RangeStopRsp(packet) => {let rebuilder = RangeStopRspBuild
 range_stop_rsp_builder_tests! { range_stop_rsp_builder_test_00: b"\x42\x01\x00\x01\x00",}
 
 #[derive(Debug)]
-struct RangeGetRangingCountCmdData {
-    session_id: u32,
-}
+struct RangeGetRangingCountCmdData {}
 #[derive(Debug, Clone)]
 pub struct RangeGetRangingCountCmdPacket {
     uci_packet: Arc<UciPacketData>,
@@ -12940,27 +12948,14 @@ impl RangeGetRangingCountCmdData {
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 8 {
-            return Err(Error::InvalidLengthError {
-                obj: "RangeGetRangingCountCmd".to_string(),
-                field: "session_id".to_string(),
-                wanted: 8,
-                got: bytes.len(),
-            });
-        }
-        let session_id = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        Ok(Self { session_id })
+        Ok(Self {})
     }
-    fn write_to(&self, buffer: &mut BytesMut) {
-        let session_id = self.session_id;
-        buffer[4..8].copy_from_slice(&session_id.to_le_bytes()[0..4]);
-    }
+    fn write_to(&self, buffer: &mut BytesMut) {}
     fn get_total_size(&self) -> usize {
         self.get_size()
     }
     fn get_size(&self) -> usize {
         let ret = 0;
-        let ret = ret + 4;
         ret
     }
 }
@@ -13026,7 +13021,7 @@ impl RangeGetRangingCountCmdPacket {
         self.uci_packet.as_ref().opcode
     }
     pub fn get_session_id(&self) -> u32 {
-        self.range_get_ranging_count_cmd.as_ref().session_id
+        self.ranging_command.as_ref().session_id
     }
 }
 impl Into<UciPacketPacket> for RangeGetRangingCountCmdPacket {
@@ -13046,10 +13041,9 @@ impl Into<RangingCommandPacket> for RangeGetRangingCountCmdPacket {
 }
 impl RangeGetRangingCountCmdBuilder {
     pub fn build(self) -> RangeGetRangingCountCmdPacket {
-        let range_get_ranging_count_cmd = Arc::new(RangeGetRangingCountCmdData {
-            session_id: self.session_id,
-        });
+        let range_get_ranging_count_cmd = Arc::new(RangeGetRangingCountCmdData {});
         let ranging_command = Arc::new(RangingCommandData {
+            session_id: self.session_id,
             child: RangingCommandDataChild::RangeGetRangingCountCmd(range_get_ranging_count_cmd),
         });
         let uci_command = Arc::new(UciCommandData {
