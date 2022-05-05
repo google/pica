@@ -13,10 +13,10 @@ use num_traits::FromPrimitive;
 use super::session::{Session, MAX_SESSION};
 
 pub const MAX_DEVICE: usize = 4;
-const UCI_VERSION: u16 = 0x110; // Version 1.1.0
-const MAC_VERSION: u16 = 0x130; // Version 1.3.0
-const PHY_VERSION: u16 = 0x130; // Version 1.3.0
-const TEST_VERSION: u16 = 0x110; // Version 1.1
+const UCI_VERSION: u16 = 0x1001; // Version 1.1.0
+const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
+const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
+const TEST_VERSION: u16 = 0x1001; // Version 1.1
 
 // Capabilities are vendor defined, Android parses capabilities
 // according to these definitions:
