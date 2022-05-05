@@ -50,29 +50,97 @@ class Device:
         self.reader = reader
         self.writer = writer
 
-    def _send_command(self, cmd: bytes):
-        self.writer.write(cmd)
+    def _send_command(self, group_id: int, opcode_id: int, payload: bytes):
+        """Sends a UCI command without fragmentation"""
+        command = bytes([0x20 | group_id, opcode_id, 0, len(payload)]) + payload
+        self.writer.write(command)
+
+    def pica_init_device(
+        self,
+        mac_address: str = '0',
+        x: str = "0",
+        y: str = "0",
+        z: str = "0",
+        yaw: str = "0",
+        pitch: str = "0",
+        roll: str = "0",
+        **kargs):
+        """Init Pica device"""
+        self._send_command(9, 0,
+            encode_mac_address(mac_address) +
+            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+
+    def pica_set_device_position(
+        self,
+        x: str = "0",
+        y: str = "0",
+        z: str = "0",
+        yaw: str = "0",
+        pitch: str = "0",
+        roll: str = "0",
+        **kargs):
+        """Set Pica device position"""
+        self._send_command(9, 1,
+            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+
+    def pica_create_beacon(
+        self,
+        mac_address: str = '0',
+        x: str = "0",
+        y: str = "0",
+        z: str = "0",
+        yaw: str = "0",
+        pitch: str = "0",
+        roll: str = "0",
+        **kargs):
+        """Create a Pica beacon"""
+        self._send_command(9, 2,
+            encode_mac_address(mac_address) +
+            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+
+    def pica_set_beacon_position(
+        self,
+        mac_address: str = '0',
+        x: str = "0",
+        y: str = "0",
+        z: str = "0",
+        yaw: str = "0",
+        pitch: str = "0",
+        roll: str = "0",
+        **kargs):
+        """Set Pica beacon position"""
+        self._send_command(9, 3,
+            encode_mac_address(mac_address) +
+            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+
+    def pica_destroy_beacon(
+        self,
+        mac_address: str = '0',
+        **kargs):
+        """Set Pica beacon position"""
+        self._send_command(9, 4,
+            encode_mac_address(mac_address))
 
     def device_reset(self, **kargs):
         """Reset the UWBS."""
-        self._send_command(bytes([0x20, 0x0, 0x0, 0x1, 0x0]))
+        self._send_command(0, 0, bytes([0x0]))
 
     def get_device_info(self, **kargs):
         """Retrieve the device information like (UCI version and other vendor specific info)."""
-        self._send_command(bytes([0x20, 0x2, 0x0, 0x0]))
+        self._send_command(0, 2, bytes([]))
 
     def get_caps_info(self, **kargs):
         """Get the capability of the UWBS."""
-        self._send_command(bytes([0x20, 0x3, 0x0, 0x0]))
+        self._send_command(0, 3, bytes([]))
 
     def session_init(self, session_id: str = '0', **kargs):
         """Initialize the session"""
-        self._send_command(bytes([0x21, 0x0, 0x0, 0x5]) +
+        self._send_command(1, 0,
             int(session_id).to_bytes(4, byteorder='little') + bytes([0x0]))
 
     def session_deinit(self, session_id: str = '0', **kargs):
         """Deinitialize the session"""
-        self._send_command(bytes([0x21, 0x1, 0x0, 0x4]) + encode_session_id(session_id))
+        self._send_command(1, 1, encode_session_id(session_id))
 
     def session_set_app_config(
         self,
@@ -90,54 +158,35 @@ class Device:
         configs.append(0x9, int(ranging_interval).to_bytes(4, byteorder='little'))
         configs.append(0x7, encoded_dst_mac_addresses)
 
-        self._send_command(
-            bytes([0x21, 0x3, 0x0, 4 + configs.len()]) +
+        self._send_command(1, 3,
             encode_session_id(session_id) +
             configs.encode())
 
     def session_get_app_config(self, session_id: str = '0', **kargs):
         """retrieve the current APP Configuration Parameters of the requested UWB session."""
-        self._send_command(
-            bytes([0x21, 0x4, 0x0, 0x5]) +
+        self._send_command(1, 4,
             encode_session_id(session_id) +
             bytes([0x0]))
 
     def session_get_count(self, **kargs):
         """Retrieve number of UWB sessions in the UWBS."""
-        self._send_command(bytes([0x21, 0x5, 0x0, 0x0]))
+        self._send_command(1, 5, bytes([]))
 
     def session_get_state(self, session_id: str = '0', **kargs):
         """Query the current state of the UWB session."""
-        self._send_command(bytes([0x21, 0x6, 0x0, 0x4]) + encode_session_id(session_id))
+        self._send_command(1, 6, encode_session_id(session_id))
 
     def range_start(self, session_id: str = '0', **kargs):
         """start a UWB session."""
-        self._send_command(bytes([0x22, 0x0, 0x0, 0x4]) + encode_session_id(session_id))
+        self._send_command(2, 0, encode_session_id(session_id))
 
     def range_stop(self, session_id: str = '0', **kargs):
         """Stop a UWB session."""
-        self._send_command(bytes([0x22, 0x1, 0x0, 0x4]) + encode_session_id(session_id))
+        self._send_command(2, 1, encode_session_id(session_id))
 
     def get_ranging_count(self, session_id: str = '0', **kargs):
         """Get the number of times ranging has been attempted during the ranging session.."""
-        self._send_command(bytes([0x22, 0x3, 0x0, 0x4]) + encode_session_id(session_id))
-
-    def pica_create_beacon(
-        self,
-        mac_address: str = '0',
-        x: str = "0",
-        y: str = "0",
-        z: str = "0",
-        yaw: str = "0",
-        pitch: str = "0",
-        roll: str = "0",
-        **kargs):
-        """Create a Pica beacon"""
-        self._send_command(
-            bytes([0x29, 0x2, 0x0, 17]) +
-            encode_mac_address(mac_address) +
-            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
-
+        self._send_command(2, 3, encode_session_id(session_id))
 
     async def read_responses_and_notifications(self):
         def chunks(l, n):
@@ -177,7 +226,7 @@ class Device:
                 print(f'Received UCI packet [{len(packet)}]:')
                 print(f'  {txt}')
                 uci_packet = uci_packets.UciPacket.parse(packet)
-                pprint.pprint(uci_packet, compact=False)
+                print.pprint(uci_packet, compact=False)
                 print(f'--> {command_buffer}', end='', flush=True)
 
                 packet = bytes()
@@ -197,6 +246,11 @@ async def get_stream_reader(pipe) -> asyncio.StreamReader:
 
 async def command_line(device: Device):
     commands = {
+        'pica_init_device': device.pica_init_device,
+        'pica_set_device_position': device.pica_set_device_position,
+        'pica_create_beacon': device.pica_create_beacon,
+        'pica_set_beacon_position': device.pica_set_beacon_position,
+        'pica_destroy_beacon': device.pica_destroy_beacon,
         'device_reset': device.device_reset,
         'get_device_info': device.get_device_info,
         'get_caps_info': device.get_caps_info,
@@ -209,7 +263,6 @@ async def command_line(device: Device):
         'range_start': device.range_start,
         'range_stop': device.range_stop,
         'get_ranging_count': device.get_ranging_count,
-        'pica_create_beacon': device.pica_create_beacon,
     }
 
     def usage():
