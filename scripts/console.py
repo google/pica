@@ -22,6 +22,9 @@ def encode_position(x: int, y: int, z: int, yaw: int, pitch: int, roll: int) -> 
 def encode_session_id(session_id: str) -> bytes:
     return int(session_id).to_bytes(4, byteorder='little')
 
+def encode_short_mac_address(mac_address: str) -> bytes:
+    return int(mac_address).to_bytes(2, byteorder='little')
+
 def encode_mac_address(mac_address: str) -> bytes:
     return int(mac_address).to_bytes(8, byteorder='little')
 
@@ -133,6 +136,14 @@ class Device:
         """Get the capability of the UWBS."""
         self._send_command(0, 3, bytes([]))
 
+    def set_config(self, low_power_mode: str = '0', **kargs):
+        """Set the configuration parameters on the UWBS."""
+        self._send_command(0, 4, bytes([1, 1, 1, int(low_power_mode)]))
+
+    def get_config(self, **kargs):
+        """Retrieve the current configuration parameter(s) of the UWBS."""
+        self._send_command(0, 5, bytes([2, 0, 1]))
+
     def session_init(self, session_id: str = '0', **kargs):
         """Initialize the session"""
         self._send_command(1, 0,
@@ -150,11 +161,15 @@ class Device:
         **kargs):
         """set APP Configuration Parameters for the requested UWB session."""
         encoded_dst_mac_addresses = bytes()
+        dst_mac_addresses_count = 0
         for mac_address in dst_mac_addresses.split(','):
             if len(mac_address) > 0:
+                dst_mac_addresses_count += 1
                 encoded_dst_mac_addresses += int(mac_address).to_bytes(8, byteorder='little')
 
         configs = TLV()
+        configs.append(0x26, bytes([0x2])) # MAC Address Mode #2
+        configs.append(0x5, bytes([dst_mac_addresses_count]))
         configs.append(0x9, int(ranging_interval).to_bytes(4, byteorder='little'))
         configs.append(0x7, encoded_dst_mac_addresses)
 
@@ -166,7 +181,7 @@ class Device:
         """retrieve the current APP Configuration Parameters of the requested UWB session."""
         self._send_command(1, 4,
             encode_session_id(session_id) +
-            bytes([0x0]))
+            bytes([1, 0x9]))
 
     def session_get_count(self, **kargs):
         """Retrieve number of UWB sessions in the UWBS."""
@@ -175,6 +190,30 @@ class Device:
     def session_get_state(self, session_id: str = '0', **kargs):
         """Query the current state of the UWB session."""
         self._send_command(1, 6, encode_session_id(session_id))
+
+    def session_update_controller_multicast_list(
+        self,
+        session_id: str = '0',
+        action: str = 'add',
+        mac_address: str = '0',
+        subsession_id: str = '0',
+        **kargs):
+        """Update the controller multicast list."""
+
+        if action == 'add':
+            encoded_action = bytes([0])
+        elif action == 'remove':
+            encoded_action = bytes([1])
+        else:
+            print(f"Unexpected action: '{action}', expected add or remove")
+            return
+
+        self._send_command(1, 7,
+            encode_session_id(session_id) +
+            encoded_action +
+            bytes([1]) +
+            encode_short_mac_address(mac_address) +
+            encode_session_id(subsession_id))
 
     def range_start(self, session_id: str = '0', **kargs):
         """start a UWB session."""
@@ -225,8 +264,8 @@ class Device:
                 print('\r', end='')
                 print(f'Received UCI packet [{len(packet)}]:')
                 print(f'  {txt}')
-                uci_packet = uci_packets.UciPacket.parse(packet)
-                print.pprint(uci_packet, compact=False)
+                # uci_packet = uci_packets.UciPacket.parse(packet)
+                # print.pprint(uci_packet, compact=False)
                 print(f'--> {command_buffer}', end='', flush=True)
 
                 packet = bytes()
@@ -253,6 +292,8 @@ async def command_line(device: Device):
         'pica_destroy_beacon': device.pica_destroy_beacon,
         'device_reset': device.device_reset,
         'get_device_info': device.get_device_info,
+        'get_config': device.get_config,
+        'set_config': device.set_config,
         'get_caps_info': device.get_caps_info,
         'session_init': device.session_init,
         'session_deinit': device.session_deinit,
@@ -260,6 +301,7 @@ async def command_line(device: Device):
         'session_get_app_config': device.session_get_app_config,
         'session_get_count': device.session_get_count,
         'session_get_state': device.session_get_state,
+        'session_update_controller_multicast_list': device.session_update_controller_multicast_list,
         'range_start': device.range_start,
         'range_stop': device.range_stop,
         'get_ranging_count': device.get_ranging_count,
