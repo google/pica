@@ -4,9 +4,11 @@ extern crate num_traits;
 extern crate thiserror;
 
 use pica::{web, Pica, PicaCommand};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use structopt::StructOpt;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio::try_join;
@@ -25,11 +27,22 @@ async fn accept_incoming(tx: mpsc::Sender<PicaCommand>) -> Result<()> {
     }
 }
 
+#[derive(Debug, StructOpt)]
+#[structopt(name = "pica", about = "Virtual UWB subsystem")]
+struct Opts {
+    /// Output directory for storing .pcapng traces.
+    /// If provided, .pcapng traces of client connections are automatically
+    /// saved under the name `device-{handle}.pcapng`.
+    #[structopt(short, long, parse(from_os_str))]
+    pcapng_dir: Option<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let opts = Opts::from_args();
     let (event_tx, _) = broadcast::channel(16);
 
-    let mut pica = Pica::new(event_tx.clone());
+    let mut pica = Pica::new(event_tx.clone(), opts.pcapng_dir);
     let tx = pica.tx();
 
     try_join!(

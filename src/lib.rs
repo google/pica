@@ -2,9 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use bytes::BytesMut;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
+
+mod pcapng;
 
 mod position;
 use position::Position;
@@ -27,13 +30,15 @@ pub type MacAddress = u64;
 struct Connection {
     socket: TcpStream,
     buffer: BytesMut,
+    pcapng_file: Option<pcapng::File>,
 }
 
 impl Connection {
-    fn new(socket: TcpStream) -> Self {
+    fn new(socket: TcpStream, pcapng_file: Option<pcapng::File>) -> Self {
         Connection {
             socket,
             buffer: BytesMut::with_capacity(MAX_PAYLOAD_SIZE),
+            pcapng_file,
         }
     }
 
@@ -43,13 +48,23 @@ impl Connection {
             return Ok(None);
         }
 
+        if let Some(ref mut pcapng_file) = self.pcapng_file {
+            pcapng_file.write(&self.buffer, pcapng::Direction::Tx)?
+        }
+
         let packet = UciPacketPacket::parse(&self.buffer)?;
         self.buffer.clear();
         Ok(Some(packet.try_into()?))
     }
 
     async fn write(&mut self, packet: UciPacketPacket) -> Result<()> {
-        let _ = self.socket.try_write(&packet.to_bytes())?;
+        let buffer = packet.to_bytes();
+
+        if let Some(ref mut pcapng_file) = self.pcapng_file {
+            pcapng_file.write(&buffer, pcapng::Direction::Rx)?
+        }
+
+        let _ = self.socket.try_write(&buffer)?;
         Ok(())
     }
 }
@@ -109,10 +124,11 @@ pub struct Pica {
     rx: mpsc::Receiver<PicaCommand>,
     tx: mpsc::Sender<PicaCommand>,
     event_tx: broadcast::Sender<PicaEvent>,
+    pcapng_dir: Option<PathBuf>,
 }
 
 impl Pica {
-    pub fn new(event_tx: broadcast::Sender<PicaEvent>) -> Self {
+    pub fn new(event_tx: broadcast::Sender<PicaEvent>, pcapng_dir: Option<PathBuf>) -> Self {
         let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
         Pica {
             devices: HashMap::new(),
@@ -121,6 +137,7 @@ impl Pica {
             rx,
             tx,
             event_tx,
+            pcapng_dir,
         }
     }
 
@@ -152,6 +169,7 @@ impl Pica {
         let (packet_tx, mut packet_rx) = mpsc::channel(MAX_SESSION);
         let device_handle = self.counter;
         let pica_tx = self.tx.clone();
+        let pcapng_dir = self.pcapng_dir.clone();
 
         println!("[{}] Connecting device", device_handle);
 
@@ -169,7 +187,16 @@ impl Pica {
         // The task notifies pica when exiting to let it clean
         // the state.
         tokio::spawn(async move {
-            let mut connection = Connection::new(stream);
+            let pcapng_file: Option<pcapng::File> = pcapng_dir
+                .map(|dir| {
+                    let full_path = dir.join(format!("device-{}.pcapng", device_handle));
+                    println!("Recording pcapng to file {}", full_path.as_path().display());
+                    pcapng::File::create(full_path)
+                })
+                .transpose()
+                .unwrap();
+
+            let mut connection = Connection::new(stream, pcapng_file);
             'outer: loop {
                 tokio::select! {
                     // Read command packet sent from connected UWB host.
