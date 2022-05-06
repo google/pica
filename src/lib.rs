@@ -49,7 +49,9 @@ impl Connection {
         }
 
         if let Some(ref mut pcapng_file) = self.pcapng_file {
-            pcapng_file.write(&self.buffer, pcapng::Direction::Tx)?
+            pcapng_file
+                .write(&self.buffer, pcapng::Direction::Tx)
+                .await?
         }
 
         let packet = UciPacketPacket::parse(&self.buffer)?;
@@ -61,7 +63,7 @@ impl Connection {
         let buffer = packet.to_bytes();
 
         if let Some(ref mut pcapng_file) = self.pcapng_file {
-            pcapng_file.write(&buffer, pcapng::Direction::Rx)?
+            pcapng_file.write(&buffer, pcapng::Direction::Rx).await?
         }
 
         let _ = self.socket.try_write(&buffer)?;
@@ -187,14 +189,13 @@ impl Pica {
         // The task notifies pica when exiting to let it clean
         // the state.
         tokio::spawn(async move {
-            let pcapng_file: Option<pcapng::File> = pcapng_dir
-                .map(|dir| {
-                    let full_path = dir.join(format!("device-{}.pcapng", device_handle));
-                    println!("Recording pcapng to file {}", full_path.as_path().display());
-                    pcapng::File::create(full_path)
-                })
-                .transpose()
-                .unwrap();
+            let pcapng_file: Option<pcapng::File> = if let Some(dir) = pcapng_dir {
+                let full_path = dir.join(format!("device-{}.pcapng", device_handle));
+                println!("Recording pcapng to file {}", full_path.as_path().display());
+                Some(pcapng::File::create(full_path).await.unwrap())
+            } else {
+                None
+            };
 
             let mut connection = Connection::new(stream, pcapng_file);
             'outer: loop {
