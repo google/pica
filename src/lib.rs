@@ -1,11 +1,13 @@
 use anyhow::{anyhow, Context, Result};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
+
+use num_traits::{FromPrimitive, ToPrimitive};
 
 mod pcapng;
 
@@ -42,7 +44,7 @@ impl Connection {
         }
     }
 
-    async fn read(&mut self) -> Result<Option<UciCommandPacket>> {
+    async fn read(&mut self) -> Result<Option<BytesMut>> {
         let len = self.socket.read_buf(&mut self.buffer).await?;
         if len == 0 {
             return Ok(None);
@@ -54,19 +56,16 @@ impl Connection {
                 .await?
         }
 
-        let packet = UciPacketPacket::parse(&self.buffer)?;
-        self.buffer.clear();
-        Ok(Some(packet.try_into()?))
+        let bytes = self.buffer.split_to(self.buffer.len());
+        Ok(Some(bytes))
     }
 
-    async fn write(&mut self, packet: UciPacketPacket) -> Result<()> {
-        let buffer = packet.to_bytes();
-
+    async fn write(&mut self, packet: Bytes) -> Result<()> {
         if let Some(ref mut pcapng_file) = self.pcapng_file {
-            pcapng_file.write(&buffer, pcapng::Direction::Rx).await?
+            pcapng_file.write(&packet, pcapng::Direction::Rx).await?
         }
 
-        let _ = self.socket.try_write(&buffer)?;
+        let _ = self.socket.try_write(&packet)?;
         Ok(())
     }
 }
@@ -127,6 +126,61 @@ pub struct Pica {
     tx: mpsc::Sender<PicaCommand>,
     event_tx: broadcast::Sender<PicaEvent>,
     pcapng_dir: Option<PathBuf>,
+}
+
+/// Result of UCI packet parsing.
+enum UciParseResult {
+    Ok(UciCommandPacket),
+    Err(Bytes),
+    Skip,
+}
+
+/// Parse incoming UCI packets.
+/// Handle parsing errors by crafting a suitable error response packet.
+fn parse_uci_packet(bytes: BytesMut) -> UciParseResult {
+    match UciPacketPacket::parse(&bytes) {
+        // Parsing error. Determine what error response should be
+        // returned to the host:
+        // - response and notifications are ignored, no response
+        // - if the group id is not known, STATUS_UNKNOWN_GID,
+        // - otherwise, and to simplify the code, STATUS_UNKNOWN_OID is
+        //      always returned. That means that malformed commands
+        //      get the same status code, instead of
+        //      STATUS_SYNTAX_ERROR.
+        Err(_) => {
+            let message_type = (bytes[0] >> 5) & 0x7;
+            let group_id = bytes[0] & 0xf;
+            let opcode_id = bytes[1] & 0x3f;
+
+            let status = match (
+                MessageType::from_u8(message_type),
+                GroupId::from_u8(group_id),
+            ) {
+                (Some(MessageType::Command), Some(_)) => StatusCode::UciStatusUnknownOid,
+                (Some(MessageType::Command), None) => StatusCode::UciStatusUnknownGid,
+                _ => return UciParseResult::Skip,
+            };
+            // The PDL generated code cannot be used to generate
+            // responses with invalid group identifiers.
+            let response = vec![
+                (MessageType::Response.to_u8().unwrap() << 5) | group_id,
+                opcode_id,
+                0,
+                1,
+                status.to_u8().unwrap(),
+            ];
+            UciParseResult::Err(response.into())
+        }
+
+        // Parsing success, ignore non command packets.
+        Ok(packet) => {
+            if let Ok(cmd) = packet.try_into() {
+                UciParseResult::Ok(cmd)
+            } else {
+                UciParseResult::Skip
+            }
+        }
+    }
 }
 
 impl Pica {
@@ -203,18 +257,22 @@ impl Pica {
                 tokio::select! {
                     // Read command packet sent from connected UWB host.
                     // Run associated command.
-                    result = connection.read() => {
+                    result = connection.read() =>
                         match result {
                             Ok(Some(packet)) =>
-                                pica_tx.send(PicaCommand::Command(device_handle, packet)).await.unwrap(),
-                            Ok(None) |
-                            Err(_) => break 'outer
-                        }
-                    },
+                                match parse_uci_packet(packet) {
+                                    UciParseResult::Ok(cmd) =>
+                                        pica_tx.send(PicaCommand::Command(device_handle, cmd)).await.unwrap(),
+                                    UciParseResult::Err(response) =>
+                                        connection.write(response).await.unwrap(),
+                                    UciParseResult::Skip => (),
+                                },
+                            Ok(None) | Err(_) => break 'outer
+                        },
 
                     // Send response packets to the connected UWB host.
                     Some(packet) = packet_rx.recv() =>
-                        if connection.write(packet).await.is_err() {
+                        if connection.write(packet.to_bytes()).await.is_err() {
                             break 'outer
                         }
                 }

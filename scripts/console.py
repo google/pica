@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import inspect
+import random
 import readline
 import socket
 import sys
@@ -57,6 +58,16 @@ class Device:
         """Sends a UCI command without fragmentation"""
         command = bytes([0x20 | group_id, opcode_id, 0, len(payload)]) + payload
         self.writer.write(command)
+
+    def raw(self,
+            group_id: str = "0",
+            opcode_id: str = "0",
+            payload_size: str = "0",
+            **kargs):
+        """Send raw commands with random payload."""
+        self._send_command(
+            int(group_id), int(opcode_id),
+            random.randbytes(int(payload_size)))
 
     def pica_init_device(
         self,
@@ -305,6 +316,7 @@ async def command_line(device: Device):
         'range_start': device.range_start,
         'range_stop': device.range_stop,
         'get_ranging_count': device.get_ranging_count,
+        'raw': device.raw,
     }
 
     def usage():
