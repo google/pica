@@ -433,7 +433,6 @@ impl Pica {
             status: StatusCode::UciStatusOk,
         }
         .build()
-        .into()
     }
 
     fn update_position(&self, mac_address: MacAddress, position: Position) {
@@ -508,9 +507,9 @@ impl Pica {
             status: StatusCode::UciStatusOk,
         }
         .build()
-        .into()
     }
 
+    #[allow(clippy::map_entry)]
     fn create_beacon(&mut self, cmd: PicaCreateBeaconCmdPacket) -> PicaCreateBeaconRspPacket {
         let mac_address = cmd.get_mac_address();
         let position = cmd.get_position();
@@ -538,7 +537,7 @@ impl Pica {
             StatusCode::UciStatusOk
         };
 
-        PicaCreateBeaconRspBuilder { status }.build().into()
+        PicaCreateBeaconRspBuilder { status }.build()
     }
 
     fn set_beacon_position(
@@ -561,7 +560,7 @@ impl Pica {
         if status == StatusCode::UciStatusOk {
             self.update_position(mac_address, Position::from(position));
         }
-        PicaSetBeaconPositionRspBuilder { status }.build().into()
+        PicaSetBeaconPositionRspBuilder { status }.build()
     }
 
     fn destroy_beacon(&mut self, cmd: PicaDestroyBeaconCmdPacket) -> PicaDestroyBeaconRspPacket {
@@ -576,6 +575,6 @@ impl Pica {
             StatusCode::UciStatusFailed
         };
 
-        PicaDestroyBeaconRspBuilder { status }.build().into()
+        PicaDestroyBeaconRspBuilder { status }.build()
     }
 }

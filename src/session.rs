@@ -120,7 +120,7 @@ impl Default for AppConfig {
     }
 }
 
-fn app_config_has_mandatory_parameters(configs: &Vec<AppConfigParameter>) -> bool {
+fn app_config_has_mandatory_parameters(configs: &[AppConfigParameter]) -> bool {
     const MANDATORY_PARAMETERS: [AppConfigTlvType; 6] = [
         AppConfigTlvType::DeviceRole,
         AppConfigTlvType::MultiNodeMode,
@@ -133,8 +133,7 @@ fn app_config_has_mandatory_parameters(configs: &Vec<AppConfigParameter>) -> boo
     MANDATORY_PARAMETERS.iter().all(|&mparam| {
         configs
             .iter()
-            .find(|&param| mparam == AppConfigTlvType::from_u8(param.id).unwrap())
-            .is_some()
+            .any(|param| mparam == AppConfigTlvType::from_u8(param.id).unwrap())
     })
 }
 
@@ -218,8 +217,8 @@ impl AppConfig {
         self.raw.get(&id).cloned()
     }
 
-    fn extend(&mut self, configs: &Vec<AppConfigParameter>) -> Vec<AppConfigStatus> {
-        if app_config_has_mandatory_parameters(configs) == false {
+    fn extend(&mut self, configs: &[AppConfigParameter]) -> Vec<AppConfigStatus> {
+        if !app_config_has_mandatory_parameters(configs) {
             // TODO: What shall we do in this situation?
         }
 
@@ -341,7 +340,7 @@ impl Session {
 
         SessionSetAppConfigRspBuilder {
             status,
-            parameters: invalid_parameters.clone(),
+            parameters: invalid_parameters,
         }
         .build()
     }

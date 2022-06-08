@@ -290,7 +290,7 @@ impl Device {
         println!("[{}] Session deinit", self.handle);
         println!("  session_id=0x{:x}", session_id);
 
-        let status = if let Some(_) = self.sessions.remove(&session_id) {
+        let status = if self.sessions.remove(&session_id).is_some() {
             StatusCode::UciStatusOk
         } else {
             StatusCode::UciStatusSessionNotExist
