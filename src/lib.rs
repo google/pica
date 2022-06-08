@@ -137,7 +137,7 @@ enum UciParseResult {
 
 /// Parse incoming UCI packets.
 /// Handle parsing errors by crafting a suitable error response packet.
-fn parse_uci_packet(bytes: BytesMut) -> UciParseResult {
+fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
     match UciPacketPacket::parse(&bytes) {
         // Parsing error. Determine what error response should be
         // returned to the host:
@@ -260,7 +260,7 @@ impl Pica {
                     result = connection.read() =>
                         match result {
                             Ok(Some(packet)) =>
-                                match parse_uci_packet(packet) {
+                                match parse_uci_packet(&packet) {
                                     UciParseResult::Ok(cmd) =>
                                         pica_tx.send(PicaCommand::Command(device_handle, cmd)).await.unwrap(),
                                     UciParseResult::Err(response) =>

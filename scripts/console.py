@@ -9,6 +9,7 @@ import time
 import struct
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import uci_packets
 
 MAX_PAYLOAD_SIZE = 1024
 
@@ -275,8 +276,8 @@ class Device:
                 print('\r', end='')
                 print(f'Received UCI packet [{len(packet)}]:')
                 print(f'  {txt}')
-                # uci_packet = uci_packets.UciPacket.parse(packet)
-                # print.pprint(uci_packet, compact=False)
+                uci_packet = uci_packets.UciPacket.parse_all(packet)
+                uci_packet.show()
                 print(f'--> {command_buffer}', end='', flush=True)
 
                 packet = bytes()

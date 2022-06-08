@@ -787,6 +787,7 @@ pub enum CapTlvType {
     CccSupportedUwbConfigs = 0xa5,
     CccSupportedPulseShapeCombos = 0xa6,
     CccSupportedRanMultiplier = 0xa7,
+    SupportedPowerStats = 0xc0,
     SupportedAoaResultReqAntennaInterleaving = 0xe3,
 }
 impl fmt::Display for CapTlvType {
@@ -904,6 +905,11 @@ impl fmt::Display for CapTlvType {
             CapTlvType::CccSupportedRanMultiplier => write!(
                 f,
                 "{:#04X} (CCC_SUPPORTED_RAN_MULTIPLIER)",
+                self.to_u8().unwrap()
+            ),
+            CapTlvType::SupportedPowerStats => write!(
+                f,
+                "{:#04X} (SUPPORTED_POWER_STATS)",
                 self.to_u8().unwrap()
             ),
             CapTlvType::SupportedAoaResultReqAntennaInterleaving => write!(
