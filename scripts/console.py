@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 import inspect
 import random
 import readline
@@ -13,25 +28,31 @@ import uci_packets
 
 MAX_PAYLOAD_SIZE = 1024
 
+
 def encode_position(x: int, y: int, z: int, yaw: int, pitch: int, roll: int) -> bytes:
     return (struct.pack('<h', x)
-        + struct.pack('<h', y)
-        + struct.pack('<h', z)
-        + struct.pack('<h', yaw)
-        + struct.pack('<b', pitch)
-        + struct.pack('<h', roll))
+            + struct.pack('<h', y)
+            + struct.pack('<h', z)
+            + struct.pack('<h', yaw)
+            + struct.pack('<b', pitch)
+            + struct.pack('<h', roll))
+
 
 def encode_session_id(session_id: str) -> bytes:
     return int(session_id).to_bytes(4, byteorder='little')
 
+
 def encode_short_mac_address(mac_address: str) -> bytes:
     return int(mac_address).to_bytes(2, byteorder='little')
+
 
 def encode_mac_address(mac_address: str) -> bytes:
     return int(mac_address).to_bytes(8, byteorder='little')
 
+
 def encode_tlv(typ: int, value: bytes):
     return bytes([typ, len(value)]) + value if len(value) > 0 else bytes([])
+
 
 class TLV:
     def __init__(self):
@@ -57,7 +78,8 @@ class Device:
 
     def _send_command(self, group_id: int, opcode_id: int, payload: bytes):
         """Sends a UCI command without fragmentation"""
-        command = bytes([0x20 | group_id, opcode_id, 0, len(payload)]) + payload
+        command = bytes([0x20 | group_id, opcode_id,
+                        0, len(payload)]) + payload
         self.writer.write(command)
 
     def raw(self,
@@ -71,70 +93,70 @@ class Device:
             random.randbytes(int(payload_size)))
 
     def pica_init_device(
-        self,
-        mac_address: str = '0',
-        x: str = "0",
-        y: str = "0",
-        z: str = "0",
-        yaw: str = "0",
-        pitch: str = "0",
-        roll: str = "0",
-        **kargs):
+            self,
+            mac_address: str = '0',
+            x: str = "0",
+            y: str = "0",
+            z: str = "0",
+            yaw: str = "0",
+            pitch: str = "0",
+            roll: str = "0",
+            **kargs):
         """Init Pica device"""
         self._send_command(9, 0,
-            encode_mac_address(mac_address) +
-            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+                           encode_mac_address(mac_address) +
+                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
 
     def pica_set_device_position(
-        self,
-        x: str = "0",
-        y: str = "0",
-        z: str = "0",
-        yaw: str = "0",
-        pitch: str = "0",
-        roll: str = "0",
-        **kargs):
+            self,
+            x: str = "0",
+            y: str = "0",
+            z: str = "0",
+            yaw: str = "0",
+            pitch: str = "0",
+            roll: str = "0",
+            **kargs):
         """Set Pica device position"""
         self._send_command(9, 1,
-            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
 
     def pica_create_beacon(
-        self,
-        mac_address: str = '0',
-        x: str = "0",
-        y: str = "0",
-        z: str = "0",
-        yaw: str = "0",
-        pitch: str = "0",
-        roll: str = "0",
-        **kargs):
+            self,
+            mac_address: str = '0',
+            x: str = "0",
+            y: str = "0",
+            z: str = "0",
+            yaw: str = "0",
+            pitch: str = "0",
+            roll: str = "0",
+            **kargs):
         """Create a Pica beacon"""
         self._send_command(9, 2,
-            encode_mac_address(mac_address) +
-            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+                           encode_mac_address(mac_address) +
+                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
 
     def pica_set_beacon_position(
-        self,
-        mac_address: str = '0',
-        x: str = "0",
-        y: str = "0",
-        z: str = "0",
-        yaw: str = "0",
-        pitch: str = "0",
-        roll: str = "0",
-        **kargs):
+            self,
+            mac_address: str = '0',
+            x: str = "0",
+            y: str = "0",
+            z: str = "0",
+            yaw: str = "0",
+            pitch: str = "0",
+            roll: str = "0",
+            **kargs):
         """Set Pica beacon position"""
         self._send_command(9, 3,
-            encode_mac_address(mac_address) +
-            encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
+                           encode_mac_address(mac_address) +
+                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
 
     def pica_destroy_beacon(
-        self,
-        mac_address: str = '0',
-        **kargs):
+            self,
+            mac_address: str = '0',
+            **kargs):
         """Set Pica beacon position"""
         self._send_command(9, 4,
-            encode_mac_address(mac_address))
+                           encode_mac_address(mac_address))
 
     def device_reset(self, **kargs):
         """Reset the UWBS."""
@@ -159,41 +181,43 @@ class Device:
     def session_init(self, session_id: str = '0', **kargs):
         """Initialize the session"""
         self._send_command(1, 0,
-            int(session_id).to_bytes(4, byteorder='little') + bytes([0x0]))
+                           int(session_id).to_bytes(4, byteorder='little') + bytes([0x0]))
 
     def session_deinit(self, session_id: str = '0', **kargs):
         """Deinitialize the session"""
         self._send_command(1, 1, encode_session_id(session_id))
 
     def session_set_app_config(
-        self,
-        session_id: str = '0',
-        ranging_interval: str = '200',
-        dst_mac_addresses: str = '',
-        **kargs):
+            self,
+            session_id: str = '0',
+            ranging_interval: str = '200',
+            dst_mac_addresses: str = '',
+            **kargs):
         """set APP Configuration Parameters for the requested UWB session."""
         encoded_dst_mac_addresses = bytes()
         dst_mac_addresses_count = 0
         for mac_address in dst_mac_addresses.split(','):
             if len(mac_address) > 0:
                 dst_mac_addresses_count += 1
-                encoded_dst_mac_addresses += int(mac_address).to_bytes(8, byteorder='little')
+                encoded_dst_mac_addresses += int(
+                    mac_address).to_bytes(8, byteorder='little')
 
         configs = TLV()
-        configs.append(0x26, bytes([0x2])) # MAC Address Mode #2
+        configs.append(0x26, bytes([0x2]))  # MAC Address Mode #2
         configs.append(0x5, bytes([dst_mac_addresses_count]))
-        configs.append(0x9, int(ranging_interval).to_bytes(4, byteorder='little'))
+        configs.append(0x9, int(ranging_interval).to_bytes(
+            4, byteorder='little'))
         configs.append(0x7, encoded_dst_mac_addresses)
 
         self._send_command(1, 3,
-            encode_session_id(session_id) +
-            configs.encode())
+                           encode_session_id(session_id) +
+                           configs.encode())
 
     def session_get_app_config(self, session_id: str = '0', **kargs):
         """retrieve the current APP Configuration Parameters of the requested UWB session."""
         self._send_command(1, 4,
-            encode_session_id(session_id) +
-            bytes([1, 0x9]))
+                           encode_session_id(session_id) +
+                           bytes([1, 0x9]))
 
     def session_get_count(self, **kargs):
         """Retrieve number of UWB sessions in the UWBS."""
@@ -204,12 +228,12 @@ class Device:
         self._send_command(1, 6, encode_session_id(session_id))
 
     def session_update_controller_multicast_list(
-        self,
-        session_id: str = '0',
-        action: str = 'add',
-        mac_address: str = '0',
-        subsession_id: str = '0',
-        **kargs):
+            self,
+            session_id: str = '0',
+            action: str = 'add',
+            mac_address: str = '0',
+            subsession_id: str = '0',
+            **kargs):
         """Update the controller multicast list."""
 
         if action == 'add':
@@ -221,11 +245,11 @@ class Device:
             return
 
         self._send_command(1, 7,
-            encode_session_id(session_id) +
-            encoded_action +
-            bytes([1]) +
-            encode_short_mac_address(mac_address) +
-            encode_session_id(subsession_id))
+                           encode_session_id(session_id) +
+                           encoded_action +
+                           bytes([1]) +
+                           encode_short_mac_address(mac_address) +
+                           encode_session_id(subsession_id))
 
     def range_start(self, session_id: str = '0', **kargs):
         """start a UWB session."""
@@ -262,7 +286,7 @@ class Device:
                 continue
 
             packet += buffer
-            buffer =  bytes()
+            buffer = bytes()
             if not have_header:
                 have_header = True
                 expect = packet[3]
@@ -284,9 +308,11 @@ class Device:
                 have_header = False
                 expect = 4
 
+
 async def ainput(prompt: str = ''):
     with ThreadPoolExecutor(1, 'ainput') as executor:
         return (await asyncio.get_event_loop().run_in_executor(executor, input, prompt)).rstrip()
+
 
 async def get_stream_reader(pipe) -> asyncio.StreamReader:
     loop = asyncio.get_event_loop()
@@ -294,6 +320,7 @@ async def get_stream_reader(pipe) -> asyncio.StreamReader:
     protocol = asyncio.StreamReaderProtocol(reader)
     await loop.connect_read_pipe(lambda: protocol, pipe)
     return reader
+
 
 async def command_line(device: Device):
     commands = {
@@ -332,7 +359,7 @@ async def command_line(device: Device):
         # Writing a command name, complete to ' '
         if len(tokens) == 1:
             results = [cmd + ' ' for cmd in commands.keys() if
-                cmd.startswith(text)]
+                       cmd.startswith(text)]
 
         # Writing a keyword argument, no completion
         elif '=' in tokens[-1]:
@@ -346,9 +373,10 @@ async def command_line(device: Device):
         else:
             sig = inspect.signature(commands[tokens[0]])
             names = [name for (name, p) in sig.parameters.items()
-                if (p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD or
-                    p.kind == inspect.Parameter.KEYWORD_ONLY)]
-            results = [name + '=' for name in names if name.startswith(tokens[-1])]
+                     if (p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD or
+                         p.kind == inspect.Parameter.KEYWORD_ONLY)]
+            results = [
+                name + '=' for name in names if name.startswith(tokens[-1])]
 
         results += [None]
         return results[state]
@@ -378,6 +406,7 @@ async def command_line(device: Device):
             usage()
             continue
         commands[cmd](*args, **kargs)
+
 
 async def main():
     # Connect to Pica

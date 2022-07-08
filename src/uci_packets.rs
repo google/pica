@@ -1,3 +1,17 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // @generated rust packets from uci_packets.pdl
 
 #![allow(clippy::all)]
@@ -907,11 +921,9 @@ impl fmt::Display for CapTlvType {
                 "{:#04X} (CCC_SUPPORTED_RAN_MULTIPLIER)",
                 self.to_u8().unwrap()
             ),
-            CapTlvType::SupportedPowerStats => write!(
-                f,
-                "{:#04X} (SUPPORTED_POWER_STATS)",
-                self.to_u8().unwrap()
-            ),
+            CapTlvType::SupportedPowerStats => {
+                write!(f, "{:#04X} (SUPPORTED_POWER_STATS)", self.to_u8().unwrap())
+            }
             CapTlvType::SupportedAoaResultReqAntennaInterleaving => write!(
                 f,
                 "{:#04X} (SUPPORTED_AOA_RESULT_REQ_ANTENNA_INTERLEAVING)",
