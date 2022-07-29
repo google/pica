@@ -57,12 +57,12 @@ async fn main() -> Result<()> {
     let (event_tx, _) = broadcast::channel(16);
 
     let mut pica = Pica::new(event_tx.clone(), opts.pcapng_dir);
-    let tx = pica.tx();
+    let pica_tx = pica.tx();
 
     try_join!(
-        accept_incoming(tx.clone()),
+        accept_incoming(pica_tx.clone()),
         pica.run(),
-        web::serve(tx, event_tx)
+        web::serve(pica_tx, event_tx)
     )?;
 
     Ok(())

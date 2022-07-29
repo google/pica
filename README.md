@@ -109,85 +109,39 @@ $> --> pica_create_beacon 56 # Create another one
                  └────────┘  └────────┘
 ```
 
-# Vendor commands
+# Http commands
 
-Pica implements vendor commands in the group `0x09` to let hosts report their
+Pica implements http commands to let hosts report their
 MAC address and current position. Other commands allow the hosts to create and
-modify beacons.
+modify anchors. Please refer to openapi.yaml for the set of differents commands.
 
-## Position
+# Regenerate uci_packets.rs
+If you haven't use bluetooth_packetgen before, it is a tool from Android. You can build it and use it
+and build it that way:
+```bash
+# Build bluetooth_packetgen
+cd $AOSP_DIR
+source build/envsetup.sh
+lunch <target>  # Use target 1 if in doubt
+m bluetooth_packetgen
+export PATH=$PATH:${AOSP_DIR}/out/host/linux-x86/bin/
 
-The position encodes the physical localization and orientation of an UWB
-device.
+# Generate the source
+cd $PICA_DIR
+bluetooth_packetgen \
+    --rust \
+    --include=src/ \
+    --out=src/ \
+    src/uci_packets.pdl
+```
 
-| Position Fields | Length   | Value/Description                            |
-|-----------------|----------|----------------------------------------------|
-| X               | 2 Octets | X Coordinate                                 |
-| Y               | 2 Octets | Y Coordinate                                 |
-| Z               | 2 Octets | Z Coordinate                                 |
-| Yaw             | 2 Octets | Yaw angle (Y-axis) in degrees (-180 to 180)  |
-| Pitch           | 1 Octet  | Pitch angle (X-axis) in degrees (-90 to 90)  |
-| Roll            | 2 Octets | Roll angle (Z-axis) in degrees (-180 to 180) |
+Then edit the uci_packet.rs to add clippy guards
 
-## PICA_INIT_DEVICE_CMD (`0x00`)
-
-| Payload Fields | Length    | Value/Description                                                                                                                  |
-|----------------|-----------|------------------------------------------------------------------------------------------------------------------------------------|
-| Mac Address    | 8 Octets  | Replace the generated mac address for the UWB subsystem. The default mac address is a counter incremented for each new connection. |
-| Position       | 11 Octets | Report the initial position of the UWB device.                                                                                     |
-
-## PICA_INIT_DEVICE_RSP (`0x00`)
-
-| Payload Fields | Length  | Value/Description |
-|----------------|---------|-------------------|
-| Status         | 1 Octet | Status code       |
-
-## PICA_SET_DEVICE_POSITION_CMD (`0x01`)
-
-| Payload Fields | Length    | Value/Description                              |
-|----------------|-----------|------------------------------------------------|
-| Position       | 11 Octets | Report the current position of the UWB device. |
-
-## PICA_SET_DEVICE_POSITION_RSP (`0x01`)
-
-| Payload Fields | Length  | Value/Description |
-|----------------|---------|-------------------|
-| Status         | 1 Octet | Status code       |
-
-## PICA_CREATE_BEACON_CMD (`0x02`)
-
-| Payload Fields | Length    | Value/Description                              |
-|----------------|-----------|------------------------------------------------|
-| Mac Address    | 8 Octets  | Selected mac address for the UWB beacon.       |
-| Position       | 11 Octets | Report the initial position of the UWB beacon. |
-
-## PICA_CREATE_BEACON_RSP (`0x02`)
-
-| Payload Fields | Length  | Value/Description |
-|----------------|---------|-------------------|
-| Status         | 1 Octet | Status code       |
-
-## PICA_SET_BEACON_POSITION_CMD (`0x03`)
-
-| Payload Fields | Length    | Value/Description                              |
-|----------------|-----------|------------------------------------------------|
-| Mac Address    | 8 Octets  | Mac address of the UWB beacon to edit.         |
-| Position       | 11 Octets | Report the current position of the UWB beacon. |
-
-## PICA_SET_BEACON_POSITION_RSP (`0x03`)
-
-| Payload Fields | Length  | Value/Description |
-|----------------|---------|-------------------|
-| Status         | 1 Octet | Status code       |
-
-## PICA_DESTROY_BEACON_CMD (`0x04`)
-
-| Payload Fields | Length   | Value/Description                        |
-|----------------|----------|------------------------------------------|
-| Mac Address    | 8 Octets | Mac address of the UWB beacon to remove. |
-
-## PICA_DESTROY_BEACON_RSP (`0x04`)
-
-| Payload Fields | Length  | Value/Description |
-|----------------|---------|-------------------|
-| Status         | 1 Octet | Status code       |
+```
+#![allow(clippy::all)]
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(unused)]
+#![allow(missing_docs)]
+```

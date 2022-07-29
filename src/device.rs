@@ -88,9 +88,13 @@ impl Device {
         tx: mpsc::Sender<UciPacketPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
+        let mac_address = {
+            let handle = device_handle as u16;
+            MacAddress::Short(handle.to_be_bytes())
+        };
         Device {
             handle: device_handle,
-            mac_address: device_handle as MacAddress,
+            mac_address,
             position: Position::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
@@ -499,7 +503,13 @@ impl Device {
                     _ => panic!("Unsupported Android command"),
                 }
             }
-            _ => panic!("Unsupported command type"),
+            // TODO: Handle properly without panic
+            _ => UciResponseBuilder {
+                group_id: GroupId::Core,
+                opcode: 0,
+                payload: None,
+            }
+            .build(),
         }
     }
 }

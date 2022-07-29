@@ -125,14 +125,7 @@ export class DeviceInfo extends LitElement {
       ${this.device == null
         ? html`<span>No Device Selected</span>`
         : html`
-            <span
-              >Mac Address:
-              ${this.device.mac_address
-                .toString(16)
-                .padStart(12, "0")
-                .match(/.{1,2}/g)
-                .join(":")}</span
-            >
+            <span> Mac Address: ${this.device.mac_address} </span>
             <span
               >X:
               <span style="color: red">${this.device.position.x}</span></span
@@ -198,13 +191,7 @@ export class DeviceInfo extends LitElement {
                     <table>
                       <tr>
                         <td>Mac</td>
-                        <td>
-                          ${mac_address
-                            .toString(16)
-                            .padStart(12, "0")
-                            .match(/.{1,2}/g)
-                            .join(":")}
-                        </td>
+                        <td> ${mac_address} </td>
                       </tr>
                       <tr>
                         <td>Distance</td>

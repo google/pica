@@ -90,13 +90,13 @@ limitations under the License.
     pitch,
     roll,
   }) {
-    fetch("/set_position", {
+    const path = "/set-position/" + mac_address;
+    fetch(path, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        mac_address,
         x,
         y,
         z,
@@ -118,11 +118,13 @@ limitations under the License.
 
   const events = new EventSource("/events");
 
-  events.addEventListener("add-device", (event) => {
+  events.addEventListener("device-added", (event) => {
     const data = JSON.parse(event.data);
-    console.log("Add Device", data);
+    console.log("Device Added", data);
 
-    const { mac_address, x, y, z, yaw, pitch, roll } = data;
+    const {
+      device: { mac_address, x, y, z, yaw, pitch, roll },
+    } = data;
     map.devices = [
       ...map.devices,
       {
@@ -136,11 +138,13 @@ limitations under the License.
     ];
   });
 
-  events.addEventListener("remove-device", (event) => {
+  events.addEventListener("device-removed", (event) => {
     const data = JSON.parse(event.data);
-    console.log("Remove Device", data);
+    console.log("Device Removed", data);
 
-    const { mac_address } = data;
+    const {
+      device: { mac_address },
+    } = data;
     if (info.device?.mac_address === mac_address) {
       info.device = null;
     }
@@ -156,11 +160,13 @@ limitations under the License.
     });
   });
 
-  events.addEventListener("update-position", (event) => {
+  events.addEventListener("position-updated", (event) => {
     const data = JSON.parse(event.data);
-    console.log("Update Position", data);
+    console.log("Position updated", data);
 
-    const { mac_address, x, y, z, yaw, pitch, roll } = data;
+    const {
+      device: { mac_address, x, y, z, yaw, pitch, roll },
+    } = data;
 
     const device = map.devices.find(
       (device) => device.mac_address === mac_address
@@ -175,25 +181,25 @@ limitations under the License.
     info.update();
   });
 
-  events.addEventListener("update-neighbor", (event) => {
+  events.addEventListener("neighbor-updated", (event) => {
     const data = JSON.parse(event.data);
-    console.log("Update Neighbor", data);
+    console.log("Neighbor updated", data);
 
     const {
-      mac_address,
-      neighbor: neighbor_mac,
+      source_device: { mac_address: src_mac_address },
+      destination_device: { mac_address: dest_mac_address },
       distance,
       azimuth,
       elevation,
     } = data;
 
     const device = map.devices.find(
-      (device) => device.mac_address === mac_address
+      (device) => device.mac_address === src_mac_address
     );
 
     const neighbor = device.neighbors.find(
-      (device) => device.mac_address == neighbor_mac
-    ) || { mac_address: neighbor_mac };
+      (device) => device.mac_address == dest_mac_address
+    ) || { mac_address: dest_mac_address };
 
     neighbor.distance = distance;
     neighbor.azimuth = azimuth;

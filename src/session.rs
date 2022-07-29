@@ -124,7 +124,7 @@ impl Default for AppConfig {
             ranging_interval: DEFAULT_RANGING_INTERVAL,
             slot_duration: DEFAULT_SLOT_DURATION,
             channel_number: DEFAULT_CHANNEL_NUMBER,
-            device_mac_address: 0,
+            device_mac_address: MacAddress::Short([0x00, 0x00]),
             number_of_controlees: 0,
             dst_mac_addresses: Vec::new(),
             multi_node_mode: MultiNodeMode::Unicast,
@@ -176,10 +176,10 @@ impl AppConfig {
             AppConfigTlvType::DeviceMacAddress => {
                 self.device_mac_address = match self.mac_address_mode {
                     MacAddressMode::AddressMode0 => {
-                        u16::from_le_bytes(value[..].try_into().unwrap()) as u64
+                        MacAddress::Short(value[..].try_into().unwrap())
                     }
                     MacAddressMode::AddressMode2 => {
-                        u64::from_le_bytes(value[..].try_into().unwrap())
+                        MacAddress::Extend(value[..].try_into().unwrap())
                     }
                     _ => panic!("Unexpected MAC Address Mode"),
                 };
@@ -202,10 +202,8 @@ impl AppConfig {
                 self.dst_mac_addresses = value
                     .chunks(mac_address_size)
                     .map(|c| match self.mac_address_mode {
-                        MacAddressMode::AddressMode0 => {
-                            u16::from_le_bytes(c.try_into().unwrap()) as u64
-                        }
-                        MacAddressMode::AddressMode2 => u64::from_le_bytes(c.try_into().unwrap()),
+                        MacAddressMode::AddressMode0 => MacAddress::Short(c.try_into().unwrap()),
+                        MacAddressMode::AddressMode2 => MacAddress::Extend(c.try_into().unwrap()),
                         _ => panic!("Unexpected MAC Address Mode"),
                     })
                     .collect();
@@ -316,7 +314,7 @@ impl Session {
         });
     }
 
-    pub fn get_dst_mac_addresses(&self) -> &Vec<u64> {
+    pub fn get_dst_mac_addresses(&self) -> &Vec<MacAddress> {
         &self.app_config.dst_mac_addresses
     }
 

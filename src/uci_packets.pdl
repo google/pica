@@ -25,7 +25,7 @@ enum GroupId : 4 {
     RANGING_SESSION_CONTROL = 0x02,
     DATA_CONTROL = 0x03,
     TEST = 0x0d,
-    VENDOR_PICA = 0x09,
+    VENDOR_RESERVED_9 = 0x09,
     VENDOR_RESERVED_A = 0x0a,
     VENDOR_RESERVED_B = 0x0b,
     VENDOR_ANDROID    = 0x0c,
@@ -347,14 +347,6 @@ packet RangingResponse : UciResponse (group_id = RANGING_SESSION_CONTROL) {
 }
 
 packet RangingNotification : UciNotification (group_id = RANGING_SESSION_CONTROL) {
-    _body_,
-}
-
-packet PicaCommand : UciCommand (group_id = VENDOR_PICA) {
-    _body_,
-}
-
-packet PicaResponse : UciResponse (group_id = VENDOR_PICA) {
     _body_,
 }
 
@@ -788,49 +780,6 @@ struct PicaPosition {
     yaw: 16,
     pitch: 8,
     roll: 16,
-}
-
-packet PicaInitDeviceCmd: PicaCommand (opcode = 0x0) { // PICA_INIT_DEVICE
-    mac_address: 64,
-    position: PicaPosition,
-}
-
-packet PicaInitDeviceRsp: PicaResponse (opcode = 0x0) { // PICA_INIT_DEVICE
-    status: StatusCode,
-}
-
-packet PicaSetDevicePositionCmd: PicaCommand (opcode = 0x1) { // PICA_SET_DEVICE_POSITION
-    position: PicaPosition,
-}
-
-packet PicaSetDevicePositionRsp: PicaResponse (opcode = 0x1) { // PICA_SET_DEVICE_POSITION
-    status: StatusCode,
-}
-
-packet PicaCreateBeaconCmd: PicaCommand (opcode = 0x2) { // PICA_CREATE_BEACON
-    mac_address: 64,
-    position: PicaPosition,
-}
-
-packet PicaCreateBeaconRsp: PicaResponse (opcode = 0x2) { // PICA_CREATE_BEACON
-    status: StatusCode,
-}
-
-packet PicaSetBeaconPositionCmd: PicaCommand (opcode = 0x3) { // PICA_SET_BEACON_POSITION
-    mac_address: 64,
-    position: PicaPosition,
-}
-
-packet PicaSetBeaconPositionRsp: PicaResponse (opcode = 0x3) { // PICA_SET_BEACON_POSITION
-    status: StatusCode,
-}
-
-packet PicaDestroyBeaconCmd: PicaCommand (opcode = 0x4) { // PICA_DESTROY_BEACON
-    mac_address: 64,
-}
-
-packet PicaDestroyBeaconRsp: PicaResponse (opcode = 0x4) { // PICA_DESTROY_BEACON
-    status: StatusCode,
 }
 
 packet AndroidGetPowerStatsCmd: AndroidCommand (opcode = 0x0) { //ANDROID_GET_POWER_STATS

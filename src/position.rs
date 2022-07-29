@@ -17,11 +17,28 @@ use glam::{EulerRot, Quat, Vec3};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use std::convert::From;
 use std::default::Default;
+use std::fmt::Display;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Position {
     position: Vec3,
     rotation: Quat,
+}
+
+impl Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (roll, pitch, yaw) = self.rotation.to_euler(EulerRot::ZXY);
+        write!(
+            f,
+            "Position: {}, {}, {} Rotation: {}, {}, {}",
+            self.position.x,
+            self.position.y,
+            self.position.z,
+            yaw.to_degrees().round(),
+            pitch.to_degrees().round(),
+            roll.to_degrees().round(),
+        )
+    }
 }
 
 impl Serialize for Position {

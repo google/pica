@@ -17,19 +17,30 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use anyhow::{Context, Result};
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{body, Body, Request, Response, Server};
-use serde::Deserialize;
-use tokio::sync::{broadcast, mpsc};
+use hyper::{body, Body, Request, Response, Server, StatusCode as HttpStatusCode};
+use serde::{Deserialize, Serialize};
+use serde_json::error::Category as SerdeErrorCategory;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
 use crate::position::Position;
-use crate::{MacAddress, PicaCommand, PicaEvent};
-use PicaEvent::{AddDevice, RemoveDevice, UpdateNeighbor, UpdatePosition};
+use crate::{Anchor, MacAddress, PicaCommand, PicaCommandError, PicaCommandStatus, PicaEvent};
+use PicaEvent::{DeviceAdded, DeviceRemoved, DeviceUpdated, NeighborUpdated};
 
 const WEB_PORT: u16 = 3000;
 
 const STATIC_FILES: &[(&str, &str, &str)] = &[
     ("/", "text/html", include_str!("../static/index.html")),
+    (
+        "/openapi",
+        "text/html",
+        include_str!("../static/openapi.html"),
+    ),
+    (
+        "/openapi.yaml",
+        "text/yaml",
+        include_str!("../static/openapi.yaml"),
+    ),
     (
         "/src/components/Map.js",
         "application/javascript",
@@ -45,24 +56,103 @@ const STATIC_FILES: &[(&str, &str, &str)] = &[
         "application/javascript",
         include_str!("../static/src/components/Orientation.js"),
     ),
-    (
-        "/openapi",
-        "text/html",
-        include_str!("../static/openapi.html"),
-    ),
-    (
-        "/openapi.yaml",
-        "text/yaml",
-        include_str!("../static/openapi.yaml"),
-    ),
 ];
+
+impl From<PicaCommandStatus> for HttpStatusCode {
+    fn from(status: PicaCommandStatus) -> Self {
+        match status {
+            PicaCommandStatus::Ok => HttpStatusCode::OK,
+            PicaCommandStatus::Error(err) => match err {
+                PicaCommandError::AddAnchorFailed(_) => HttpStatusCode::CONFLICT,
+                PicaCommandError::DeviceNotFound(_) => HttpStatusCode::NOT_FOUND,
+                PicaCommandError::SendStatusFailed(_) => unreachable!(),
+                _ => HttpStatusCode::IM_A_TEAPOT,
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct PositionBody {
+    x: i16,
+    y: i16,
+    z: i16,
+    yaw: i16,
+    pitch: i8,
+    roll: i16,
+}
+
+macro_rules! position {
+    ($body: ident) => {
+        position!($body, false)
+    };
+    ($body: ident, $mandatory: ident) => {
+        match serde_json::from_slice::<PositionBody>(&$body) {
+            Ok(body) => Position::new(body.x, body.y, body.z, body.yaw, body.pitch, body.roll),
+            Err(err) => {
+                if !$mandatory && err.classify() == SerdeErrorCategory::Eof {
+                    Position::default()
+                } else {
+                    println!("Error while deserializing position: {}", err);
+                    return Ok(Response::builder().status(406).body("".into()).unwrap());
+                }
+            }
+        }
+    };
+}
+
+macro_rules! mac_address {
+    ($mac_address: ident) => {
+        match MacAddress::new($mac_address.to_string()) {
+            Ok(mac_address) => mac_address,
+            Err(err) => {
+                println!("Error mac_address: {}", err);
+                return Ok(Response::builder().status(406).body("".into()).unwrap());
+            }
+        }
+    };
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Category {
+    Uci,
+    Anchor,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Device {
+    pub category: Category,
+    pub mac_address: String,
+    #[serde(flatten)]
+    pub position: Position,
+}
+
+impl Device {
+    pub fn new(category: Category, mac_address: MacAddress, position: Position) -> Self {
+        Self {
+            category,
+            mac_address: mac_address.to_string(),
+            position,
+        }
+    }
+}
+
+impl From<Anchor> for Device {
+    fn from(anchor: Anchor) -> Self {
+        Self {
+            category: Category::Anchor,
+            mac_address: anchor.mac_address.to_string(),
+            position: anchor.position,
+        }
+    }
+}
 
 fn event_name(event: &PicaEvent) -> &'static str {
     match event {
-        AddDevice { .. } => "add-device",
-        RemoveDevice { .. } => "remove-device",
-        UpdatePosition { .. } => "update-position",
-        UpdateNeighbor { .. } => "update-neighbor",
+        DeviceAdded { .. } => "device-added",
+        DeviceRemoved { .. } => "device-removed",
+        DeviceUpdated { .. } => "device-updated",
+        NeighborUpdated { .. } => "neighbor-updated",
     }
 }
 
@@ -82,8 +172,29 @@ async fn handle(
             .unwrap());
     }
 
-    match req.uri().path() {
-        "/events" => {
+    let body = body::to_bytes(req.body_mut()).await.unwrap();
+    let (pica_cmd_rsp_tx, pica_cmd_rsp_rx) = oneshot::channel::<PicaCommandStatus>();
+
+    let send_cmd = |pica_cmd| async {
+        println!("PicaCommand: {}", pica_cmd);
+        tx.send(pica_cmd).await.unwrap();
+        let status = match pica_cmd_rsp_rx.await {
+            Ok(status) => status.into(),
+            Err(err) => {
+                println!("Error getting response: {}", err);
+                HttpStatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
+        Response::builder().status(status).body("".into()).unwrap()
+    };
+    match req
+        .uri_mut()
+        .path()
+        .trim_start_matches('/')
+        .split('/')
+        .collect::<Vec<_>>()[..]
+    {
+        ["events"] => {
             let stream = BroadcastStream::new(events.subscribe()).map(|result| {
                 result.map(|event| {
                     format!(
@@ -98,29 +209,53 @@ async fn handle(
                 .body(Body::wrap_stream(stream))
                 .unwrap());
         }
-        "/set_position" => {
-            #[derive(Deserialize)]
-            struct SetPositionBody {
-                mac_address: MacAddress,
-                x: i16,
-                y: i16,
-                z: i16,
-                yaw: i16,
-                pitch: i8,
-                roll: i16,
-            }
-
-            let body = body::to_bytes(req.body_mut()).await.unwrap();
-            let body: SetPositionBody = serde_json::from_slice(&body).unwrap();
-
-            let position = Position::new(body.x, body.y, body.z, body.yaw, body.pitch, body.roll);
-
-            tx.send(PicaCommand::SetPosition(body.mac_address, position))
-                .await
-                .unwrap();
-
-            return Ok(Response::builder().status(200).body("".into()).unwrap());
+        ["init-uci-device", mac_address] => {
+            return Ok(send_cmd(PicaCommand::InitUciDevice(
+                mac_address!(mac_address),
+                position!(body),
+                pica_cmd_rsp_tx,
+            ))
+            .await);
         }
+        ["set-position", mac_address] => {
+            return Ok(send_cmd(PicaCommand::SetPosition(
+                mac_address!(mac_address),
+                position!(body),
+                pica_cmd_rsp_tx,
+            ))
+            .await);
+        }
+        ["create-anchor", mac_address] => {
+            return Ok(send_cmd(PicaCommand::CreateAnchor(
+                mac_address!(mac_address),
+                position!(body),
+                pica_cmd_rsp_tx,
+            ))
+            .await);
+        }
+        ["destroy-anchor", mac_address] => {
+            return Ok(send_cmd(PicaCommand::DestroyAnchor(
+                mac_address!(mac_address),
+                pica_cmd_rsp_tx,
+            ))
+            .await);
+        }
+        ["get-state"] => {
+            #[derive(Serialize)]
+            struct GetStateResponse {
+                devices: Vec<Device>,
+            }
+            println!("PicaCommand: GetState");
+            let (state_tx, state_rx) = oneshot::channel::<Vec<Device>>();
+            tx.send(PicaCommand::GetState(state_tx)).await.unwrap();
+            let devices = match state_rx.await {
+                Ok(devices) => GetStateResponse { devices },
+                Err(_) => GetStateResponse { devices: vec![] },
+            };
+            let body = serde_json::to_string(&devices).unwrap();
+            return Ok(Response::builder().status(200).body(body.into()).unwrap());
+        }
+
         _ => (),
     }
 

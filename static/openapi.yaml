@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-openapi: 3.1.0
+openapi: 3.0.0
 info:
   description: |
     Pica aims to be a platform agnostic UWB virtual controller. Pica should scale UWB testing since no hardware
@@ -33,6 +33,20 @@ tags:
     description: Events coming from Pica for the associated Device.
 
 components:
+  requestBodies:
+    PositionBodyRequired:
+      description: A JSON object containing Position information
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Position'
+    PositionBodyOptionnal:
+      description: A JSON object containing Position information
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Position'
   schemas:
     Device:
       description:
@@ -45,7 +59,11 @@ components:
           type: string
           enum: [uci, anchor]
         MacAddress:
-          description: Valid UWB mac addresses must follow the format "XX:XX:XX:XX:XX:XX" where X is an hexadecimal number.
+          description: |
+            Valid UWB mac addresses must follow the above format
+              * Short Mode: "XX:XX"
+              * Extend Mode: "XX:XX:XX:XX:XX:XX:XX:XX"
+            where X is an hexadecimal number.
           type: string
         Position:
             $ref: "#/components/schemas/Position"
@@ -55,26 +73,26 @@ components:
       type: object
       properties:
         x:
-          type: number
+          type: integer
           description: x coordinate in cm
         y:
-          type: number
+          type: integer
           description: y coordinate in cm
         z:
-          type: number
+          type: integer
           description: z coordinate in cm
         yaw:
-          type: number
+          type: integer
           description: yaw in degrees
           minimum: -180
           maximum: 180
         pitch:
-          type: number
+          type: integer
           description: pitch in degrees
           minimum: -90
           maximum: 90
         roll:
-          type: number
+          type: integer
           description: roll in degrees
           minimum: -180
           maximum: 180
@@ -82,24 +100,16 @@ components:
     MacAddress:
       name: mac-address
       in: path
-      description:
-        Valid UWB mac addresses must follow the format "XX:XX:XX:XX:XX:XX" where X is an hexadecimal number.
+      description: |
+        Valid UWB mac addresses must follow the above format
+          * Short Mode: "XX:XX"
+          * Extend Mode: "XX:XX:XX:XX:XX:XX:XX:XX"
+        where X is an hexadecimal number.
       required: true
       schema:
         type: string
-    PositionRequired:
-      name: position-required
-      required: true
-      in: query
-      schema:
-        $ref: "#/components/schemas/Position"
-    PositionOptional:
-      name: position-optional
-      in: query
-      schema:
-        $ref: "#/components/schemas/Position"
 paths:
-  /init-device/{mac-address}:
+  /init-uci-device/{mac-address}:
     post:
       tags: [Commands]
       summary: Init a new uwb subsystem and instantiate an UCI Device
@@ -108,6 +118,8 @@ paths:
         and shall be called only once by UCI Device.
       parameters:
         - $ref: "#/components/parameters/MacAddress"
+      requestBody:
+        $ref: "#/components/requestBodies/PositionBodyOptionnal"
       responses:
         '200': { description: Success }
         '403': { description: Device already initialized }
@@ -121,7 +133,8 @@ paths:
         `neighbor-updated` event for every other device present in the scene closer that the maximum distance UINT16_MAX cm.
       parameters:
         - $ref: "#/components/parameters/MacAddress"
-        - $ref: "#/components/parameters/PositionRequired"
+      requestBody:
+        $ref: "#/components/requestBodies/PositionBodyRequired"
       responses:
         '200': { description: Success }
         '404': { description: Device not found }
@@ -136,11 +149,12 @@ paths:
         scene, [0,0,0,0,0,0]
       parameters:
         - $ref: "#/components/parameters/MacAddress"
-        - $ref: "#/components/parameters/PositionOptional"
+      requestBody:
+        $ref: "#/components/requestBodies/PositionBodyOptionnal"
       responses:
         '200': { description: Success }
-        '404': { description: Anchor not Found }
         '406': { description: Wrong argument }
+        '409': { description: Anchor already exist }
   /destroy-anchor/{mac-address}:
     delete:
       tags: [Commands]
@@ -152,7 +166,7 @@ paths:
         - $ref: "#/components/parameters/MacAddress"
       responses:
         '200': { description: Success }
-        '404': { description: Device not found }
+        '404': { description: Anchor not found }
         '500': { description: Internal error  }
   /get-state:
     get:
