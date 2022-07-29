@@ -55,26 +55,26 @@ components:
       type: object
       properties:
         x:
-          type: number
+          type: integer
           description: x coordinate in cm
         y:
-          type: number
+          type: integer
           description: y coordinate in cm
         z:
-          type: number
+          type: integer
           description: z coordinate in cm
         yaw:
-          type: number
+          type: integer
           description: yaw in degrees
           minimum: -180
           maximum: 180
         pitch:
-          type: number
+          type: integer
           description: pitch in degrees
           minimum: -90
           maximum: 90
         roll:
-          type: number
+          type: integer
           description: roll in degrees
           minimum: -180
           maximum: 180
@@ -99,7 +99,7 @@ components:
       schema:
         $ref: "#/components/schemas/Position"
 paths:
-  /init-device/{mac-address}:
+  /init-uci-device/{mac-address}:
     post:
       tags: [Commands]
       summary: Init a new uwb subsystem and instantiate an UCI Device
@@ -108,6 +108,7 @@ paths:
         and shall be called only once by UCI Device.
       parameters:
         - $ref: "#/components/parameters/MacAddress"
+        - $ref: "#/components/parameters/PositionOptional"
       responses:
         '200': { description: Success }
         '403': { description: Device already initialized }

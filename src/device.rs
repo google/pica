@@ -499,7 +499,12 @@ impl Device {
                     _ => panic!("Unsupported Android command"),
                 }
             }
-            _ => panic!("Unsupported command type"),
+            _ => UciResponseBuilder {
+                group_id: GroupId::Core,
+                opcode: 0,
+                payload: None,
+            }
+            .build(),
         }
     }
 }

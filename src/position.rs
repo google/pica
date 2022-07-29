@@ -14,11 +14,15 @@
 
 use crate::uci_packets::PicaPosition;
 use glam::{EulerRot, Quat, Vec3};
-use serde::ser::{Serialize, SerializeStruct, Serializer};
+use serde::{
+    de::{self, Deserializer, MapAccess, Visitor},
+    ser::{Serialize, SerializeStruct, Serializer},
+    Deserialize,
+};
 use std::convert::From;
 use std::default::Default;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Position {
     position: Vec3,
     rotation: Quat,
@@ -40,6 +44,91 @@ impl Serialize for Position {
         state.serialize_field("pitch", &(pitch.to_degrees().round() as i8))?;
         state.serialize_field("roll", &(roll.to_degrees().round() as i16))?;
         state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Position {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[allow(non_camel_case_types)]
+        enum Field {
+            x,
+            y,
+            z,
+            yaw,
+            pitch,
+            roll,
+        }
+
+        struct PositionVisitor;
+
+        impl<'de> Visitor<'de> for PositionVisitor {
+            type Value = Position;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("Struct Position")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Position, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let (mut x, mut y, mut z, mut yaw, mut pitch, mut roll) =
+                    (None, None, None, None, None, None);
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::x => {
+                            if x.is_some() {
+                                return Err(de::Error::duplicate_field("x"));
+                            }
+                            x = Some(map.next_value()?);
+                        }
+                        Field::y => {
+                            if y.is_some() {
+                                return Err(de::Error::duplicate_field("y"));
+                            }
+                            y = Some(map.next_value()?);
+                        }
+                        Field::z => {
+                            if z.is_some() {
+                                return Err(de::Error::duplicate_field("z"));
+                            }
+                            z = Some(map.next_value()?);
+                        }
+                        Field::yaw => {
+                            if yaw.is_some() {
+                                return Err(de::Error::duplicate_field("yaw"));
+                            }
+                            yaw = Some(map.next_value()?);
+                        }
+                        Field::pitch => {
+                            if pitch.is_some() {
+                                return Err(de::Error::duplicate_field("pitch"));
+                            }
+                            pitch = Some(map.next_value()?);
+                        }
+                        Field::roll => {
+                            if roll.is_some() {
+                                return Err(de::Error::duplicate_field("roll"));
+                            }
+                            roll = Some(map.next_value()?);
+                        }
+                    }
+                }
+                let x = x.ok_or_else(|| de::Error::missing_field("x"))?;
+                let y = y.ok_or_else(|| de::Error::missing_field("y"))?;
+                let z = z.ok_or_else(|| de::Error::missing_field("z"))?;
+                let yaw = yaw.ok_or_else(|| de::Error::missing_field("yaw"))?;
+                let pitch = pitch.ok_or_else(|| de::Error::missing_field("pitch"))?;
+                let roll = roll.ok_or_else(|| de::Error::missing_field("roll"))?;
+                Ok(Position::new(x, y, z, yaw, pitch, roll))
+            }
+        }
+        const FIELDS: &'static [&'static str] = &["x", "y", "z", "yaw", "pitch", "roll"];
+        deserializer.deserialize_struct("Position", FIELDS, PositionVisitor)
     }
 }
 

@@ -86,9 +86,7 @@ limitations under the License.
   function set_position({
     mac_address,
     position: { x, y, z },
-    yaw,
-    pitch,
-    roll,
+    yaw, pitch, roll,
   }) {
     fetch("/set_position", {
       method: "POST",
@@ -102,7 +100,7 @@ limitations under the License.
         z,
         yaw,
         pitch,
-        roll,
+        roll
       }),
     });
   }
@@ -128,9 +126,7 @@ limitations under the License.
       {
         mac_address,
         position: { x, y, z },
-        yaw,
-        pitch,
-        roll,
+        yaw, pitch, roll,
         neighbors: [],
       },
     ];
@@ -179,13 +175,7 @@ limitations under the License.
     const data = JSON.parse(event.data);
     console.log("Update Neighbor", data);
 
-    const {
-      mac_address,
-      neighbor: neighbor_mac,
-      distance,
-      azimuth,
-      elevation,
-    } = data;
+    const { mac_address, neighbor: neighbor_mac, distance, azimuth, elevation } = data;
 
     const device = map.devices.find(
       (device) => device.mac_address === mac_address
