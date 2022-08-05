@@ -28,9 +28,8 @@ enum GroupId : 4 {
     VENDOR_PICA = 0x09,
     VENDOR_RESERVED_A = 0x0a,
     VENDOR_RESERVED_B = 0x0b,
-    // TODO(b/218883784): Temp switch of GID till qorvo switches over.
-    VENDOR_ANDROID    = 0x0e,
-    VENDOR_RESERVED_E = 0x0c,
+    VENDOR_ANDROID    = 0x0c,
+    VENDOR_RESERVED_E = 0x0e,
     VENDOR_RESERVED_F = 0x0f,
 }
 

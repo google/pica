@@ -91,9 +91,9 @@ pub enum GroupId {
     VendorPica = 0x9,
     VendorReservedA = 0xa,
     VendorReservedB = 0xb,
-    VendorReservedE = 0xc,
+    VendorAndroid = 0xc,
     Test = 0xd,
-    VendorAndroid = 0xe,
+    VendorReservedE = 0xe,
     VendorReservedF = 0xf,
 }
 impl fmt::Display for GroupId {
@@ -114,11 +114,11 @@ impl fmt::Display for GroupId {
             GroupId::VendorReservedB => {
                 write!(f, "{:#04X} (VENDOR_RESERVED_B)", self.to_u8().unwrap())
             }
+            GroupId::VendorAndroid => write!(f, "{:#04X} (VENDOR_ANDROID)", self.to_u8().unwrap()),
+            GroupId::Test => write!(f, "{:#04X} (TEST)", self.to_u8().unwrap()),
             GroupId::VendorReservedE => {
                 write!(f, "{:#04X} (VENDOR_RESERVED_E)", self.to_u8().unwrap())
             }
-            GroupId::Test => write!(f, "{:#04X} (TEST)", self.to_u8().unwrap()),
-            GroupId::VendorAndroid => write!(f, "{:#04X} (VENDOR_ANDROID)", self.to_u8().unwrap()),
             GroupId::VendorReservedF => {
                 write!(f, "{:#04X} (VENDOR_RESERVED_F)", self.to_u8().unwrap())
             }
@@ -1184,13 +1184,16 @@ impl fmt::Display for RangingMeasurementType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CapTlv {
     pub t: CapTlvType,
     pub v: Vec<u8>,
 }
 impl CapTlv {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 2 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1251,13 +1254,16 @@ impl CapTlv {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeviceParameter {
     pub id: u8,
     pub value: Vec<u8>,
 }
 impl DeviceParameter {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 2 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1312,13 +1318,16 @@ impl DeviceParameter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeviceConfigStatus {
     pub parameter_id: u8,
     pub status: StatusCode,
 }
 impl DeviceConfigStatus {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 2 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1364,13 +1373,16 @@ impl DeviceConfigStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppConfigParameter {
     pub id: u8,
     pub value: Vec<u8>,
 }
 impl AppConfigParameter {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 2 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1425,13 +1437,16 @@ impl AppConfigParameter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppConfigStatus {
     pub config_id: u8,
     pub status: StatusCode,
 }
 impl AppConfigStatus {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 2 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1474,13 +1489,16 @@ impl AppConfigStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Controlee {
     pub short_address: u16,
     pub subsession_id: u32,
 }
 impl Controlee {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1520,7 +1538,7 @@ impl Controlee {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ControleeStatus {
     pub mac_address: u16,
     pub subsession_id: u32,
@@ -1528,6 +1546,9 @@ pub struct ControleeStatus {
 }
 impl ControleeStatus {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 7 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1579,7 +1600,7 @@ impl ControleeStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShortAddressTwoWayRangingMeasurement {
     pub mac_address: u16,
     pub status: StatusCode,
@@ -1597,6 +1618,9 @@ pub struct ShortAddressTwoWayRangingMeasurement {
 }
 impl ShortAddressTwoWayRangingMeasurement {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 31 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1774,7 +1798,7 @@ impl ShortAddressTwoWayRangingMeasurement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExtendedAddressTwoWayRangingMeasurement {
     pub mac_address: u64,
     pub status: StatusCode,
@@ -1792,6 +1816,9 @@ pub struct ExtendedAddressTwoWayRangingMeasurement {
 }
 impl ExtendedAddressTwoWayRangingMeasurement {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 31 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -1971,7 +1998,7 @@ impl ExtendedAddressTwoWayRangingMeasurement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PicaPosition {
     pub x: u16,
     pub y: u16,
@@ -1982,6 +2009,9 @@ pub struct PicaPosition {
 }
 impl PicaPosition {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 11 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -2069,7 +2099,7 @@ impl PicaPosition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PowerStats {
     pub status: StatusCode,
     pub idle_time_ms: u32,
@@ -2079,6 +2109,9 @@ pub struct PowerStats {
 }
 impl PowerStats {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 17 {
+            return false;
+        }
         true
     }
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -2209,6 +2242,9 @@ pub struct UciPacketBuilder {
 }
 impl UciPacketData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -2471,6 +2507,9 @@ pub struct UciCommandBuilder {
 }
 impl UciCommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], group_id: GroupId, opcode: u8) -> Result<Self> {
@@ -2729,6 +2768,9 @@ pub struct UciResponseBuilder {
 }
 impl UciResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], group_id: GroupId, opcode: u8) -> Result<Self> {
@@ -2992,6 +3034,9 @@ pub struct UciNotificationBuilder {
 }
 impl UciNotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], group_id: GroupId, opcode: u8) -> Result<Self> {
@@ -3237,6 +3282,9 @@ pub struct CoreCommandBuilder {
 }
 impl CoreCommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -3446,6 +3494,9 @@ pub struct CoreResponseBuilder {
 }
 impl CoreResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -3646,6 +3697,9 @@ pub struct CoreNotificationBuilder {
 }
 impl CoreNotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -3842,6 +3896,9 @@ pub struct SessionCommandBuilder {
 }
 impl SessionCommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -4094,6 +4151,9 @@ pub struct SessionResponseBuilder {
 }
 impl SessionResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -4333,6 +4393,9 @@ pub struct SessionNotificationBuilder {
 }
 impl SessionNotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -4522,6 +4585,9 @@ pub struct RangingCommandBuilder {
 }
 impl RangingCommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -4727,6 +4793,9 @@ pub struct RangingResponseBuilder {
 }
 impl RangingResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -4912,6 +4981,9 @@ pub struct RangingNotificationBuilder {
 }
 impl RangingNotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -5090,6 +5162,9 @@ pub struct PicaCommandBuilder {
 }
 impl PicaCommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -5309,6 +5384,9 @@ pub struct PicaResponseBuilder {
 }
 impl PicaResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -5521,6 +5599,9 @@ pub struct AndroidCommandBuilder {
 }
 impl AndroidCommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -5702,6 +5783,9 @@ pub struct AndroidResponseBuilder {
 }
 impl AndroidResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8], opcode: u8) -> Result<Self> {
@@ -5860,6 +5944,9 @@ pub struct AndroidNotificationBuilder {
 }
 impl AndroidNotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -5985,6 +6072,9 @@ pub struct DeviceResetCmdBuilder {
 }
 impl DeviceResetCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -6141,7 +6231,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::CoreCommand(core_command_packet) => {match core_command_packet.specialize() {/* (3) */
-CoreCommandChild::DeviceResetCmd(packet) => {let rebuilder = DeviceResetCmdBuilder {reset_config : packet.get_reset_config(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse device_reset_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreCommandChild::DeviceResetCmd(packet) => {let rebuilder = DeviceResetCmdBuilder {reset_config : packet.get_reset_config(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse device_reset_cmd
+ {:#02x?}", core_command_packet); }}}_ => {panic!("Couldn't parse core_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 device_reset_cmd_builder_tests! { device_reset_cmd_builder_test_00: b"\x20\x00\x00\x01\x00",}
 
 #[derive(Debug)]
@@ -6161,6 +6254,9 @@ pub struct DeviceResetRspBuilder {
 }
 impl DeviceResetRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -6316,7 +6412,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::CoreResponse(core_response_packet) => {match core_response_packet.specialize() {/* (3) */
-CoreResponseChild::DeviceResetRsp(packet) => {let rebuilder = DeviceResetRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse device_reset_rsp{:02x?}", core_response_packet); }}}_ => {println!("Couldn't parse core_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreResponseChild::DeviceResetRsp(packet) => {let rebuilder = DeviceResetRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse device_reset_rsp
+ {:#02x?}", core_response_packet); }}}_ => {panic!("Couldn't parse core_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 device_reset_rsp_builder_tests! { device_reset_rsp_builder_test_00: b"\x40\x00\x00\x01\x00",}
 
 #[derive(Debug)]
@@ -6336,6 +6435,9 @@ pub struct DeviceStatusNtfBuilder {
 }
 impl DeviceStatusNtfData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -6492,7 +6594,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciNotification(uci_notification_packet) => {match uci_notification_packet.specialize() {/* (2) */
 UciNotificationChild::CoreNotification(core_notification_packet) => {match core_notification_packet.specialize() {/* (3) */
-CoreNotificationChild::DeviceStatusNtf(packet) => {let rebuilder = DeviceStatusNtfBuilder {device_state : packet.get_device_state(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse device_status_ntf{:02x?}", core_notification_packet); }}}_ => {println!("Couldn't parse core_notification{:02x?}", uci_notification_packet); }}}_ => {println!("Couldn't parse uci_notification{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreNotificationChild::DeviceStatusNtf(packet) => {let rebuilder = DeviceStatusNtfBuilder {device_state : packet.get_device_state(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse device_status_ntf
+ {:#02x?}", core_notification_packet); }}}_ => {panic!("Couldn't parse core_notification
+ {:#02x?}", uci_notification_packet); }}}_ => {panic!("Couldn't parse uci_notification
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 device_status_ntf_builder_tests! { device_status_ntf_builder_test_00: b"\x60\x01\x00\x01\x01",}
 
 #[derive(Debug)]
@@ -6508,6 +6613,9 @@ pub struct GetDeviceInfoCmdPacket {
 pub struct GetDeviceInfoCmdBuilder {}
 impl GetDeviceInfoCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -6639,7 +6747,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::CoreCommand(core_command_packet) => {match core_command_packet.specialize() {/* (3) */
-CoreCommandChild::GetDeviceInfoCmd(packet) => {let rebuilder = GetDeviceInfoCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_device_info_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreCommandChild::GetDeviceInfoCmd(packet) => {let rebuilder = GetDeviceInfoCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse get_device_info_cmd
+ {:#02x?}", core_command_packet); }}}_ => {panic!("Couldn't parse core_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_device_info_cmd_builder_tests! { get_device_info_cmd_builder_test_00: b"\x20\x02\x00\x00",}
 
 #[derive(Debug)]
@@ -6669,6 +6780,9 @@ pub struct GetDeviceInfoRspBuilder {
 }
 impl GetDeviceInfoRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 14 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -6924,7 +7038,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::CoreResponse(core_response_packet) => {match core_response_packet.specialize() {/* (3) */
-CoreResponseChild::GetDeviceInfoRsp(packet) => {let rebuilder = GetDeviceInfoRspBuilder {status : packet.get_status(),uci_version : packet.get_uci_version(),mac_version : packet.get_mac_version(),phy_version : packet.get_phy_version(),uci_test_version : packet.get_uci_test_version(),vendor_spec_info : packet.get_vendor_spec_info().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_device_info_rsp{:02x?}", core_response_packet); }}}_ => {println!("Couldn't parse core_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreResponseChild::GetDeviceInfoRsp(packet) => {let rebuilder = GetDeviceInfoRspBuilder {status : packet.get_status(),uci_version : packet.get_uci_version(),mac_version : packet.get_mac_version(),phy_version : packet.get_phy_version(),uci_test_version : packet.get_uci_test_version(),vendor_spec_info : packet.get_vendor_spec_info().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse get_device_info_rsp
+ {:#02x?}", core_response_packet); }}}_ => {panic!("Couldn't parse core_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_device_info_rsp_builder_tests! { get_device_info_rsp_builder_test_00: b"\x40\x02\x00\x0b\x01\x01\x00\x02\x00\x03\x00\x04\x00\x01\x0a",}
 
 #[derive(Debug)]
@@ -6940,6 +7057,9 @@ pub struct GetCapsInfoCmdPacket {
 pub struct GetCapsInfoCmdBuilder {}
 impl GetCapsInfoCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -7071,7 +7191,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::CoreCommand(core_command_packet) => {match core_command_packet.specialize() {/* (3) */
-CoreCommandChild::GetCapsInfoCmd(packet) => {let rebuilder = GetCapsInfoCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_caps_info_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreCommandChild::GetCapsInfoCmd(packet) => {let rebuilder = GetCapsInfoCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse get_caps_info_cmd
+ {:#02x?}", core_command_packet); }}}_ => {panic!("Couldn't parse core_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_caps_info_cmd_builder_tests! { get_caps_info_cmd_builder_test_00: b"\x20\x03\x00\x00",}
 
 #[derive(Debug)]
@@ -7093,6 +7216,9 @@ pub struct GetCapsInfoRspBuilder {
 }
 impl GetCapsInfoRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -7281,7 +7407,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::CoreResponse(core_response_packet) => {match core_response_packet.specialize() {/* (3) */
-CoreResponseChild::GetCapsInfoRsp(packet) => {let rebuilder = GetCapsInfoRspBuilder {status : packet.get_status(),tlvs : packet.get_tlvs().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_caps_info_rsp{:02x?}", core_response_packet); }}}_ => {println!("Couldn't parse core_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreResponseChild::GetCapsInfoRsp(packet) => {let rebuilder = GetCapsInfoRspBuilder {status : packet.get_status(),tlvs : packet.get_tlvs().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse get_caps_info_rsp
+ {:#02x?}", core_response_packet); }}}_ => {panic!("Couldn't parse core_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_caps_info_rsp_builder_tests! { get_caps_info_rsp_builder_test_00: b"\x40\x03\x00\x05\x00\x01\x00\x01\x01",}
 
 #[derive(Debug)]
@@ -7301,6 +7430,9 @@ pub struct SetConfigCmdBuilder {
 }
 impl SetConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -7472,7 +7604,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::CoreCommand(core_command_packet) => {match core_command_packet.specialize() {/* (3) */
-CoreCommandChild::SetConfigCmd(packet) => {let rebuilder = SetConfigCmdBuilder {parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse set_config_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreCommandChild::SetConfigCmd(packet) => {let rebuilder = SetConfigCmdBuilder {parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse set_config_cmd
+ {:#02x?}", core_command_packet); }}}_ => {panic!("Couldn't parse core_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 set_config_cmd_builder_tests! { set_config_cmd_builder_test_00: b"\x20\x04\x00\x03\x01\x01\x00",}
 
 #[derive(Debug)]
@@ -7494,6 +7629,9 @@ pub struct SetConfigRspBuilder {
 }
 impl SetConfigRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -7691,7 +7829,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::CoreResponse(core_response_packet) => {match core_response_packet.specialize() {/* (3) */
-CoreResponseChild::SetConfigRsp(packet) => {let rebuilder = SetConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse set_config_rsp{:02x?}", core_response_packet); }}}_ => {println!("Couldn't parse core_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreResponseChild::SetConfigRsp(packet) => {let rebuilder = SetConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse set_config_rsp
+ {:#02x?}", core_response_packet); }}}_ => {panic!("Couldn't parse core_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 set_config_rsp_builder_tests! { set_config_rsp_builder_test_00: b"\x40\x04\x00\x04\x01\x01\x01\x01",}
 
 #[derive(Debug)]
@@ -7711,6 +7852,9 @@ pub struct GetConfigCmdBuilder {
 }
 impl GetConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -7878,7 +8022,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::CoreCommand(core_command_packet) => {match core_command_packet.specialize() {/* (3) */
-CoreCommandChild::GetConfigCmd(packet) => {let rebuilder = GetConfigCmdBuilder {parameter_ids : packet.get_parameter_ids().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_config_cmd{:02x?}", core_command_packet); }}}_ => {println!("Couldn't parse core_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreCommandChild::GetConfigCmd(packet) => {let rebuilder = GetConfigCmdBuilder {parameter_ids : packet.get_parameter_ids().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse get_config_cmd
+ {:#02x?}", core_command_packet); }}}_ => {panic!("Couldn't parse core_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_config_cmd_builder_tests! { get_config_cmd_builder_test_00: b"\x20\x05\x00\x02\x01\x01",}
 
 #[derive(Debug)]
@@ -7900,6 +8047,9 @@ pub struct GetConfigRspBuilder {
 }
 impl GetConfigRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -8092,7 +8242,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::CoreResponse(core_response_packet) => {match core_response_packet.specialize() {/* (3) */
-CoreResponseChild::GetConfigRsp(packet) => {let rebuilder = GetConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse get_config_rsp{:02x?}", core_response_packet); }}}_ => {println!("Couldn't parse core_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreResponseChild::GetConfigRsp(packet) => {let rebuilder = GetConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse get_config_rsp
+ {:#02x?}", core_response_packet); }}}_ => {panic!("Couldn't parse core_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 get_config_rsp_builder_tests! { get_config_rsp_builder_test_00: b"\x40\x05\x00\x05\x01\x01\x00\x01\x01",}
 
 #[derive(Debug)]
@@ -8112,6 +8265,9 @@ pub struct GenericErrorBuilder {
 }
 impl GenericErrorData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -8267,7 +8423,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciNotification(uci_notification_packet) => {match uci_notification_packet.specialize() {/* (2) */
 UciNotificationChild::CoreNotification(core_notification_packet) => {match core_notification_packet.specialize() {/* (3) */
-CoreNotificationChild::GenericError(packet) => {let rebuilder = GenericErrorBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse generic_error{:02x?}", core_notification_packet); }}}_ => {println!("Couldn't parse core_notification{:02x?}", uci_notification_packet); }}}_ => {println!("Couldn't parse uci_notification{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+CoreNotificationChild::GenericError(packet) => {let rebuilder = GenericErrorBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse generic_error
+ {:#02x?}", core_notification_packet); }}}_ => {panic!("Couldn't parse core_notification
+ {:#02x?}", uci_notification_packet); }}}_ => {panic!("Couldn't parse uci_notification
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 generic_error_builder_tests! { generic_error_builder_test_00: b"\x60\x07\x00\x01\x01",}
 
 #[derive(Debug)]
@@ -8289,6 +8448,9 @@ pub struct SessionInitCmdBuilder {
 }
 impl SessionInitCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 9 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -8463,7 +8625,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionInitCmd(packet) => {let rebuilder = SessionInitCmdBuilder {session_id : packet.get_session_id(),session_type : packet.get_session_type(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_init_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionInitCmd(packet) => {let rebuilder = SessionInitCmdBuilder {session_id : packet.get_session_id(),session_type : packet.get_session_type(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_init_cmd
+ {:#02x?}", session_command_packet); }}}_ => {panic!("Couldn't parse session_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_init_cmd_builder_tests! { session_init_cmd_builder_test_00: b"\x22\x00\x00\x05\x01\x02\x03\x04\x01",}
 
 #[derive(Debug)]
@@ -8483,6 +8648,9 @@ pub struct SessionInitRspBuilder {
 }
 impl SessionInitRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -8638,7 +8806,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionInitRsp(packet) => {let rebuilder = SessionInitRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_init_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionInitRsp(packet) => {let rebuilder = SessionInitRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_init_rsp
+ {:#02x?}", session_response_packet); }}}_ => {panic!("Couldn't parse session_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_init_rsp_builder_tests! { session_init_rsp_builder_test_00: b"\x41\x00\x00\x01\x11",}
 
 #[derive(Debug)]
@@ -8658,6 +8829,9 @@ pub struct SessionDeinitCmdBuilder {
 }
 impl SessionDeinitCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 8 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -8807,7 +8981,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionDeinitCmd(packet) => {let rebuilder = SessionDeinitCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_deinit_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionDeinitCmd(packet) => {let rebuilder = SessionDeinitCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_deinit_cmd
+ {:#02x?}", session_command_packet); }}}_ => {panic!("Couldn't parse session_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_deinit_cmd_builder_tests! { session_deinit_cmd_builder_test_00: b"\x21\x01\x00\x04\x01\x02\x03\x04",}
 
 #[derive(Debug)]
@@ -8827,6 +9004,9 @@ pub struct SessionDeinitRspBuilder {
 }
 impl SessionDeinitRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -8982,7 +9162,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionDeinitRsp(packet) => {let rebuilder = SessionDeinitRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_deinit_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionDeinitRsp(packet) => {let rebuilder = SessionDeinitRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_deinit_rsp
+ {:#02x?}", session_response_packet); }}}_ => {panic!("Couldn't parse session_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_deinit_rsp_builder_tests! { session_deinit_rsp_builder_test_00: b"\x41\x01\x00\x01\x00",}
 
 #[derive(Debug)]
@@ -9006,6 +9189,9 @@ pub struct SessionStatusNtfBuilder {
 }
 impl SessionStatusNtfData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 10 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -9203,7 +9389,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciNotification(uci_notification_packet) => {match uci_notification_packet.specialize() {/* (2) */
 UciNotificationChild::SessionNotification(session_notification_packet) => {match session_notification_packet.specialize() {/* (3) */
-SessionNotificationChild::SessionStatusNtf(packet) => {let rebuilder = SessionStatusNtfBuilder {session_id : packet.get_session_id(),session_state : packet.get_session_state(),reason_code : packet.get_reason_code(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_status_ntf{:02x?}", session_notification_packet); }}}_ => {println!("Couldn't parse session_notification{:02x?}", uci_notification_packet); }}}_ => {println!("Couldn't parse uci_notification{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionNotificationChild::SessionStatusNtf(packet) => {let rebuilder = SessionStatusNtfBuilder {session_id : packet.get_session_id(),session_state : packet.get_session_state(),reason_code : packet.get_reason_code(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_status_ntf
+ {:#02x?}", session_notification_packet); }}}_ => {panic!("Couldn't parse session_notification
+ {:#02x?}", uci_notification_packet); }}}_ => {panic!("Couldn't parse uci_notification
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_status_ntf_builder_tests! { session_status_ntf_builder_test_00: b"\x61\x02\x00\x06\x01\x02\x03\x04\x02\x21",}
 
 #[derive(Debug)]
@@ -9225,6 +9414,9 @@ pub struct SessionSetAppConfigCmdBuilder {
 }
 impl SessionSetAppConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 9 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -9414,7 +9606,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionSetAppConfigCmd(packet) => {let rebuilder = SessionSetAppConfigCmdBuilder {session_id : packet.get_session_id(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_set_app_config_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionSetAppConfigCmd(packet) => {let rebuilder = SessionSetAppConfigCmdBuilder {session_id : packet.get_session_id(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_set_app_config_cmd
+ {:#02x?}", session_command_packet); }}}_ => {panic!("Couldn't parse session_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_set_app_config_cmd_builder_tests! { session_set_app_config_cmd_builder_test_00: b"\x21\x03\x00\x05\x01\x02\x03\x04\x00",}
 
 #[derive(Debug)]
@@ -9436,6 +9631,9 @@ pub struct SessionSetAppConfigRspBuilder {
 }
 impl SessionSetAppConfigRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -9633,7 +9831,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionSetAppConfigRsp(packet) => {let rebuilder = SessionSetAppConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_set_app_config_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionSetAppConfigRsp(packet) => {let rebuilder = SessionSetAppConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_set_app_config_rsp
+ {:#02x?}", session_response_packet); }}}_ => {panic!("Couldn't parse session_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_set_app_config_rsp_builder_tests! { session_set_app_config_rsp_builder_test_00: b"\x41\x03\x00\x04\x01\x01\x01\x00",}
 
 #[derive(Debug)]
@@ -9655,6 +9856,9 @@ pub struct SessionGetAppConfigCmdBuilder {
 }
 impl SessionGetAppConfigCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 9 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -9840,7 +10044,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionGetAppConfigCmd(packet) => {let rebuilder = SessionGetAppConfigCmdBuilder {session_id : packet.get_session_id(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_app_config_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionGetAppConfigCmd(packet) => {let rebuilder = SessionGetAppConfigCmdBuilder {session_id : packet.get_session_id(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_get_app_config_cmd
+ {:#02x?}", session_command_packet); }}}_ => {panic!("Couldn't parse session_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_app_config_cmd_builder_tests! { session_get_app_config_cmd_builder_test_00: b"\x21\x04\x00\x05\x01\x02\x03\x04\x00",}
 
 #[derive(Debug)]
@@ -9862,6 +10069,9 @@ pub struct SessionGetAppConfigRspBuilder {
 }
 impl SessionGetAppConfigRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -10054,7 +10264,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionGetAppConfigRsp(packet) => {let rebuilder = SessionGetAppConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_app_config_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionGetAppConfigRsp(packet) => {let rebuilder = SessionGetAppConfigRspBuilder {status : packet.get_status(),parameters : packet.get_parameters().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_get_app_config_rsp
+ {:#02x?}", session_response_packet); }}}_ => {panic!("Couldn't parse session_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_app_config_rsp_builder_tests! { session_get_app_config_rsp_builder_test_00: b"\x41\x04\x00\x02\x01\x00",}
 
 #[derive(Debug)]
@@ -10070,6 +10283,9 @@ pub struct SessionGetCountCmdPacket {
 pub struct SessionGetCountCmdBuilder {}
 impl SessionGetCountCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -10201,7 +10417,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionGetCountCmd(packet) => {let rebuilder = SessionGetCountCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_count_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionGetCountCmd(packet) => {let rebuilder = SessionGetCountCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_get_count_cmd
+ {:#02x?}", session_command_packet); }}}_ => {panic!("Couldn't parse session_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_count_cmd_builder_tests! { session_get_count_cmd_builder_test_00: b"\x21\x05\x00\x00",}
 
 #[derive(Debug)]
@@ -10223,6 +10442,9 @@ pub struct SessionGetCountRspBuilder {
 }
 impl SessionGetCountRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -10396,7 +10618,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionGetCountRsp(packet) => {let rebuilder = SessionGetCountRspBuilder {status : packet.get_status(),session_count : packet.get_session_count(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_count_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionGetCountRsp(packet) => {let rebuilder = SessionGetCountRspBuilder {status : packet.get_status(),session_count : packet.get_session_count(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_get_count_rsp
+ {:#02x?}", session_response_packet); }}}_ => {panic!("Couldn't parse session_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_count_rsp_builder_tests! { session_get_count_rsp_builder_test_00: b"\x41\x05\x00\x02\x00\x01",}
 
 #[derive(Debug)]
@@ -10416,6 +10641,9 @@ pub struct SessionGetStateCmdBuilder {
 }
 impl SessionGetStateCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 8 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -10565,7 +10793,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionGetStateCmd(packet) => {let rebuilder = SessionGetStateCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_state_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionGetStateCmd(packet) => {let rebuilder = SessionGetStateCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_get_state_cmd
+ {:#02x?}", session_command_packet); }}}_ => {panic!("Couldn't parse session_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_state_cmd_builder_tests! { session_get_state_cmd_builder_test_00: b"\x21\x06\x00\x04\x00\x01\x02\x03",}
 
 #[derive(Debug)]
@@ -10587,6 +10818,9 @@ pub struct SessionGetStateRspBuilder {
 }
 impl SessionGetStateRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -10767,7 +11001,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionGetStateRsp(packet) => {let rebuilder = SessionGetStateRspBuilder {status : packet.get_status(),session_state : packet.get_session_state(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_get_state_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionGetStateRsp(packet) => {let rebuilder = SessionGetStateRspBuilder {status : packet.get_status(),session_state : packet.get_session_state(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_get_state_rsp
+ {:#02x?}", session_response_packet); }}}_ => {panic!("Couldn't parse session_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_get_state_rsp_builder_tests! { session_get_state_rsp_builder_test_00: b"\x41\x06\x00\x02\x00\x01",}
 
 #[derive(Debug)]
@@ -10791,6 +11028,9 @@ pub struct SessionUpdateControllerMulticastListCmdBuilder {
 }
 impl SessionUpdateControllerMulticastListCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 10 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -11016,7 +11256,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::SessionCommand(session_command_packet) => {match session_command_packet.specialize() {/* (3) */
-SessionCommandChild::SessionUpdateControllerMulticastListCmd(packet) => {let rebuilder = SessionUpdateControllerMulticastListCmdBuilder {session_id : packet.get_session_id(),action : packet.get_action(),controlees : packet.get_controlees().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_update_controller_multicast_list_cmd{:02x?}", session_command_packet); }}}_ => {println!("Couldn't parse session_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionCommandChild::SessionUpdateControllerMulticastListCmd(packet) => {let rebuilder = SessionUpdateControllerMulticastListCmdBuilder {session_id : packet.get_session_id(),action : packet.get_action(),controlees : packet.get_controlees().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_update_controller_multicast_list_cmd
+ {:#02x?}", session_command_packet); }}}_ => {panic!("Couldn't parse session_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_update_controller_multicast_list_cmd_builder_tests! { session_update_controller_multicast_list_cmd_builder_test_00: b"\x21\x07\x00\x06\x00\x01\x02\x03\x04\x00",}
 
 #[derive(Debug)]
@@ -11036,6 +11279,9 @@ pub struct SessionUpdateControllerMulticastListRspBuilder {
 }
 impl SessionUpdateControllerMulticastListRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -11201,7 +11447,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::SessionResponse(session_response_packet) => {match session_response_packet.specialize() {/* (3) */
-SessionResponseChild::SessionUpdateControllerMulticastListRsp(packet) => {let rebuilder = SessionUpdateControllerMulticastListRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_update_controller_multicast_list_rsp{:02x?}", session_response_packet); }}}_ => {println!("Couldn't parse session_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionResponseChild::SessionUpdateControllerMulticastListRsp(packet) => {let rebuilder = SessionUpdateControllerMulticastListRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_update_controller_multicast_list_rsp
+ {:#02x?}", session_response_packet); }}}_ => {panic!("Couldn't parse session_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_update_controller_multicast_list_rsp_builder_tests! { session_update_controller_multicast_list_rsp_builder_test_00: b"\x41\x07\x00\x01\x00",}
 
 #[derive(Debug)]
@@ -11225,6 +11474,9 @@ pub struct SessionUpdateControllerMulticastListNtfBuilder {
 }
 impl SessionUpdateControllerMulticastListNtfData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 10 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -11450,7 +11702,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciNotification(uci_notification_packet) => {match uci_notification_packet.specialize() {/* (2) */
 UciNotificationChild::SessionNotification(session_notification_packet) => {match session_notification_packet.specialize() {/* (3) */
-SessionNotificationChild::SessionUpdateControllerMulticastListNtf(packet) => {let rebuilder = SessionUpdateControllerMulticastListNtfBuilder {session_id : packet.get_session_id(),remaining_multicast_list_size : packet.get_remaining_multicast_list_size(),controlee_status : packet.get_controlee_status().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse session_update_controller_multicast_list_ntf{:02x?}", session_notification_packet); }}}_ => {println!("Couldn't parse session_notification{:02x?}", uci_notification_packet); }}}_ => {println!("Couldn't parse uci_notification{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+SessionNotificationChild::SessionUpdateControllerMulticastListNtf(packet) => {let rebuilder = SessionUpdateControllerMulticastListNtfBuilder {session_id : packet.get_session_id(),remaining_multicast_list_size : packet.get_remaining_multicast_list_size(),controlee_status : packet.get_controlee_status().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse session_update_controller_multicast_list_ntf
+ {:#02x?}", session_notification_packet); }}}_ => {panic!("Couldn't parse session_notification
+ {:#02x?}", uci_notification_packet); }}}_ => {panic!("Couldn't parse uci_notification
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 session_update_controller_multicast_list_ntf_builder_tests! { session_update_controller_multicast_list_ntf_builder_test_00: b"\x61\x07\x00\x06\x00\x01\x02\x03\x04\x00",}
 
 #[derive(Debug)]
@@ -11468,6 +11723,9 @@ pub struct RangeStartCmdBuilder {
 }
 impl RangeStartCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 8 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -11603,7 +11861,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::RangingCommand(ranging_command_packet) => {match ranging_command_packet.specialize() {/* (3) */
-RangingCommandChild::RangeStartCmd(packet) => {let rebuilder = RangeStartCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse range_start_cmd{:02x?}", ranging_command_packet); }}}_ => {println!("Couldn't parse ranging_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangingCommandChild::RangeStartCmd(packet) => {let rebuilder = RangeStartCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse range_start_cmd
+ {:#02x?}", ranging_command_packet); }}}_ => {panic!("Couldn't parse ranging_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 range_start_cmd_builder_tests! { range_start_cmd_builder_test_00: b"\x22\x00\x00\x04\x00\x01\x02\x03",}
 
 #[derive(Debug)]
@@ -11623,6 +11884,9 @@ pub struct RangeStartRspBuilder {
 }
 impl RangeStartRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -11778,7 +12042,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::RangingResponse(ranging_response_packet) => {match ranging_response_packet.specialize() {/* (3) */
-RangingResponseChild::RangeStartRsp(packet) => {let rebuilder = RangeStartRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse range_start_rsp{:02x?}", ranging_response_packet); }}}_ => {println!("Couldn't parse ranging_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangingResponseChild::RangeStartRsp(packet) => {let rebuilder = RangeStartRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse range_start_rsp
+ {:#02x?}", ranging_response_packet); }}}_ => {panic!("Couldn't parse ranging_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 range_start_rsp_builder_tests! { range_start_rsp_builder_test_00: b"\x42\x00\x00\x01\x00",}
 
 #[derive(Debug)]
@@ -11830,6 +12097,9 @@ pub struct RangeDataNtfBuilder {
 }
 impl RangeDataNtfData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 28 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -12132,6 +12402,9 @@ pub struct ShortMacTwoWayRangeDataNtfBuilder {
 }
 impl ShortMacTwoWayRangeDataNtfData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 29 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -12361,7 +12634,11 @@ match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_pac
 UciPacketChild::UciNotification(uci_notification_packet) => {match uci_notification_packet.specialize() {/* (2) */
 UciNotificationChild::RangingNotification(ranging_notification_packet) => {match ranging_notification_packet.specialize() {/* (3) */
 RangingNotificationChild::RangeDataNtf(range_data_ntf_packet) => {match range_data_ntf_packet.specialize() {/* (4) */
-RangeDataNtfChild::ShortMacTwoWayRangeDataNtf(packet) => {let rebuilder = ShortMacTwoWayRangeDataNtfBuilder {sequence_number : packet.get_sequence_number(),session_id : packet.get_session_id(),rcr_indicator : packet.get_rcr_indicator(),current_ranging_interval : packet.get_current_ranging_interval(),two_way_ranging_measurements : packet.get_two_way_ranging_measurements().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse short_mac_two_way_range_data_ntf{:02x?}", range_data_ntf_packet); }}}_ => {println!("Couldn't parse range_data_ntf{:02x?}", ranging_notification_packet); }}}_ => {println!("Couldn't parse ranging_notification{:02x?}", uci_notification_packet); }}}_ => {println!("Couldn't parse uci_notification{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangeDataNtfChild::ShortMacTwoWayRangeDataNtf(packet) => {let rebuilder = ShortMacTwoWayRangeDataNtfBuilder {sequence_number : packet.get_sequence_number(),session_id : packet.get_session_id(),rcr_indicator : packet.get_rcr_indicator(),current_ranging_interval : packet.get_current_ranging_interval(),two_way_ranging_measurements : packet.get_two_way_ranging_measurements().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse short_mac_two_way_range_data_ntf
+ {:#02x?}", range_data_ntf_packet); }}}_ => {panic!("Couldn't parse range_data_ntf
+ {:#02x?}", ranging_notification_packet); }}}_ => {panic!("Couldn't parse ranging_notification
+ {:#02x?}", uci_notification_packet); }}}_ => {panic!("Couldn't parse uci_notification
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 short_mac_two_way_range_data_ntf_builder_tests! { short_mac_two_way_range_data_ntf_builder_test_00: b"\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",}
 
 #[derive(Debug)]
@@ -12386,6 +12663,9 @@ pub struct ExtendedMacTwoWayRangeDataNtfBuilder {
 }
 impl ExtendedMacTwoWayRangeDataNtfData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 29 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -12617,7 +12897,11 @@ match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_pac
 UciPacketChild::UciNotification(uci_notification_packet) => {match uci_notification_packet.specialize() {/* (2) */
 UciNotificationChild::RangingNotification(ranging_notification_packet) => {match ranging_notification_packet.specialize() {/* (3) */
 RangingNotificationChild::RangeDataNtf(range_data_ntf_packet) => {match range_data_ntf_packet.specialize() {/* (4) */
-RangeDataNtfChild::ExtendedMacTwoWayRangeDataNtf(packet) => {let rebuilder = ExtendedMacTwoWayRangeDataNtfBuilder {sequence_number : packet.get_sequence_number(),session_id : packet.get_session_id(),rcr_indicator : packet.get_rcr_indicator(),current_ranging_interval : packet.get_current_ranging_interval(),two_way_ranging_measurements : packet.get_two_way_ranging_measurements().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse extended_mac_two_way_range_data_ntf{:02x?}", range_data_ntf_packet); }}}_ => {println!("Couldn't parse range_data_ntf{:02x?}", ranging_notification_packet); }}}_ => {println!("Couldn't parse ranging_notification{:02x?}", uci_notification_packet); }}}_ => {println!("Couldn't parse uci_notification{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangeDataNtfChild::ExtendedMacTwoWayRangeDataNtf(packet) => {let rebuilder = ExtendedMacTwoWayRangeDataNtfBuilder {sequence_number : packet.get_sequence_number(),session_id : packet.get_session_id(),rcr_indicator : packet.get_rcr_indicator(),current_ranging_interval : packet.get_current_ranging_interval(),two_way_ranging_measurements : packet.get_two_way_ranging_measurements().to_vec(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse extended_mac_two_way_range_data_ntf
+ {:#02x?}", range_data_ntf_packet); }}}_ => {panic!("Couldn't parse range_data_ntf
+ {:#02x?}", ranging_notification_packet); }}}_ => {panic!("Couldn't parse ranging_notification
+ {:#02x?}", uci_notification_packet); }}}_ => {panic!("Couldn't parse uci_notification
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 extended_mac_two_way_range_data_ntf_builder_tests! { extended_mac_two_way_range_data_ntf_builder_test_00: b"\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",}
 
 #[derive(Debug)]
@@ -12635,6 +12919,9 @@ pub struct RangeStopCmdBuilder {
 }
 impl RangeStopCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 8 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -12770,7 +13057,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::RangingCommand(ranging_command_packet) => {match ranging_command_packet.specialize() {/* (3) */
-RangingCommandChild::RangeStopCmd(packet) => {let rebuilder = RangeStopCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse range_stop_cmd{:02x?}", ranging_command_packet); }}}_ => {println!("Couldn't parse ranging_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangingCommandChild::RangeStopCmd(packet) => {let rebuilder = RangeStopCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse range_stop_cmd
+ {:#02x?}", ranging_command_packet); }}}_ => {panic!("Couldn't parse ranging_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 range_stop_cmd_builder_tests! { range_stop_cmd_builder_test_00: b"\x22\x01\x00\x04\x00\x02\x03\x04",}
 
 #[derive(Debug)]
@@ -12790,6 +13080,9 @@ pub struct RangeStopRspBuilder {
 }
 impl RangeStopRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -12945,7 +13238,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::RangingResponse(ranging_response_packet) => {match ranging_response_packet.specialize() {/* (3) */
-RangingResponseChild::RangeStopRsp(packet) => {let rebuilder = RangeStopRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse range_stop_rsp{:02x?}", ranging_response_packet); }}}_ => {println!("Couldn't parse ranging_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangingResponseChild::RangeStopRsp(packet) => {let rebuilder = RangeStopRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse range_stop_rsp
+ {:#02x?}", ranging_response_packet); }}}_ => {panic!("Couldn't parse ranging_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 range_stop_rsp_builder_tests! { range_stop_rsp_builder_test_00: b"\x42\x01\x00\x01\x00",}
 
 #[derive(Debug)]
@@ -12963,6 +13259,9 @@ pub struct RangeGetRangingCountCmdBuilder {
 }
 impl RangeGetRangingCountCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 8 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -13098,7 +13397,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::RangingCommand(ranging_command_packet) => {match ranging_command_packet.specialize() {/* (3) */
-RangingCommandChild::RangeGetRangingCountCmd(packet) => {let rebuilder = RangeGetRangingCountCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse range_get_ranging_count_cmd{:02x?}", ranging_command_packet); }}}_ => {println!("Couldn't parse ranging_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangingCommandChild::RangeGetRangingCountCmd(packet) => {let rebuilder = RangeGetRangingCountCmdBuilder {session_id : packet.get_session_id(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse range_get_ranging_count_cmd
+ {:#02x?}", ranging_command_packet); }}}_ => {panic!("Couldn't parse ranging_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 range_get_ranging_count_cmd_builder_tests! { range_get_ranging_count_cmd_builder_test_00: b"\x22\x03\x00\x04\x00\x02\x03\x04",}
 
 #[derive(Debug)]
@@ -13120,6 +13422,9 @@ pub struct RangeGetRangingCountRspBuilder {
 }
 impl RangeGetRangingCountRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 9 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -13290,7 +13595,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::RangingResponse(ranging_response_packet) => {match ranging_response_packet.specialize() {/* (3) */
-RangingResponseChild::RangeGetRangingCountRsp(packet) => {let rebuilder = RangeGetRangingCountRspBuilder {status : packet.get_status(),count : packet.get_count(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse range_get_ranging_count_rsp{:02x?}", ranging_response_packet); }}}_ => {println!("Couldn't parse ranging_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+RangingResponseChild::RangeGetRangingCountRsp(packet) => {let rebuilder = RangeGetRangingCountRspBuilder {status : packet.get_status(),count : packet.get_count(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse range_get_ranging_count_rsp
+ {:#02x?}", ranging_response_packet); }}}_ => {panic!("Couldn't parse ranging_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 range_get_ranging_count_rsp_builder_tests! { range_get_ranging_count_rsp_builder_test_00: b"\x42\x03\x00\x05\x00\x02\x03\x04\x05",}
 
 #[derive(Debug)]
@@ -13312,6 +13620,9 @@ pub struct PicaInitDeviceCmdBuilder {
 }
 impl PicaInitDeviceCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 23 {
+            return false;
+        }
         if !PicaPosition::conforms(&bytes[12..23]) {
             return false;
         }
@@ -13488,6 +13799,9 @@ pub struct PicaInitDeviceRspBuilder {
 }
 impl PicaInitDeviceRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -13655,6 +13969,9 @@ pub struct PicaSetDevicePositionCmdBuilder {
 }
 impl PicaSetDevicePositionCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 15 {
+            return false;
+        }
         if !PicaPosition::conforms(&bytes[4..15]) {
             return false;
         }
@@ -13811,6 +14128,9 @@ pub struct PicaSetDevicePositionRspBuilder {
 }
 impl PicaSetDevicePositionRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -13980,6 +14300,9 @@ pub struct PicaCreateBeaconCmdBuilder {
 }
 impl PicaCreateBeaconCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 23 {
+            return false;
+        }
         if !PicaPosition::conforms(&bytes[12..23]) {
             return false;
         }
@@ -14156,6 +14479,9 @@ pub struct PicaCreateBeaconRspBuilder {
 }
 impl PicaCreateBeaconRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -14325,6 +14651,9 @@ pub struct PicaSetBeaconPositionCmdBuilder {
 }
 impl PicaSetBeaconPositionCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 23 {
+            return false;
+        }
         if !PicaPosition::conforms(&bytes[12..23]) {
             return false;
         }
@@ -14501,6 +14830,9 @@ pub struct PicaSetBeaconPositionRspBuilder {
 }
 impl PicaSetBeaconPositionRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -14668,6 +15000,9 @@ pub struct PicaDestroyBeaconCmdBuilder {
 }
 impl PicaDestroyBeaconCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 12 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -14831,6 +15166,9 @@ pub struct PicaDestroyBeaconRspBuilder {
 }
 impl PicaDestroyBeaconRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -14994,6 +15332,9 @@ pub struct AndroidGetPowerStatsCmdPacket {
 pub struct AndroidGetPowerStatsCmdBuilder {}
 impl AndroidGetPowerStatsCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -15125,7 +15466,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::AndroidCommand(android_command_packet) => {match android_command_packet.specialize() {/* (3) */
-AndroidCommandChild::AndroidGetPowerStatsCmd(packet) => {let rebuilder = AndroidGetPowerStatsCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse android_get_power_stats_cmd{:02x?}", android_command_packet); }}}_ => {println!("Couldn't parse android_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+AndroidCommandChild::AndroidGetPowerStatsCmd(packet) => {let rebuilder = AndroidGetPowerStatsCmdBuilder {};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse android_get_power_stats_cmd
+ {:#02x?}", android_command_packet); }}}_ => {panic!("Couldn't parse android_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 android_get_power_stats_cmd_builder_tests! { android_get_power_stats_cmd_builder_test_00: b"\x2e\x00\x00\x00",}
 
 #[derive(Debug)]
@@ -15145,6 +15489,9 @@ pub struct AndroidGetPowerStatsRspBuilder {
 }
 impl AndroidGetPowerStatsRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 21 {
+            return false;
+        }
         if !PowerStats::conforms(&bytes[4..21]) {
             return false;
         }
@@ -15288,7 +15635,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::AndroidResponse(android_response_packet) => {match android_response_packet.specialize() {/* (3) */
-AndroidResponseChild::AndroidGetPowerStatsRsp(packet) => {let rebuilder = AndroidGetPowerStatsRspBuilder {stats : packet.get_stats().clone(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse android_get_power_stats_rsp{:02x?}", android_response_packet); }}}_ => {println!("Couldn't parse android_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+AndroidResponseChild::AndroidGetPowerStatsRsp(packet) => {let rebuilder = AndroidGetPowerStatsRspBuilder {stats : packet.get_stats().clone(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse android_get_power_stats_rsp
+ {:#02x?}", android_response_packet); }}}_ => {panic!("Couldn't parse android_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 android_get_power_stats_rsp_builder_tests! { android_get_power_stats_rsp_builder_test_00: b"\x4e\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",}
 
 #[derive(Debug)]
@@ -15308,6 +15658,9 @@ pub struct AndroidSetCountryCodeCmdBuilder {
 }
 impl AndroidSetCountryCodeCmdData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 6 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -15458,7 +15811,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciCommand(uci_command_packet) => {match uci_command_packet.specialize() {/* (2) */
 UciCommandChild::AndroidCommand(android_command_packet) => {match android_command_packet.specialize() {/* (3) */
-AndroidCommandChild::AndroidSetCountryCodeCmd(packet) => {let rebuilder = AndroidSetCountryCodeCmdBuilder {country_code : packet.get_country_code().clone(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse android_set_country_code_cmd{:02x?}", android_command_packet); }}}_ => {println!("Couldn't parse android_command{:02x?}", uci_command_packet); }}}_ => {println!("Couldn't parse uci_command{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+AndroidCommandChild::AndroidSetCountryCodeCmd(packet) => {let rebuilder = AndroidSetCountryCodeCmdBuilder {country_code : packet.get_country_code().clone(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse android_set_country_code_cmd
+ {:#02x?}", android_command_packet); }}}_ => {panic!("Couldn't parse android_command
+ {:#02x?}", uci_command_packet); }}}_ => {panic!("Couldn't parse uci_command
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 android_set_country_code_cmd_builder_tests! { android_set_country_code_cmd_builder_test_00: b"\x2e\x01\x00\x02\x55\x53",}
 
 #[derive(Debug)]
@@ -15478,6 +15834,9 @@ pub struct AndroidSetCountryCodeRspBuilder {
 }
 impl AndroidSetCountryCodeRspData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 5 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -15633,7 +15992,10 @@ pub fn $name() { let raw_bytes = $byte_string;/* (0) */
 match UciPacketPacket::parse(raw_bytes) {Ok(uci_packet_packet) => {match uci_packet_packet.specialize() {/* (1) */
 UciPacketChild::UciResponse(uci_response_packet) => {match uci_response_packet.specialize() {/* (2) */
 UciResponseChild::AndroidResponse(android_response_packet) => {match android_response_packet.specialize() {/* (3) */
-AndroidResponseChild::AndroidSetCountryCodeRsp(packet) => {let rebuilder = AndroidSetCountryCodeRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {println!("Couldn't parse android_set_country_code_rsp{:02x?}", android_response_packet); }}}_ => {println!("Couldn't parse android_response{:02x?}", uci_response_packet); }}}_ => {println!("Couldn't parse uci_response{:02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
+AndroidResponseChild::AndroidSetCountryCodeRsp(packet) => {let rebuilder = AndroidSetCountryCodeRspBuilder {status : packet.get_status(),};let rebuilder_base : UciPacketPacket = rebuilder.into();let rebuilder_bytes : &[u8] = &rebuilder_base.to_bytes();assert_eq!(rebuilder_bytes, raw_bytes);}_ => {panic!("Couldn't parse android_set_country_code_rsp
+ {:#02x?}", android_response_packet); }}}_ => {panic!("Couldn't parse android_response
+ {:#02x?}", uci_response_packet); }}}_ => {panic!("Couldn't parse uci_response
+ {:#02x?}", uci_packet_packet); }}},Err(e) => panic!("could not parse UciPacket: {:?} {:02x?}", e, raw_bytes),}})*}}
 android_set_country_code_rsp_builder_tests! { android_set_country_code_rsp_builder_test_00: b"\x4e\x01\x00\x01\x00",}
 
 #[derive(Debug)]
@@ -15671,6 +16033,9 @@ pub struct UciVendor_A_CommandBuilder {
 }
 impl UciVendor_A_CommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -15838,6 +16203,9 @@ pub struct UciVendor_B_CommandBuilder {
 }
 impl UciVendor_B_CommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -16005,6 +16373,9 @@ pub struct UciVendor_E_CommandBuilder {
 }
 impl UciVendor_E_CommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -16172,6 +16543,9 @@ pub struct UciVendor_F_CommandBuilder {
 }
 impl UciVendor_F_CommandData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -16339,6 +16713,9 @@ pub struct UciVendor_A_ResponseBuilder {
 }
 impl UciVendor_A_ResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -16506,6 +16883,9 @@ pub struct UciVendor_B_ResponseBuilder {
 }
 impl UciVendor_B_ResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -16673,6 +17053,9 @@ pub struct UciVendor_E_ResponseBuilder {
 }
 impl UciVendor_E_ResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -16840,6 +17223,9 @@ pub struct UciVendor_F_ResponseBuilder {
 }
 impl UciVendor_F_ResponseData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -17007,6 +17393,9 @@ pub struct UciVendor_A_NotificationBuilder {
 }
 impl UciVendor_A_NotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -17174,6 +17563,9 @@ pub struct UciVendor_B_NotificationBuilder {
 }
 impl UciVendor_B_NotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -17341,6 +17733,9 @@ pub struct UciVendor_E_NotificationBuilder {
 }
 impl UciVendor_E_NotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
@@ -17508,6 +17903,9 @@ pub struct UciVendor_F_NotificationBuilder {
 }
 impl UciVendor_F_NotificationData {
     fn conforms(bytes: &[u8]) -> bool {
+        if bytes.len() < 4 {
+            return false;
+        }
         true
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
