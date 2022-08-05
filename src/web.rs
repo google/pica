@@ -45,6 +45,16 @@ const STATIC_FILES: &[(&str, &str, &str)] = &[
         "application/javascript",
         include_str!("../static/src/components/Orientation.js"),
     ),
+    (
+        "/openapi",
+        "text/html",
+        include_str!("../static/openapi.html"),
+    ),
+    (
+        "/openapi.yaml",
+        "text/yaml",
+        include_str!("../static/openapi.yaml"),
+    ),
 ];
 
 fn event_name(event: &PicaEvent) -> &'static str {

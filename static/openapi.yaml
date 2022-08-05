@@ -26,26 +26,11 @@ info:
     name: Apache 2.0
     url: 'http://www.apache.org/licenses/LICENSE-2.0.html'
 tags:
-  - name: Command
-    description: |
-      General commands to interact with Pica.
-      | Commands       | Summary                                                                                        |
-      |:--------------:|:----------------------------------------------------------------------------------------------:|
-      | init-device    | Instantiate a UWBS as an UCI Device inside Pica                                                |
-      | set-position   | Set the absolute position for a Device                                                         |
-      | create-anchor  | Create an anchor Device                                                                        |
-      | destroy-anchor | Destroy an anchor Device                                                                       |
-      | get-state      | Retrieve the internal state of Pica which return all the instantiated UCI and anchor Devices   |
+  - name: Commands
+    description:  sent to the scene to interact with Devices or get the current State of Pica.
 
   - name: Events
-    description: |
-      Events coming from Pica for the associated Device.
-      | Events            | Summary                                                   |
-      |:-----------------:|:---------------------------------------------------------:|
-      | device-added      | Device added to the scene                                 |
-      | device-removed    | Device deleted from the scene                             |
-      | device-updated    | Device position updated                                   |
-      | neighbor-updated  | Neighbor position updated                                 |
+    description: Events coming from Pica for the associated Device.
 
 components:
   schemas:
@@ -116,7 +101,7 @@ components:
 paths:
   /init-device/{mac-address}:
     post:
-      tags: [Command]
+      tags: [Commands]
       summary: Init a new uwb subsystem and instantiate an UCI Device
       description:
         This command should be call by any host wishing to use Pica as an UWB Subsystem
@@ -129,7 +114,7 @@ paths:
         '500': { description: Internal error }
   /set-position/{mac-address}:
     post:
-      tags: [Command]
+      tags: [Commands]
       summary: Set the position of a Device
       description: |
         Set the position of the Device for x, y, z, yaw, pitch and roll. Pica will trigger the
@@ -143,7 +128,7 @@ paths:
         '500': { description: Internal error }
   /create-anchor/{mac-address}:
     post:
-      tags: [Command]
+      tags: [Commands]
       summary: Create an anchor Device in the scene
       description:
         Create an anchor Device in the scene  with a given MacAddress. If the position
@@ -158,7 +143,7 @@ paths:
         '406': { description: Wrong argument }
   /destroy-anchor/{mac-address}:
     delete:
-      tags: [Command]
+      tags: [Commands]
       summary: Delete the anchor Device
       description:
         Delete the anchor Device from the scene
@@ -171,7 +156,7 @@ paths:
         '500': { description: Internal error  }
   /get-state:
     get:
-      tags: [Command]
+      tags: [Commands]
       summary: Get state of Pica itself
       description:
         Get the state of Pica itself and return a list of connected
@@ -190,7 +175,13 @@ paths:
     get:
       tags: [Events]
       summary: Events from Pica
-      description: Events from Pica to describe the current Pica state in real time.
+      description: |
+        Events coming from Pica for the associated Device.
+        * device-added - Device added to the scene
+        * device-removed - Device deleted from the scene
+        * device-updated - Device position updated
+        * neighbor-updated - Neighbor position updated
+
       responses:
         '200':
           description: |
