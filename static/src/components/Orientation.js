@@ -75,7 +75,7 @@ export class Orientation extends LitElement {
   static properties = {
     yaw: { type: Number },
     pitch: { type: Number },
-    roll: {type: Number },
+    roll: { type: Number },
   };
 
   constructor() {
@@ -110,7 +110,8 @@ export class Orientation extends LitElement {
       <svg
         viewBox="${-a / 2} ${-a / 2} ${a} ${a}"
         class="circle"
-        style="transform: rotateZ(${90 - yaw}deg) rotateX(${Math.sign(pitch) * 90}deg)"
+        style="transform: rotateZ(${90 - yaw}deg) rotateX(${Math.sign(pitch) *
+        90}deg)"
       >
         <circle
           r="${a / 4}"
@@ -122,7 +123,8 @@ export class Orientation extends LitElement {
       </svg>
       <div
         class="axis value"
-        style="transform: rotateZ(${180 - yaw}deg) rotateX(${-pitch}deg) rotateY(90deg)"
+        style="transform: rotateZ(${180 -
+        yaw}deg) rotateX(${-pitch}deg) rotateY(90deg)"
       ></div>
       <div
         class="axis value"
