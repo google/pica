@@ -12,15 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use bytes::{Bytes, BytesMut};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc};
 
 use num_traits::{FromPrimitive, ToPrimitive};
 
@@ -39,7 +38,6 @@ mod session;
 use session::MAX_SESSION;
 
 pub mod web;
-use web::{Category, WebDevice};
 
 const MAX_PAYLOAD_SIZE: usize = 4096;
 
@@ -86,14 +84,6 @@ impl Connection {
     }
 }
 
-#[derive(Error, Debug)]
-enum WebError {
-    #[error("Anchor already exists: 0")]
-    AddAnchorFailed(MacAddress),
-    #[error("Device not found: {0}")]
-    DeviceNotFound(MacAddress),
-}
-
 #[derive(Debug)]
 pub enum PicaCommand {
     // Connect a new device.
@@ -104,39 +94,30 @@ pub enum PicaCommand {
     Ranging(usize, u32),
     // Execute UCI command received for selected device.
     Command(usize, UciCommandPacket),
-    // Init Uci Device
-    InitUciDevice(MacAddress, Position),
     // Set Position
     SetPosition(MacAddress, Position),
-    // Create Anchor
-    CreateAnchor(MacAddress, Position),
-    // Destroy Anchor
-    DestroyAnchor(MacAddress),
-    // Get State
-    GetState(oneshot::Sender<Vec<WebDevice>>),
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum PicaEvent {
     // A Device was added
-    DeviceAdded {
-        category: Category,
+    AddDevice {
         mac_address: MacAddress,
         #[serde(flatten)]
         position: Position,
     },
     // A Device was removed
-    DeviceRemoved {
+    RemoveDevice {
         mac_address: MacAddress,
     },
     // A Device position has changed
-    PositionUpdated {
+    UpdatePosition {
         mac_address: MacAddress,
         #[serde(flatten)]
         position: Position,
     },
-    NeighborUpdated {
+    UpdateNeighbor {
         mac_address: MacAddress,
         neighbor: MacAddress,
         distance: u16,
@@ -145,15 +126,15 @@ pub enum PicaEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Anchor {
-    mac_address: MacAddress,
+#[derive(Debug)]
+struct Beacon {
     position: Position,
+    mac_address: MacAddress,
 }
 
 pub struct Pica {
     devices: HashMap<usize, Device>,
-    anchors: HashMap<MacAddress, Anchor>,
+    beacons: HashMap<MacAddress, Beacon>,
     counter: usize,
     rx: mpsc::Receiver<PicaCommand>,
     tx: mpsc::Sender<PicaCommand>,
@@ -171,7 +152,7 @@ enum UciParseResult {
 /// Parse incoming UCI packets.
 /// Handle parsing errors by crafting a suitable error response packet.
 fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
-    match UciPacketPacket::parse(bytes) {
+    match UciPacketPacket::parse(&bytes) {
         // Parsing error. Determine what error response should be
         // returned to the host:
         // - response and notifications are ignored, no response
@@ -221,7 +202,7 @@ impl Pica {
         let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
         Pica {
             devices: HashMap::new(),
-            anchors: HashMap::new(),
+            beacons: HashMap::new(),
             counter: 0,
             rx,
             tx,
@@ -266,10 +247,9 @@ impl Pica {
         let mut device = Device::new(device_handle, packet_tx, self.tx.clone());
         device.init();
 
-        self.send_event(PicaEvent::DeviceAdded {
-            category: Category::Uci,
+        self.send_event(PicaEvent::AddDevice {
             mac_address: device.mac_address as u64,
-            position: device.position,
+            position: device.position.clone(),
         });
 
         self.devices.insert(device_handle, device);
@@ -323,7 +303,7 @@ impl Pica {
 
         let device = self.devices.get(&device_handle).context("Unknown device")?;
 
-        self.send_event(PicaEvent::DeviceRemoved {
+        self.send_event(PicaEvent::RemoveDevice {
             mac_address: device.mac_address,
         });
 
@@ -344,11 +324,11 @@ impl Pica {
             .get_dst_mac_addresses()
             .iter()
             .for_each(|mac_address| {
-                if let Some(anchor) = self.anchors.get(mac_address) {
+                if let Some(beacon) = self.beacons.get(mac_address) {
                     let local = device
                         .position
-                        .compute_range_azimuth_elevation(&anchor.position);
-                    let remote = anchor
+                        .compute_range_azimuth_elevation(&beacon.position);
+                    let remote = beacon
                         .position
                         .compute_range_azimuth_elevation(&device.position);
 
@@ -404,8 +384,30 @@ impl Pica {
             "Boundary flag is true, implement fragmentation"
         );
 
+        let response = match cmd.specialize() {
+            // Handle UCI commands for Pica here:
+            UciCommandChild::PicaCommand(pica_command) => match pica_command.specialize() {
+                PicaCommandChild::PicaInitDeviceCmd(cmd) => {
+                    self.init_device(device_handle, cmd).into()
+                }
+                PicaCommandChild::PicaSetDevicePositionCmd(cmd) => {
+                    self.set_device_position(device_handle, cmd).into()
+                }
+                PicaCommandChild::PicaCreateBeaconCmd(cmd) => self.create_beacon(cmd).into(),
+                PicaCommandChild::PicaSetBeaconPositionCmd(cmd) => {
+                    self.set_beacon_position(cmd).into()
+                }
+                PicaCommandChild::PicaDestroyBeaconCmd(cmd) => self.destroy_beacon(cmd).into(),
+                PicaCommandChild::None => anyhow::bail!("Unsupported Pica command"),
+            },
+            // Forward other UCI commands to the proper device:
+            _ => {
+                let device = self.get_device_mut(device_handle).unwrap();
+                device.command(cmd).into()
+            }
+        };
+
         let device = self.get_device_mut(device_handle).unwrap();
-        let response = device.command(cmd).into();
         Ok(device.tx.send(response).await?)
     }
 
@@ -419,74 +421,57 @@ impl Pica {
                     self.ranging(device_handle, session_id).await
                 }
                 Some(Command(device_handle, cmd)) => self.command(device_handle, cmd).await?,
-                Some(SetPosition(mac_address, position)) => {
-                    self.set_position(mac_address, position)?
-                }
-                Some(CreateAnchor(mac_address, position)) => {
-                    self.create_anchor(mac_address, position)?
-                }
-                Some(DestroyAnchor(mac_address)) => self.destroy_anchor(mac_address)?,
-                Some(GetState(state_tx)) => self.get_state(state_tx)?,
-                Some(InitUciDevice(mac_address, position)) => {
-                    self.init_uci_device(mac_address, position)?
-                }
+                Some(SetPosition(mac, position)) => self.set_position(mac, position)?,
                 None => (),
             }
         }
     }
 
-    fn init_uci_device(
+    fn init_device(
         &mut self,
-        mac_address: MacAddress,
-        position: Position,
-    ) -> Result<(), WebError> {
+        device_handle: usize,
+        cmd: PicaInitDeviceCmdPacket,
+    ) -> PicaInitDeviceRspPacket {
+        let mac_address = cmd.get_mac_address();
+        let position: Position = cmd.get_position().into();
+
         println!("[_] Init device");
         println!("  mac_address=0x{:x}", mac_address);
         println!("  position={:?}", position);
 
-        let uci_device = self
-            .get_device_mut_by_mac(mac_address)
-            .ok_or(WebError::DeviceNotFound(mac_address))?;
-        uci_device.mac_address = mac_address;
-        uci_device.position = position;
-        Ok(())
-    }
-
-    fn set_position(
-        &mut self,
-        mac_address: MacAddress,
-        position: Position,
-    ) -> Result<(), WebError> {
-        if let Some(uci_device) = self.get_device_mut_by_mac(mac_address) {
-            uci_device.position = position;
-        } else if let Some(anchor) = self.anchors.get_mut(&mac_address) {
-            anchor.position = position;
-        } else {
-            return Err(WebError::DeviceNotFound(mac_address));
+        let device = self.get_device_mut(device_handle).unwrap();
+        device.mac_address = mac_address;
+        device.position = Position::from(cmd.get_position());
+        // FIXME: send event for the mac_address change
+        PicaInitDeviceRspBuilder {
+            status: StatusCode::UciStatusOk,
         }
-
-        self.update_position(mac_address, position);
-
-        Ok(())
+        .build()
     }
 
     fn update_position(&self, mac_address: MacAddress, position: Position) {
-        self.send_event(PicaEvent::PositionUpdated {
+        self.send_event(PicaEvent::UpdatePosition {
             mac_address,
-            position,
+            position: position.clone(),
         });
 
-        let devices = self.devices.values().map(|d| (d.mac_address, d.position));
-        let anchors = self.anchors.values().map(|b| (b.mac_address, b.position));
+        let devices = self
+            .devices
+            .values()
+            .map(|d| (d.mac_address, d.position.clone()));
+        let beacons = self
+            .beacons
+            .values()
+            .map(|b| (b.mac_address, b.position.clone()));
 
-        for (device_mac_address, device_position) in devices.chain(anchors) {
+        for (device_mac_address, device_position) in devices.chain(beacons) {
             if mac_address != device_mac_address {
                 let local = position.compute_range_azimuth_elevation(&device_position);
                 let remote = device_position.compute_range_azimuth_elevation(&position);
 
                 assert!(local.0 == remote.0);
 
-                self.send_event(PicaEvent::NeighborUpdated {
+                self.send_event(PicaEvent::UpdateNeighbor {
                     mac_address,
                     neighbor: device_mac_address,
                     distance: local.0,
@@ -494,7 +479,7 @@ impl Pica {
                     elevation: local.2,
                 });
 
-                self.send_event(PicaEvent::NeighborUpdated {
+                self.send_event(PicaEvent::UpdateNeighbor {
                     mac_address: device_mac_address,
                     neighbor: mac_address,
                     distance: remote.0,
@@ -505,64 +490,105 @@ impl Pica {
         }
     }
 
-    #[allow(clippy::map_entry)]
-    fn create_anchor(
+    fn set_position(&mut self, mac_address: MacAddress, position: Position) -> Result<()> {
+        if let Some(d) = self.get_device_mut_by_mac(mac_address) {
+            d.position = position.clone();
+        } else if let Some(b) = self.beacons.get_mut(&mac_address) {
+            b.position = position.clone();
+        } else {
+            return Err(anyhow!("Device or Beacon not found"));
+        }
+
+        self.update_position(mac_address, position);
+
+        Ok(())
+    }
+
+    fn set_device_position(
         &mut self,
-        mac_address: MacAddress,
-        position: Position,
-    ) -> Result<(), WebError> {
-        println!("[_] Create anchor");
+        device_handle: usize,
+        cmd: PicaSetDevicePositionCmdPacket,
+    ) -> PicaSetDevicePositionRspPacket {
+        let mut device = self.get_device_mut(device_handle).unwrap();
+        device.position = cmd.get_position().into();
+
+        let position = device.position.clone();
+        let mac_address = device.mac_address;
+
+        self.update_position(mac_address, position);
+
+        PicaSetDevicePositionRspBuilder {
+            status: StatusCode::UciStatusOk,
+        }
+        .build()
+    }
+
+    #[allow(clippy::map_entry)]
+    fn create_beacon(&mut self, cmd: PicaCreateBeaconCmdPacket) -> PicaCreateBeaconRspPacket {
+        let mac_address = cmd.get_mac_address();
+        let position = cmd.get_position();
+        println!("[_] Create beacon");
         println!("  mac_address=0x{:x}", mac_address);
         println!("  position={:?}", position);
 
-        if self.anchors.contains_key(&mac_address) {
-            return Err(WebError::AddAnchorFailed(mac_address));
+        let status = if self.beacons.contains_key(&mac_address) {
+            StatusCode::UciStatusFailed
         } else {
-            self.send_event(PicaEvent::DeviceAdded {
-                category: Category::Anchor,
+            self.send_event(PicaEvent::AddDevice {
                 mac_address,
-                position,
+                position: Position::from(position),
             });
             assert!(self
-                .anchors
+                .beacons
                 .insert(
                     mac_address,
-                    Anchor {
+                    Beacon {
+                        position: Position::from(position),
                         mac_address,
-                        position,
                     },
                 )
                 .is_none());
+            StatusCode::UciStatusOk
         };
 
-        Ok(())
+        PicaCreateBeaconRspBuilder { status }.build()
     }
 
-    fn destroy_anchor(&mut self, mac_address: MacAddress) -> Result<(), WebError> {
-        println!("[_] Destroy anchor");
+    fn set_beacon_position(
+        &mut self,
+        cmd: PicaSetBeaconPositionCmdPacket,
+    ) -> PicaSetBeaconPositionRspPacket {
+        let mac_address = cmd.get_mac_address();
+        let position = cmd.get_position();
+        println!("[_] Set beacon position");
+        println!("  mac_address=0x{:x}", mac_address);
+        println!("  position={:?}", position);
+
+        let status = if let Some(b) = self.beacons.get_mut(&mac_address) {
+            b.position = Position::from(position);
+            StatusCode::UciStatusOk
+        } else {
+            StatusCode::UciStatusFailed
+        };
+
+        if status == StatusCode::UciStatusOk {
+            self.update_position(mac_address, Position::from(position));
+        }
+        PicaSetBeaconPositionRspBuilder { status }.build()
+    }
+
+    fn destroy_beacon(&mut self, cmd: PicaDestroyBeaconCmdPacket) -> PicaDestroyBeaconRspPacket {
+        let mac_address = cmd.get_mac_address();
+        println!("[_] Destroy beacon");
         println!("  mac_address=0x{:x}", mac_address);
 
-        if self.anchors.remove(&mac_address).is_none() {
-            return Err(WebError::DeviceNotFound(mac_address));
+        let status = if self.beacons.remove(&mac_address).is_some() {
+            self.send_event(PicaEvent::RemoveDevice { mac_address });
+            StatusCode::UciStatusOk
         } else {
-            self.send_event(PicaEvent::DeviceRemoved { mac_address });
+            StatusCode::UciStatusFailed
         };
 
-        Ok(())
-    }
-
-    fn get_state(&self, state_tx: oneshot::Sender<Vec<WebDevice>>) -> Result<(), WebError> {
-        println!("[_] Get State");
-        let web_devices: Vec<WebDevice> = self
-            .anchors
-            .iter()
-            .map(|(_, anchor)| WebDevice::from(*anchor))
-            .chain(self.devices.iter().map(|(_, uci_device)| {
-                WebDevice::new(Category::Uci, uci_device.mac_address, uci_device.position)
-            }))
-            .collect();
-
-        state_tx.send(web_devices).unwrap();
-        Ok(())
+        PicaDestroyBeaconRspBuilder { status }.build()
     }
 }
