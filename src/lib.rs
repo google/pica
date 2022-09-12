@@ -89,37 +89,14 @@ impl Connection {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum PicaCommandStatus {
-    Ok,
-    Error(PicaCommandError),
-}
+pub type PicaCommandStatus = Result<(), PicaCommandError>;
 
-impl Display for PicaCommandStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let status = match self {
-            PicaCommandStatus::Ok => "Ok",
-            PicaCommandStatus::Error(err) => match err {
-                PicaCommandError::AddAnchorFailed(_) => "AddAnchorFailed",
-                PicaCommandError::DeviceNotFound(_) => "DeviceNotFound",
-                PicaCommandError::SendStatusFailed(_) => "SendStatusFailed",
-                PicaCommandError::SendCmdRspFailed(_) => "SendCmdRspFailed",
-            },
-        };
-        write!(f, "PicaCommandStatus: {}", status)
-    }
-}
-
-#[derive(Error, Debug, Clone, PartialEq)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum PicaCommandError {
     #[error("Device already exists: {0}")]
-    AddAnchorFailed(MacAddress),
+    DeviceAlreadyExists(MacAddress),
     #[error("Device not found: {0}")]
     DeviceNotFound(MacAddress),
-    #[error("Failed to send error: {0}")]
-    SendStatusFailed(String),
-    #[error("Failed to send uci command response: {0}")]
-    SendCmdRspFailed(String),
 }
 
 #[derive(Debug)]
@@ -472,7 +449,7 @@ impl Pica {
             Ok(device) => {
                 let response = device.command(cmd).into();
                 device.tx.send(response).await.unwrap_or_else(|err| {
-                    println!("{}", PicaCommandError::SendStatusFailed(err.to_string()))
+                    println!("Failed to send UCI command response: {}", err)
                 });
             }
             Err(err) => println!("{}", err),
@@ -522,23 +499,16 @@ impl Pica {
         println!("  mac_address: {}", mac_address);
         println!("  position={:?}", position);
 
-        let status = match self
+        let status = self
             .get_device_mut_by_mac(mac_address)
             .ok_or(PicaCommandError::DeviceNotFound(mac_address))
-        {
-            Ok(uci_device) => {
+            .map(|uci_device| {
                 uci_device.mac_address = mac_address;
                 uci_device.position = position;
-                PicaCommandStatus::Ok
-            }
-            Err(err) => {
-                println!("{}", err);
-                PicaCommandStatus::Error(err)
-            }
-        };
+            });
 
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("{}", PicaCommandError::SendStatusFailed(err.to_string()))
+            println!("Failed to send init-uci-device command response: {:?}", err)
         });
     }
 
@@ -550,28 +520,20 @@ impl Pica {
     ) {
         let mut status = if let Some(uci_device) = self.get_device_mut_by_mac(mac_address) {
             uci_device.position = position;
-            PicaCommandStatus::Ok
+            Ok(())
         } else if let Some(anchor) = self.anchors.get_mut(&mac_address) {
             anchor.position = position;
-            PicaCommandStatus::Ok
+            Ok(())
         } else {
-            let err = PicaCommandError::DeviceNotFound(mac_address);
-            println!("{}", err);
-            PicaCommandStatus::Error(err)
+            Err(PicaCommandError::DeviceNotFound(mac_address))
         };
 
-        if status == PicaCommandStatus::Ok {
-            status = match self.update_position(mac_address, position) {
-                Ok(_) => PicaCommandStatus::Ok,
-                Err(err) => {
-                    println!("{}", err);
-                    PicaCommandStatus::Error(err)
-                }
-            };
+        if status.is_ok() {
+            status = self.update_position(mac_address, position)
         }
 
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("{}", PicaCommandError::SendStatusFailed(err.to_string()))
+            println!("Failed to send set-position command response: {:?}", err)
         });
     }
 
@@ -636,9 +598,7 @@ impl Pica {
     ) {
         println!("Create anchor: {} {}", mac_address, position);
         let status = if self.get_category(&mac_address).is_some() {
-            let err = PicaCommandError::AddAnchorFailed(mac_address);
-            println!("{}", err);
-            PicaCommandStatus::Error(err)
+            Err(PicaCommandError::DeviceAlreadyExists(mac_address))
         } else {
             self.send_event(PicaEvent::DeviceAdded {
                 device: web::Device::new(Category::Anchor, mac_address, position),
@@ -653,11 +613,11 @@ impl Pica {
                     },
                 )
                 .is_none());
-            PicaCommandStatus::Ok
+            Ok(())
         };
 
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("{}", PicaCommandError::SendStatusFailed(err.to_string()))
+            println!("Failed to send create-anchor command response: {:?}", err)
         })
     }
 
@@ -670,17 +630,15 @@ impl Pica {
         println!("  mac_address: {}", mac_address);
 
         let status = if self.anchors.remove(&mac_address).is_none() {
-            let err = PicaCommandError::DeviceNotFound(mac_address);
-            println!("{}", err);
-            PicaCommandStatus::Error(err)
+            Err(PicaCommandError::DeviceNotFound(mac_address))
         } else {
             self.send_event(PicaEvent::DeviceRemoved {
                 device: web::Device::new(Category::Anchor, mac_address, Position::default()),
             });
-            PicaCommandStatus::Ok
+            Ok(())
         };
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("{}", PicaCommandError::SendStatusFailed(err.to_string()))
+            println!("Failed to send destroy-anchor command response: {:?}", err)
         })
     }
 

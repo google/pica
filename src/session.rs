@@ -34,7 +34,7 @@ pub const DEFAULT_SLOT_DURATION: u16 = 2400; // RTSU unit
 /// cf. [UCI] 8.3 Table 29
 pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
 
-#[derive(Copy, Clone, FromPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceType {
     /// [MAC] 5.1.1 Device controlling the ranging features through Control Messages
     Controller,
@@ -51,7 +51,7 @@ pub enum DeviceRole {
 }
 
 /// cf. [UCI] 8.4 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MacAddressMode {
     /// MAC address is 2 bytes and 2 bytes to be used in MAC header
@@ -63,7 +63,7 @@ pub enum MacAddressMode {
 }
 
 /// cf. [UCI] 8.3 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ChannelNumber {
     ChannelNumber5 = 0x05,

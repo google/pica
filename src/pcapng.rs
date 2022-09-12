@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::unused_io_amount)]
+
 use std::path::Path;
 use std::time::Instant;
 use tokio::io::AsyncWriteExt;

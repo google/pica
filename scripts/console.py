@@ -14,13 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import argparse
 import inspect
+import json
 import random
 import readline
 import socket
 import sys
 import time
+import requests
 import struct
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -72,9 +74,79 @@ class TLV:
 
 
 class Device:
-    def __init__(self, reader, writer):
+    def __init__(self, reader, writer, http_address):
         self.reader = reader
         self.writer = writer
+        self.http_address = http_address
+
+    def pica_get_state(
+            self,
+            **kargs):
+        """List the UCI devices and anchors currently existing within the Pica
+        virtual environment"""
+        r = requests.get(f'{self.http_address}/get-state')
+        print(f'{r.status_code}:\n{json.dumps(r.json(), indent=2)}')
+
+    def pica_init_uci_device(
+            self,
+            x: str = "0",
+            y: str = "0",
+            z: str = "0",
+            yaw: str = "0",
+            pitch: str = "0",
+            roll: str = "0",
+            **kargs):
+        """Init Pica device"""
+        r = requests.post(f'{self.http_address}/init-uci-device/{mac_address}',
+            data=json.dumps({
+                'x': int(x), 'y': int(y), 'z': int(z),
+                'yaw': int(yaw), 'pitch': int(pitch), 'roll': int(roll)
+            }))
+        print(f'{r.status_code}: {r.text}')
+
+    def pica_create_anchor(
+            self,
+            mac_address: str = "00:00",
+            x: str = "0",
+            y: str = "0",
+            z: str = "0",
+            yaw: str = "0",
+            pitch: str = "0",
+            roll: str = "0",
+            **kargs):
+        """Create a Pica anchor"""
+        r = requests.post(f'{self.http_address}/create-anchor/{mac_address}',
+            data=json.dumps({
+                'x': int(x), 'y': int(y), 'z': int(z),
+                'yaw': int(yaw), 'pitch': int(pitch), 'roll': int(roll)
+            }))
+        print(f'{r.status_code}: {r.text}')
+
+    def pica_destroy_anchor(
+            self,
+            mac_address: str = "00:00",
+            **kargs):
+        """Destroy a Pica anchor"""
+        r = requests.post(f'{self.http_address}/destroy-anchor/{mac_address}')
+        print(f'{r.status_code}: {r.text}')
+
+    def pica_set_position(
+            self,
+            mac_address: str = "00:00",
+            x: str = "0",
+            y: str = "0",
+            z: str = "0",
+            yaw: str = "0",
+            pitch: str = "0",
+            roll: str = "0",
+            **kargs):
+        """Set Pica UCI device or anchor position"""
+        r = requests.post(f'{self.http_address}/set-position/{mac_address}',
+            data=json.dumps({
+                'x': int(x), 'y': int(y), 'z': int(z),
+                'yaw': int(yaw), 'pitch': int(pitch), 'roll': int(roll)
+            }))
+        print(f'{r.status_code}: {r.text}')
 
     def _send_command(self, group_id: int, opcode_id: int, payload: bytes):
         """Sends a UCI command without fragmentation"""
@@ -91,72 +163,6 @@ class Device:
         self._send_command(
             int(group_id), int(opcode_id),
             random.randbytes(int(payload_size)))
-
-    def pica_init_device(
-            self,
-            mac_address: str = '0',
-            x: str = "0",
-            y: str = "0",
-            z: str = "0",
-            yaw: str = "0",
-            pitch: str = "0",
-            roll: str = "0",
-            **kargs):
-        """Init Pica device"""
-        self._send_command(9, 0,
-                           encode_mac_address(mac_address) +
-                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
-
-    def pica_set_device_position(
-            self,
-            x: str = "0",
-            y: str = "0",
-            z: str = "0",
-            yaw: str = "0",
-            pitch: str = "0",
-            roll: str = "0",
-            **kargs):
-        """Set Pica device position"""
-        self._send_command(9, 1,
-                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
-
-    def pica_create_beacon(
-            self,
-            mac_address: str = '0',
-            x: str = "0",
-            y: str = "0",
-            z: str = "0",
-            yaw: str = "0",
-            pitch: str = "0",
-            roll: str = "0",
-            **kargs):
-        """Create a Pica beacon"""
-        self._send_command(9, 2,
-                           encode_mac_address(mac_address) +
-                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
-
-    def pica_set_beacon_position(
-            self,
-            mac_address: str = '0',
-            x: str = "0",
-            y: str = "0",
-            z: str = "0",
-            yaw: str = "0",
-            pitch: str = "0",
-            roll: str = "0",
-            **kargs):
-        """Set Pica beacon position"""
-        self._send_command(9, 3,
-                           encode_mac_address(mac_address) +
-                           encode_position(int(x), int(y), int(z), int(yaw), int(pitch), int(roll)))
-
-    def pica_destroy_beacon(
-            self,
-            mac_address: str = '0',
-            **kargs):
-        """Set Pica beacon position"""
-        self._send_command(9, 4,
-                           encode_mac_address(mac_address))
 
     def device_reset(self, **kargs):
         """Reset the UWBS."""
@@ -324,11 +330,11 @@ async def get_stream_reader(pipe) -> asyncio.StreamReader:
 
 async def command_line(device: Device):
     commands = {
-        'pica_init_device': device.pica_init_device,
-        'pica_set_device_position': device.pica_set_device_position,
-        'pica_create_beacon': device.pica_create_beacon,
-        'pica_set_beacon_position': device.pica_set_beacon_position,
-        'pica_destroy_beacon': device.pica_destroy_beacon,
+        'pica_get_state': device.pica_get_state,
+        'pica_init_uci_device': device.pica_init_uci_device,
+        'pica_create_anchor': device.pica_create_anchor,
+        'pica_destroy_anchor': device.pica_destroy_anchor,
+        'pica_set_position': device.pica_set_position,
         'device_reset': device.device_reset,
         'get_device_info': device.get_device_info,
         'get_config': device.get_config,
@@ -408,21 +414,40 @@ async def command_line(device: Device):
         commands[cmd](*args, **kargs)
 
 
-async def main():
-    # Connect to Pica
+async def run(address: str, uci_port: int, http_port: int):
     try:
-        reader, writer = await asyncio.open_connection('127.0.0.1', 7000)
+        # Connect to Pica
+        reader, writer = await asyncio.open_connection(address, uci_port)
     except Exception as exn:
         print(
-            'Failed to connect to Pica server\n' +
-            'Make sure the server is running locally on port 7000')
+            f'Failed to connect to Pica server at address {address}:{uci_port}\n' +
+            'Make sure the server is running')
         exit(1)
 
     # Start input and receive loops
-    device = Device(reader, writer)
+    device = Device(reader, writer, f'http://{address}:{http_port}')
     loop = asyncio.get_event_loop()
     loop.create_task(device.read_responses_and_notifications())
     await command_line(device)
 
+
+def main():
+    """Start a Pica interactive console."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--address',
+                        type=str,
+                        default='127.0.0.1',
+                        help='Select the pica server address')
+    parser.add_argument('--uci-port',
+                        type=int,
+                        default=7000,
+                        help='Select the pica TCP UCI port')
+    parser.add_argument('--http-port',
+                        type=int,
+                        default=3000,
+                        help='Select the pica HTTP port')
+    asyncio.run(run(**vars(parser.parse_args())))
+
+
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()

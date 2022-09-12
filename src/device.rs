@@ -405,7 +405,7 @@ impl Device {
                 if let Some(session) = self.get_session_mut(session_id) {
                     // There is a session matching the session_id in the command
                     // Pass the command through
-                    return match session_command.specialize() {
+                    match session_command.specialize() {
                         SessionCommandChild::SessionSetAppConfigCmd(_)
                         | SessionCommandChild::SessionGetAppConfigCmd(_)
                         | SessionCommandChild::SessionGetStateCmd(_)
@@ -413,11 +413,11 @@ impl Device {
                             session.session_command(session_command).into()
                         }
                         _ => panic!("Unsupported session command"),
-                    };
+                    }
                 } else {
                     // There is no session matching the session_id in the command
                     let status = StatusCode::UciStatusSessionNotExist;
-                    return match session_command.specialize() {
+                    match session_command.specialize() {
                         SessionCommandChild::SessionSetAppConfigCmd(_) => {
                             SessionSetAppConfigRspBuilder {
                                 status,
@@ -446,7 +446,7 @@ impl Device {
                                 .into()
                         }
                         _ => panic!("Unsupported session command"),
-                    };
+                    }
                 }
             }
             UciCommandChild::RangingCommand(ranging_command) => {

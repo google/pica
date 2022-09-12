@@ -58,20 +58,6 @@ const STATIC_FILES: &[(&str, &str, &str)] = &[
     ),
 ];
 
-impl From<PicaCommandStatus> for HttpStatusCode {
-    fn from(status: PicaCommandStatus) -> Self {
-        match status {
-            PicaCommandStatus::Ok => HttpStatusCode::OK,
-            PicaCommandStatus::Error(err) => match err {
-                PicaCommandError::AddAnchorFailed(_) => HttpStatusCode::CONFLICT,
-                PicaCommandError::DeviceNotFound(_) => HttpStatusCode::NOT_FOUND,
-                PicaCommandError::SendStatusFailed(_) => unreachable!(),
-                _ => HttpStatusCode::IM_A_TEAPOT,
-            },
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct PositionBody {
     x: i16,
@@ -93,8 +79,9 @@ macro_rules! position {
                 if !$mandatory && err.classify() == SerdeErrorCategory::Eof {
                     Position::default()
                 } else {
-                    println!("Error while deserializing position: {}", err);
-                    return Ok(Response::builder().status(406).body("".into()).unwrap());
+                    let reason = format!("Error while deserializing position: {}", err);
+                    println!("{}", reason);
+                    return Ok(Response::builder().status(406).body(reason.into()).unwrap());
                 }
             }
         }
@@ -106,8 +93,9 @@ macro_rules! mac_address {
         match MacAddress::new($mac_address.to_string()) {
             Ok(mac_address) => mac_address,
             Err(err) => {
-                println!("Error mac_address: {}", err);
-                return Ok(Response::builder().status(406).body("".into()).unwrap());
+                let reason = format!("Error mac_address: {}", err);
+                println!("{}", reason);
+                return Ok(Response::builder().status(406).body(reason.into()).unwrap());
             }
         }
     };
@@ -178,15 +166,20 @@ async fn handle(
     let send_cmd = |pica_cmd| async {
         println!("PicaCommand: {}", pica_cmd);
         tx.send(pica_cmd).await.unwrap();
-        let status = match pica_cmd_rsp_rx.await {
-            Ok(status) => status.into(),
-            Err(err) => {
-                println!("Error getting response: {}", err);
-                HttpStatusCode::INTERNAL_SERVER_ERROR
-            }
+        let (status, description) = match pica_cmd_rsp_rx.await {
+            Ok(Ok(_)) => (HttpStatusCode::OK, "success".into()),
+            Ok(Err(err)) => (match err {
+                PicaCommandError::DeviceAlreadyExists(_) => HttpStatusCode::CONFLICT,
+                PicaCommandError::DeviceNotFound(_) => HttpStatusCode::NOT_FOUND,
+            }, format!("{}", err)),
+            Err(err) =>
+                (HttpStatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Error getting command response: {}", err))
         };
-        Response::builder().status(status).body("".into()).unwrap()
+        println!("  status: {}, {}", status, description);
+        Response::builder().status(status).body(description.into()).unwrap()
     };
+
     match req
         .uri_mut()
         .path()
