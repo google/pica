@@ -1,10 +1,10 @@
 [package]
 name = "pica"
 authors = [
-  "Adrien Larbanet <adrienl@google.com>",
-  "Charlie Boutier <charliebout@google.com>",
-  "David Duarte <licorne@google.com>",
-  "Henri Chataing <henrichataing@google.com>",
+  "Adrien Larbanet",
+  "Charlie Boutier",
+  "David Duarte",
+  "Henri Chataing",
 ]
 version = "0.1.0"
 edition = "2021"

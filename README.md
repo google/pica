@@ -1,6 +1,6 @@
 # Pica
 
-Pica is a virtual UWB Controller implementation supporting UWB ranging sessions.
+Pica is a virtual UWB Controller implementing the FiRa UCI specification.
 It has been designed for testing UWB ranging capabilities.
 Pica supports the following features:
 
@@ -9,19 +9,13 @@ Pica supports the following features:
   Each new connection spawns an attached UWB subsystem. Connected hosts can
   interact together as if they existed in a single 3-D scene.
 - Pica implements a nice GUI through a web server.
-- Pica provides additional vendor commands to create and configure
-  virtual beacons.
-
-# Project
-
-To follow the project development, go to our [Table workspace](https://tables.area120.google.com/u/0/workspace/bfwweREaj8B6VK-gSOG4Qm/table/8sIowZVeFFi23ptG2Ej_uL).
-
-The android UWB HAL will soon link to Pica. For now, if you wish to use Pica as the Android virtual controller, please follow [this document](http://doc/1Dd3q5u-HDFogfrC0mWc-auyhf2tU6reJFBGGK2a8_sA).
+- Pica provides HTTP commands to interact with the scene directly such as create and destroy
+  virtual anchors.
 
 # Build and run
 
 ```bash
-$> git clone sso://blueberry/pica
+$> git clone https://github.com/google/pica.git
 $> cd pica/
 $> cargo run
 ```
@@ -33,11 +27,14 @@ Pica: Listening on: 7000
 Pica: Web server started on http://0.0.0.0:3000
 ```
 
-You can now open the web interface at `http://0.0.0.0:3000`
+You can now open the web interface at `http://0.0.0.0:3000` and the HTTP commands documentation
+at `http://0.0.0.0:3000/openapi`. The scene should be empty and look like this:
+
+![Pica empty scene](./res/empty_scene.png)
 
 # Command line
 
-A command line tool is available to trigger some action such as creating a beacon.
+A command line tool is available to trigger some action such as creating an anchor.
 Run pica in a terminal then open a new one and do:
 ```
 $> cd pica/
@@ -58,21 +55,25 @@ session_get_state               Query the current state of the UWB session.
 range_start                     start a UWB session.
 range_stop                      Stop a UWB session.
 get_ranging_count               Get the number of times ranging has been attempted during the ranging session..
-pica_create_beacon              Create a Pica beacon
+pica_create_anchor              Create a Pica anchor
+pica_destroy_anchor             Destroy a Pica anchor
+pica_get_state                  Return the internal Pica state
+pica_init_uci_device            Initialize an uci device
+pica_set_position               Set the position of a Device
 ```
 
-If you wish to create a virtual beacon:
+If you wish to create a virtual anchor:
 
 ```bash
 $> cd pica/ && python3 scripts/console.py # If the console is not started yet
-$> --> pica_create_beacon 22 # pica_create_beacon <mac_address>
-$> --> pica_create_beacon 56 # Create another one
+$> --> pica_create_anchor 00:00 # pica_create_anchor <mac_address>
+$> --> pica_create_anchor 00:01 # Create another one
 ```
 # Architecture
 
 - *Device* UWB subsystem created for a connected host.
 - *Session* UWB ranging session opened by a connected host.
-- *Beacon* virtual UWB host, responding to ranging requests from
+- *Anchor* virtual UWB host, responding to ranging requests from
   connected hosts.
 
 ```
@@ -83,12 +84,12 @@ $> --> pica_create_beacon 56 # Create another one
                        │         │    HTTP localhost:3000
   ┌────────────────────▼─────────┴───────┐
   │                                      │
-  │                 Picaaaaaaaaaa        │
+  │                 Pica                 │
   │                                      │
   │  ┌────────┐  ┌────────┐  ┌────────┐  │
-  │  │Beacon1 │  │Device1 │  │Device2 │  │
+  │  │Anchor1 │  │Device1 │  │Device2 │  │
   │  ├────────┤  │        │  │        │  │
-  │  │Beacon2 │  ├────────┤  ├────────┤  │
+  │  │Anchor2 │  ├────────┤  ├────────┤  │
   │  ├────────┤  │Session1│  │Session1│  │
   │  │...     │  ├────────┤  ├────────┤  │
   │  │        │  │Session2│  │Session2│  │
@@ -111,9 +112,8 @@ $> --> pica_create_beacon 56 # Create another one
 
 # Http commands
 
-Pica implements http commands to let hosts report their
-MAC address and current position. Other commands allow the hosts to create and
-modify anchors. Please refer to openapi.yaml for the set of differents commands.
+Pica also implements HTTP commands, the documentation is available at `http://0.0.0.0:3000/openapi`.
+The set of HTTP commands let the user interact with Pica amd modify its scene.
 
 # Regenerate uci_packets.rs
 If you haven't use bluetooth_packetgen before, it is a tool from Android. You can build it and use it
