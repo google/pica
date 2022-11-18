@@ -1,0 +1,212 @@
+<!--
+Copyright 2022 Google LLC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap"
+  rel="stylesheet"
+/>
+
+<style>
+  body {
+    margin: 0;
+    background: var(--background);
+    font-family: "Montserrat", sans-serif;
+  }
+
+  main {
+    display: flex;
+    flex-direction: row;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  #map {
+    width: var(--map-size);
+  }
+
+  #info {
+    width: 400px;
+    background: var(--sidebar-color);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.23);
+  }
+
+  :root {
+    --map-size: calc(100vw - 400px);
+    --background: #cbd5e1;
+    --grid-line-color: #fbbf24;
+    --grid-background-color: #f8fafc;
+    --sidebar-color: #ea8ca8;
+    --selection-color: #f0abfc;
+  }
+</style>
+<main>
+  <pika-map id="map"></pika-map>
+  <pika-device-info id="info"></pika-device-info>
+</main>
+
+<script type="importmap">
+  {
+    "imports": {
+      "lit": "https://cdn.jsdelivr.net/gh/lit/dist@2/core/lit-core.min.js"
+    }
+  }
+</script>
+
+<script type="module">
+  import { LitElement, html } from "lit";
+
+  import "./src/components/Map.js";
+  import "./src/components/DeviceInfo.js";
+
+  const map = document.getElementById("map");
+  const info = document.getElementById("info");
+
+  map.addEventListener(
+    "select",
+    (event) => (info.device = event.detail.device)
+  );
+
+  map.addEventListener("move", () => info.update());
+
+  function set_position({
+    mac_address,
+    position: { x, y, z },
+    yaw,
+    pitch,
+    roll,
+  }) {
+    const path = "/set-position/" + mac_address;
+    fetch(path, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        x,
+        y,
+        z,
+        yaw,
+        pitch,
+        roll,
+      }),
+    });
+  }
+
+  map.addEventListener("end-move", (event) => {
+    set_position(event.detail.device);
+  });
+
+  info.addEventListener("orientation-change", () => {
+    console.log("Orientation change");
+    set_position(info.device);
+  });
+
+  const events = new EventSource("/events");
+
+  events.addEventListener("device-added", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Device Added", data);
+
+    const {
+      device: { mac_address, x, y, z, yaw, pitch, roll },
+    } = data;
+    map.devices = [
+      ...map.devices,
+      {
+        mac_address,
+        position: { x, y, z },
+        yaw,
+        pitch,
+        roll,
+        neighbors: [],
+      },
+    ];
+  });
+
+  events.addEventListener("device-removed", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Device Removed", data);
+
+    const {
+      device: { mac_address },
+    } = data;
+    if (info.device?.mac_address === mac_address) {
+      info.device = null;
+    }
+
+    map.devices = map.devices.filter(
+      (device) => device.mac_address !== mac_address
+    );
+
+    map.devices.forEach((device) => {
+      device.neighbors = device.neighbors.filter(
+        (neighbor) => neighbor.mac_address !== mac_address
+      );
+    });
+  });
+
+  events.addEventListener("position-updated", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Position updated", data);
+
+    const {
+      device: { mac_address, x, y, z, yaw, pitch, roll },
+    } = data;
+
+    const device = map.devices.find(
+      (device) => device.mac_address === mac_address
+    );
+
+    device.position = { x, y, z };
+    device.yaw = yaw;
+    device.pitch = pitch;
+    device.roll = roll;
+
+    map.update();
+    info.update();
+  });
+
+  events.addEventListener("neighbor-updated", (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Neighbor updated", data);
+
+    const {
+      source_device: { mac_address: src_mac_address },
+      destination_device: { mac_address: dest_mac_address },
+      distance,
+      azimuth,
+      elevation,
+    } = data;
+
+    const device = map.devices.find(
+      (device) => device.mac_address === src_mac_address
+    );
+
+    const neighbor = device.neighbors.find(
+      (device) => device.mac_address == dest_mac_address
+    ) || { mac_address: dest_mac_address };
+
+    neighbor.distance = distance;
+    neighbor.azimuth = azimuth;
+    neighbor.elevation = elevation;
+
+    if (!device.neighbors.includes(neighbor)) device.neighbors.push(neighbor);
+
+    info.update();
+  });
+</script>

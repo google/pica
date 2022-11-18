@@ -1,0 +1,270 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+openapi: 3.0.0
+info:
+  description: |
+    Pica aims to be a platform agnostic UWB virtual controller. Pica should scale UWB testing since no hardware
+    is required and thus have a massive impact on testing afterwards.
+  version: "1.0.0"
+  title: Pica - A platform agnostic UWB virtual controller
+  contact:
+    name: Pica core team
+    email: pica-core@google.com
+  license:
+    name: Apache 2.0
+    url: 'http://www.apache.org/licenses/LICENSE-2.0.html'
+tags:
+  - name: Commands
+    description:  sent to the scene to interact with Devices or get the current State of Pica.
+
+  - name: Events
+    description: Events coming from Pica for the associated Device.
+
+components:
+  requestBodies:
+    PositionBodyRequired:
+      description: A JSON object containing Position information
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Position'
+    PositionBodyOptionnal:
+      description: A JSON object containing Position information
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Position'
+  schemas:
+    Device:
+      description:
+        A Device is a generic term representing an Anchor, noted `anchor`,
+        or an UCI Device as described in the Fira UCI Specification, noted `uci`.
+      type: object
+      properties:
+        Category:
+          description: Represents the device's category, uci or anchor.
+          type: string
+          enum: [uci, anchor]
+        MacAddress:
+          description: |
+            Valid UWB mac addresses must follow the above format
+              * Short Mode: "XX:XX"
+              * Extend Mode: "XX:XX:XX:XX:XX:XX:XX:XX"
+            where X is an hexadecimal number.
+          type: string
+        Position:
+            $ref: "#/components/schemas/Position"
+    Position:
+      description:
+        The position includes the Cartesian coordinates in cm, and the yaw, pitch, roll angles in degrees.
+      type: object
+      properties:
+        x:
+          type: integer
+          description: x coordinate in cm
+        y:
+          type: integer
+          description: y coordinate in cm
+        z:
+          type: integer
+          description: z coordinate in cm
+        yaw:
+          type: integer
+          description: yaw in degrees
+          minimum: -180
+          maximum: 180
+        pitch:
+          type: integer
+          description: pitch in degrees
+          minimum: -90
+          maximum: 90
+        roll:
+          type: integer
+          description: roll in degrees
+          minimum: -180
+          maximum: 180
+  parameters:
+    MacAddress:
+      name: mac-address
+      in: path
+      description: |
+        Valid UWB mac addresses must follow the above format
+          * Short Mode: "XX:XX"
+          * Extend Mode: "XX:XX:XX:XX:XX:XX:XX:XX"
+        where X is an hexadecimal number.
+      required: true
+      schema:
+        type: string
+paths:
+  /init-uci-device/{mac-address}:
+    post:
+      tags: [Commands]
+      summary: Init a new uwb subsystem and instantiate an UCI Device
+      description:
+        This command should be call by any host wishing to use Pica as an UWB Subsystem
+        and shall be called only once by UCI Device.
+      parameters:
+        - $ref: "#/components/parameters/MacAddress"
+      requestBody:
+        $ref: "#/components/requestBodies/PositionBodyOptionnal"
+      responses:
+        '200': { description: Success }
+        '403': { description: Device already initialized }
+        '500': { description: Internal error }
+  /set-position/{mac-address}:
+    post:
+      tags: [Commands]
+      summary: Set the position of a Device
+      description: |
+        Set the position of the Device for x, y, z, yaw, pitch and roll. Pica will trigger the
+        `neighbor-updated` event for every other device present in the scene closer that the maximum distance UINT16_MAX cm.
+      parameters:
+        - $ref: "#/components/parameters/MacAddress"
+      requestBody:
+        $ref: "#/components/requestBodies/PositionBodyRequired"
+      responses:
+        '200': { description: Success }
+        '404': { description: Device not found }
+        '500': { description: Internal error }
+  /create-anchor/{mac-address}:
+    post:
+      tags: [Commands]
+      summary: Create an anchor Device in the scene
+      description:
+        Create an anchor Device in the scene  with a given MacAddress. If the position
+        is not specified then the anchor will be create at the origin of the
+        scene, [0,0,0,0,0,0]
+      parameters:
+        - $ref: "#/components/parameters/MacAddress"
+      requestBody:
+        $ref: "#/components/requestBodies/PositionBodyOptionnal"
+      responses:
+        '200': { description: Success }
+        '406': { description: Wrong argument }
+        '409': { description: Anchor already exist }
+  /destroy-anchor/{mac-address}:
+    delete:
+      tags: [Commands]
+      summary: Delete the anchor Device
+      description:
+        Delete the anchor Device from the scene
+        sessions
+      parameters:
+        - $ref: "#/components/parameters/MacAddress"
+      responses:
+        '200': { description: Success }
+        '404': { description: Anchor not found }
+        '500': { description: Internal error  }
+  /get-state:
+    get:
+      tags: [Commands]
+      summary: Get state of Pica itself
+      description:
+        Get the state of Pica itself and return a list of connected
+        Devices
+      responses:
+        '200':
+          description: Success, return a list of Devices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+        '500': { description: Internal error }
+  /events:
+    get:
+      tags: [Events]
+      summary: Events from Pica
+      description: |
+        Events coming from Pica for the associated Device.
+        * device-added - Device added to the scene
+        * device-removed - Device deleted from the scene
+        * device-updated - Device position updated
+        * neighbor-updated - Neighbor position updated
+
+      responses:
+        '200':
+          description: |
+            Represent an event source: https://developer.mozilla.org/en-US/docs/Web/API/EventSource
+            Pica triggers an event everytime a command is completed.
+          content:
+            text/event-stream:
+              schema:
+                type: array
+                format: event-stream
+                items:
+                  oneOf:
+                      - type: object
+                        properties:
+                           event:
+                             const: device-added
+                             description: Device added to the scene
+                           data:
+                             type: object
+                             properties:
+                               device:
+                                 $ref: "#/components/schemas/Device"
+                      - type: object
+                        properties:
+                           event:
+                             const: device-removed
+                             description: Device removed from the scene, the device's position is ignored
+                           data:
+                             type: object
+                             properties:
+                               device:
+                                 $ref: "#/components/schemas/Device"
+                      - type: object
+                        properties:
+                           event:
+                             const: device-updated
+                             description: Device position updated
+                           data:
+                             type: object
+                             properties:
+                               device:
+                                 $ref: "#/components/schemas/Device"
+                      - type: object
+                        properties:
+                           event:
+                             const: neighbor-updated
+                             description: Neighbor device updated
+                           data:
+                             type: object
+                             properties:
+                               source-device:
+                                 $ref: "#/components/schemas/Device"
+                               destination-device:
+                                 $ref: "#/components/schemas/Device"
+                               distance:
+                                 description: Distance in cm.
+                                 type: integer # u16
+                                 minimum: 0
+                                 maximum: 65535
+                               azimuth:
+                                 description: Azimuth in degrees
+                                 type: integer
+                                 minium: -180
+                                 maximum: 180
+                               elevation:
+                                 description: Elevation is degrees
+                                 type: integer
+                                 minimum: -90
+                                 maximum: 90
+
+
+        '500': { description: Internal error }
