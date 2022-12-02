@@ -20,7 +20,7 @@ $> cd pica/
 $> cargo run
 ```
 
-You should recieve the following output:
+You should receive the following output:
 
 ```
 Pica: Listening on: 7000
