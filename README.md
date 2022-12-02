@@ -12,7 +12,7 @@ Pica supports the following features:
 - Pica provides HTTP commands to interact with the scene directly such as create and destroy
   virtual anchors.
 
-# Build and run
+# Build and Run
 
 ```bash
 $> git clone https://github.com/google/pica.git
@@ -20,7 +20,7 @@ $> cd pica/
 $> cargo run
 ```
 
-You should have the following output:
+You should recieve the following output:
 
 ```
 Pica: Listening on: 7000
