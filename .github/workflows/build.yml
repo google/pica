@@ -1,0 +1,25 @@
+# Build, test and check the code against the linter and clippy
+name: Build, Test, Fmt and Clippy
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build
+    - name: Test
+      run: cargo test -- --skip uci_packets
+    - name: Fmt
+      run: cargo fmt --check --quiet
+    - name: Clippy
+      run: cargo clippy --no-deps -- --deny warnings
