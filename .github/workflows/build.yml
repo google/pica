@@ -1,11 +1,14 @@
 # Build, test and check the code against the linter and clippy
-name: Build, Test, Fmt and Clippy
+name: Build, Test, Format and Clippy
 
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   build_and_test:
