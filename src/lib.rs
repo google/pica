@@ -417,7 +417,7 @@ impl Pica {
                 // TODO: support extended address
                 ShortMacTwoWayRangeDataNtfBuilder {
                     sequence_number: session.sequence_number,
-                    session_id: session_id as u32,
+                    session_id,
                     rcr_indicator: 0,            //TODO
                     current_ranging_interval: 0, //TODO
                     two_way_ranging_measurements: measurements,
@@ -648,9 +648,9 @@ impl Pica {
         println!("[_] Get State");
         let web_devices: Vec<web::Device> = self
             .anchors
-            .iter()
-            .map(|(_, anchor)| web::Device::from(*anchor))
-            .chain(self.devices.iter().map(|(_, uci_device)| {
+            .values()
+            .map(|anchor| web::Device::from(*anchor))
+            .chain(self.devices.values().map(|uci_device| {
                 web::Device::new(Category::Uci, uci_device.mac_address, uci_device.position)
             }))
             .collect();
