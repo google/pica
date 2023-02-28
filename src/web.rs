@@ -168,16 +168,23 @@ async fn handle(
         tx.send(pica_cmd).await.unwrap();
         let (status, description) = match pica_cmd_rsp_rx.await {
             Ok(Ok(_)) => (HttpStatusCode::OK, "success".into()),
-            Ok(Err(err)) => (match err {
-                PicaCommandError::DeviceAlreadyExists(_) => HttpStatusCode::CONFLICT,
-                PicaCommandError::DeviceNotFound(_) => HttpStatusCode::NOT_FOUND,
-            }, format!("{}", err)),
-            Err(err) =>
-                (HttpStatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Error getting command response: {}", err))
+            Ok(Err(err)) => (
+                match err {
+                    PicaCommandError::DeviceAlreadyExists(_) => HttpStatusCode::CONFLICT,
+                    PicaCommandError::DeviceNotFound(_) => HttpStatusCode::NOT_FOUND,
+                },
+                format!("{}", err),
+            ),
+            Err(err) => (
+                HttpStatusCode::INTERNAL_SERVER_ERROR,
+                format!("Error getting command response: {}", err),
+            ),
         };
         println!("  status: {}, {}", status, description);
-        Response::builder().status(status).body(description.into()).unwrap()
+        Response::builder()
+            .status(status)
+            .body(description.into())
+            .unwrap()
     };
 
     match req
