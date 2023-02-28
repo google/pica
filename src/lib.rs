@@ -448,9 +448,11 @@ impl Pica {
         {
             Ok(device) => {
                 let response = device.command(cmd).into();
-                device.tx.send(response).await.unwrap_or_else(|err| {
-                    println!("Failed to send UCI command response: {}", err)
-                });
+                device
+                    .tx
+                    .send(response)
+                    .await
+                    .unwrap_or_else(|err| println!("Failed to send UCI command response: {}", err));
             }
             Err(err) => println!("{}", err),
         }
