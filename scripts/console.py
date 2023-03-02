@@ -28,9 +28,6 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import uci_packets
 
-MAX_PAYLOAD_SIZE = 1024
-
-
 def encode_position(x: int, y: int, z: int, yaw: int, pitch: int, roll: int) -> bytes:
     return (struct.pack('<h', x)
             + struct.pack('<h', y)
