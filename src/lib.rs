@@ -46,7 +46,10 @@ use web::Category;
 pub mod mac_address;
 use mac_address::MacAddress;
 
+// UCI Generic Specification v1.1.0 § 4.4
+const HEADER_SIZE: usize = 4;
 const MAX_PAYLOAD_SIZE: usize = 255;
+const MAX_PACKET_SIZE: usize = HEADER_SIZE + MAX_PAYLOAD_SIZE;
 
 struct Connection {
     socket: TcpStream,
@@ -58,7 +61,7 @@ impl Connection {
     fn new(socket: TcpStream, pcapng_file: Option<pcapng::File>) -> Self {
         Connection {
             socket,
-            buffer: BytesMut::with_capacity(MAX_PAYLOAD_SIZE),
+            buffer: BytesMut::with_capacity(MAX_PACKET_SIZE),
             pcapng_file,
         }
     }
