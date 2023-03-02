@@ -46,7 +46,7 @@ use web::Category;
 pub mod mac_address;
 use mac_address::MacAddress;
 
-const MAX_PAYLOAD_SIZE: usize = 4096;
+const MAX_PAYLOAD_SIZE: usize = 255;
 
 struct Connection {
     socket: TcpStream,
