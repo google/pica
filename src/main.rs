@@ -17,12 +17,11 @@ extern crate num_derive;
 extern crate num_traits;
 extern crate thiserror;
 
-use pica::{web, Pica, PicaCommand};
-use std::path::PathBuf;
-
 use anyhow::Result;
+use clap::Parser;
+use pica::{web, Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
-use structopt::StructOpt;
+use std::path::PathBuf;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio::try_join;
@@ -41,22 +40,22 @@ async fn accept_incoming(tx: mpsc::Sender<PicaCommand>) -> Result<()> {
     }
 }
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "pica", about = "Virtual UWB subsystem")]
-struct Opts {
+#[derive(Parser, Debug)]
+#[command(name = "pica", about = "Virtual UWB subsystem")]
+struct Args {
     /// Output directory for storing .pcapng traces.
     /// If provided, .pcapng traces of client connections are automatically
     /// saved under the name `device-{handle}.pcapng`.
-    #[structopt(short, long, parse(from_os_str))]
+    #[arg(short, long, value_name = "PCAPNG_DIR")]
     pcapng_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let opts = Opts::from_args();
+    let args = Args::parse();
     let (event_tx, _) = broadcast::channel(16);
 
-    let mut pica = Pica::new(event_tx.clone(), opts.pcapng_dir);
+    let mut pica = Pica::new(event_tx.clone(), args.pcapng_dir);
     let pica_tx = pica.tx();
 
     try_join!(
