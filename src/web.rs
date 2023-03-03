@@ -27,8 +27,6 @@ use crate::position::Position;
 use crate::{Anchor, MacAddress, PicaCommand, PicaCommandError, PicaCommandStatus, PicaEvent};
 use PicaEvent::{DeviceAdded, DeviceRemoved, DeviceUpdated, NeighborUpdated};
 
-const WEB_PORT: u16 = 3000;
-
 const STATIC_FILES: &[(&str, &str, &str)] = &[
     ("/", "text/html", include_str!("../static/index.html")),
     (
@@ -265,8 +263,9 @@ async fn handle(
 pub async fn serve(
     tx: mpsc::Sender<PicaCommand>,
     events: broadcast::Sender<PicaEvent>,
+    web_port: u16,
 ) -> Result<()> {
-    let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, WEB_PORT);
+    let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, web_port);
 
     let make_svc = make_service_fn(move |_conn| {
         let tx = tx.clone();
@@ -280,7 +279,7 @@ pub async fn serve(
 
     let server = Server::bind(&addr.into()).serve(make_svc);
 
-    println!("Pica: Web server started on http://0.0.0.0:{}", WEB_PORT);
+    println!("Pica: Web server started on http://0.0.0.0:{}", web_port);
 
     server.await.context("Web Server Error")
 }
