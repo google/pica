@@ -26,12 +26,13 @@ use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio::try_join;
 
-const UCI_PORT: u16 = 7000;
+const DEFAULT_UCI_PORT: u16 = 7000;
+const DEFAULT_WEB_PORT: u16 = 3000;
 
-async fn accept_incoming(tx: mpsc::Sender<PicaCommand>) -> Result<()> {
-    let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, UCI_PORT);
+async fn accept_incoming(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
+    let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
-    println!("Pica: Listening on: {}", UCI_PORT);
+    println!("Pica: Listening on: {}", uci_port);
 
     loop {
         let (socket, addr) = uci_listener.accept().await?;
@@ -48,20 +49,30 @@ struct Args {
     /// saved under the name `device-{handle}.pcapng`.
     #[arg(short, long, value_name = "PCAPNG_DIR")]
     pcapng_dir: Option<PathBuf>,
+    /// Configure the TCP port for the UCI server.
+    #[arg(short, long, value_name = "UCI_PORT", default_value_t = DEFAULT_UCI_PORT)]
+    uci_port: u16,
+    /// Configure the TCP port for the web interface.
+    #[arg(short, long, value_name = "WEB_PORT", default_value_t = DEFAULT_WEB_PORT)]
+    web_port: u16,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    assert_ne!(
+        args.uci_port, args.web_port,
+        "UCI port and Web port shall be different."
+    );
     let (event_tx, _) = broadcast::channel(16);
 
     let mut pica = Pica::new(event_tx.clone(), args.pcapng_dir);
     let pica_tx = pica.tx();
 
     try_join!(
-        accept_incoming(pica_tx.clone()),
+        accept_incoming(pica_tx.clone(), args.uci_port),
         pica.run(),
-        web::serve(pica_tx, event_tx)
+        web::serve(pica_tx, event_tx, args.web_port)
     )?;
 
     Ok(())
