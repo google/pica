@@ -52,7 +52,7 @@ struct Args {
     /// Configure the TCP port for the UCI server.
     #[arg(short, long, value_name = "UCI_PORT", default_value_t = DEFAULT_UCI_PORT)]
     uci_port: u16,
-    /// Configure the TCP port for the web interface.
+    /// Configure the HTTP port for the web interface.
     #[arg(short, long, value_name = "WEB_PORT", default_value_t = DEFAULT_WEB_PORT)]
     web_port: u16,
 }
