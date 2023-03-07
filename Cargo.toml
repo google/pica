@@ -11,6 +11,14 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+name = "pica"
+path = "src/lib.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server/mod.rs"
+
 [dependencies]
 tokio = { version = "1.18.5", features = ["full"] }
 tokio-stream = { version = "0.1.8", features = ["sync"] }

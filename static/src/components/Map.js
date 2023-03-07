@@ -66,7 +66,7 @@ export class Map extends LitElement {
     if (event.target.classList?.contains("handle")) {
       this.changingElevation = true;
     } else {
-      const element = event.path.find((el) => el.classList?.contains("marker"));
+      const element = event.composedPath().find((el) => el.classList?.contains("marker"));
       if (element) {
         const key = element.getAttribute("key");
         this.selected = this.devices[key];

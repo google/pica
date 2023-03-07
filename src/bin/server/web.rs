@@ -23,36 +23,37 @@ use serde_json::error::Category as SerdeErrorCategory;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
-use crate::position::Position;
-use crate::{Anchor, MacAddress, PicaCommand, PicaCommandError, PicaCommandStatus, PicaEvent};
+use pica::{
+    Category, MacAddress, PicaCommand, PicaCommandError, PicaCommandStatus, PicaEvent, Position,
+};
 use PicaEvent::{DeviceAdded, DeviceRemoved, DeviceUpdated, NeighborUpdated};
 
 const STATIC_FILES: &[(&str, &str, &str)] = &[
-    ("/", "text/html", include_str!("../static/index.html")),
+    ("/", "text/html", include_str!("../../../static/index.html")),
     (
         "/openapi",
         "text/html",
-        include_str!("../static/openapi.html"),
+        include_str!("../../../static/openapi.html"),
     ),
     (
         "/openapi.yaml",
         "text/yaml",
-        include_str!("../static/openapi.yaml"),
+        include_str!("../../../static/openapi.yaml"),
     ),
     (
         "/src/components/Map.js",
         "application/javascript",
-        include_str!("../static/src/components/Map.js"),
+        include_str!("../../../static/src/components/Map.js"),
     ),
     (
         "/src/components/DeviceInfo.js",
         "application/javascript",
-        include_str!("../static/src/components/DeviceInfo.js"),
+        include_str!("../../../static/src/components/DeviceInfo.js"),
     ),
     (
         "/src/components/Orientation.js",
         "application/javascript",
-        include_str!("../static/src/components/Orientation.js"),
+        include_str!("../../../static/src/components/Orientation.js"),
     ),
 ];
 
@@ -99,38 +100,12 @@ macro_rules! mac_address {
     };
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum Category {
-    Uci,
-    Anchor,
-}
-
 #[derive(Debug, Serialize, Clone)]
-pub struct Device {
+struct Device {
     pub category: Category,
     pub mac_address: String,
     #[serde(flatten)]
     pub position: Position,
-}
-
-impl Device {
-    pub fn new(category: Category, mac_address: MacAddress, position: Position) -> Self {
-        Self {
-            category,
-            mac_address: mac_address.to_string(),
-            position,
-        }
-    }
-}
-
-impl From<Anchor> for Device {
-    fn from(anchor: Anchor) -> Self {
-        Self {
-            category: Category::Anchor,
-            mac_address: anchor.mac_address.to_string(),
-            position: anchor.position,
-        }
-    }
 }
 
 fn event_name(event: &PicaEvent) -> &'static str {
@@ -244,10 +219,19 @@ async fn handle(
                 devices: Vec<Device>,
             }
             println!("PicaCommand: GetState");
-            let (state_tx, state_rx) = oneshot::channel::<Vec<Device>>();
+            let (state_tx, state_rx) = oneshot::channel::<Vec<_>>();
             tx.send(PicaCommand::GetState(state_tx)).await.unwrap();
             let devices = match state_rx.await {
-                Ok(devices) => GetStateResponse { devices },
+                Ok(devices) => GetStateResponse {
+                    devices: devices
+                        .into_iter()
+                        .map(|(category, mac_address, position)| Device {
+                            category,
+                            mac_address: mac_address.into(),
+                            position,
+                        })
+                        .collect(),
+                },
                 Err(_) => GetStateResponse { devices: vec![] },
             };
             let body = serde_json::to_string(&devices).unwrap();
