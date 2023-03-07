@@ -14,7 +14,7 @@
 
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ use num_traits::{FromPrimitive, ToPrimitive};
 mod pcapng;
 
 mod position;
-use position::Position;
+pub use position::Position;
 
 mod uci_packets;
 use uci_packets::StatusCode as UciStatusCode;
@@ -40,11 +40,8 @@ use device::{Device, MAX_DEVICE};
 mod session;
 use session::MAX_SESSION;
 
-pub mod web;
-use web::Category;
-
-pub mod mac_address;
-use mac_address::MacAddress;
+mod mac_address;
+pub use mac_address::MacAddress;
 
 // UCI Generic Specification v1.1.0 § 4.4
 const HEADER_SIZE: usize = 4;
@@ -121,7 +118,7 @@ pub enum PicaCommand {
     // Destroy Anchor
     DestroyAnchor(MacAddress, oneshot::Sender<PicaCommandStatus>),
     // Get State
-    GetState(oneshot::Sender<Vec<web::Device>>),
+    GetState(oneshot::Sender<Vec<(Category, MacAddress, Position)>>),
 }
 
 impl Display for PicaCommand {
@@ -146,23 +143,38 @@ impl Display for PicaCommand {
 pub enum PicaEvent {
     // A Device was added
     DeviceAdded {
-        device: web::Device,
+        category: Category,
+        mac_address: MacAddress,
+        #[serde(flatten)]
+        position: Position,
     },
     // A Device was removed
     DeviceRemoved {
-        device: web::Device,
+        category: Category,
+        mac_address: MacAddress,
     },
     // A Device position has changed
     DeviceUpdated {
-        device: web::Device,
+        category: Category,
+        mac_address: MacAddress,
+        #[serde(flatten)]
+        position: Position,
     },
     NeighborUpdated {
-        source_device: web::Device,
-        destination_device: web::Device,
+        source_category: Category,
+        source_mac_address: MacAddress,
+        destination_category: Category,
+        destination_mac_address: MacAddress,
         distance: u16,
         azimuth: i16,
         elevation: i8,
     },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Category {
+    Uci,
+    Anchor,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -301,7 +313,9 @@ impl Pica {
         device.init();
 
         self.send_event(PicaEvent::DeviceAdded {
-            device: web::Device::new(Category::Uci, device.mac_address, device.position),
+            category: Category::Uci,
+            mac_address: device.mac_address,
+            position: device.position,
         });
 
         self.devices.insert(device_handle, device);
@@ -360,7 +374,8 @@ impl Pica {
         {
             Ok(device) => {
                 self.send_event(PicaEvent::DeviceRemoved {
-                    device: web::Device::new(Category::Uci, device.mac_address, device.position),
+                    category: Category::Uci,
+                    mac_address: device.mac_address,
                 });
                 self.devices.remove(&device_handle);
             }
@@ -554,13 +569,15 @@ impl Pica {
             }
         };
         self.send_event(PicaEvent::DeviceUpdated {
-            device: web::Device::new(category, mac_address, position),
+            category,
+            mac_address,
+            position,
         });
 
         let devices = self.devices.values().map(|d| (d.mac_address, d.position));
         let anchors = self.anchors.values().map(|b| (b.mac_address, b.position));
 
-        let update_neighbors = |category, device_mac_address, device_position| {
+        let update_neighbors = |device_category, device_mac_address, device_position| {
             if mac_address != device_mac_address {
                 let local = position.compute_range_azimuth_elevation(&device_position);
                 let remote = device_position.compute_range_azimuth_elevation(&position);
@@ -568,20 +585,20 @@ impl Pica {
                 assert!(local.0 == remote.0);
 
                 self.send_event(PicaEvent::NeighborUpdated {
-                    source_device: web::Device::new(category, mac_address, position),
-                    destination_device: web::Device::new(
-                        category,
-                        device_mac_address,
-                        device_position,
-                    ),
+                    source_category: category,
+                    source_mac_address: mac_address,
+                    destination_category: device_category,
+                    destination_mac_address: device_mac_address,
                     distance: local.0,
                     azimuth: local.1,
                     elevation: local.2,
                 });
 
                 self.send_event(PicaEvent::NeighborUpdated {
-                    source_device: web::Device::new(category, device_mac_address, device_position),
-                    destination_device: web::Device::new(category, mac_address, position),
+                    source_category: device_category,
+                    source_mac_address: device_mac_address,
+                    destination_category: category,
+                    destination_mac_address: mac_address,
                     distance: remote.0,
                     azimuth: remote.1,
                     elevation: remote.2,
@@ -606,7 +623,9 @@ impl Pica {
             Err(PicaCommandError::DeviceAlreadyExists(mac_address))
         } else {
             self.send_event(PicaEvent::DeviceAdded {
-                device: web::Device::new(Category::Anchor, mac_address, position),
+                category: Category::Anchor,
+                mac_address,
+                position,
             });
             assert!(self
                 .anchors
@@ -638,7 +657,8 @@ impl Pica {
             Err(PicaCommandError::DeviceNotFound(mac_address))
         } else {
             self.send_event(PicaEvent::DeviceRemoved {
-                device: web::Device::new(Category::Anchor, mac_address, Position::default()),
+                category: Category::Anchor,
+                mac_address,
             });
             Ok(())
         };
@@ -647,17 +667,21 @@ impl Pica {
         })
     }
 
-    fn get_state(&self, state_tx: oneshot::Sender<Vec<web::Device>>) {
+    fn get_state(&self, state_tx: oneshot::Sender<Vec<(Category, MacAddress, Position)>>) {
         println!("[_] Get State");
-        let web_devices: Vec<web::Device> = self
-            .anchors
-            .values()
-            .map(|anchor| web::Device::from(*anchor))
-            .chain(self.devices.values().map(|uci_device| {
-                web::Device::new(Category::Uci, uci_device.mac_address, uci_device.position)
-            }))
-            .collect();
 
-        state_tx.send(web_devices).unwrap();
+        state_tx
+            .send(
+                self.anchors
+                    .values()
+                    .map(|anchor| (Category::Anchor, anchor.mac_address, anchor.position))
+                    .chain(
+                        self.devices
+                            .values()
+                            .map(|device| (Category::Uci, device.mac_address, device.position)),
+                    )
+                    .collect(),
+            )
+            .unwrap();
     }
 }

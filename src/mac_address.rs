@@ -15,6 +15,7 @@
 use std::fmt::Display;
 
 use hex::FromHex;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const SHORT_MAC_ADDRESS_SIZE: usize = 2;
@@ -28,7 +29,8 @@ pub enum Error {
     #[error("MacAddress has the wrong format: 0")]
     MacAddressWrongFormat(String),
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub enum MacAddress {
     Short([u8; SHORT_MAC_ADDRESS_SIZE]),
     Extend([u8; EXTEND_MAC_ADDRESS_SIZE]),
@@ -36,6 +38,19 @@ pub enum MacAddress {
 
 impl MacAddress {
     pub fn new(mac_address: String) -> Result<Self, Error> {
+        mac_address.try_into()
+    }
+}
+
+impl From<usize> for MacAddress {
+    fn from(device_handle: usize) -> Self {
+        MacAddress::Extend(device_handle.to_be_bytes())
+    }
+}
+
+impl TryFrom<String> for MacAddress {
+    type Error = Error;
+    fn try_from(mac_address: String) -> std::result::Result<Self, Error> {
         let mac_address = mac_address.replace(':', "");
         let mac_address = mac_address.replace("%3A", "");
         let uwb_mac_address = match mac_address.len() {
@@ -53,14 +68,8 @@ impl MacAddress {
     }
 }
 
-impl From<usize> for MacAddress {
-    fn from(device_handle: usize) -> Self {
-        MacAddress::Extend(device_handle.to_be_bytes())
-    }
-}
-
-impl Display for MacAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl From<&MacAddress> for String {
+    fn from(mac_address: &MacAddress) -> Self {
         let to_string = |addr: &[u8]| -> String {
             let mac_address: Vec<_> = addr.iter().map(|byte| format!("{:02X}:", byte)).collect();
             let s = mac_address
@@ -69,10 +78,22 @@ impl Display for MacAddress {
                 .collect::<String>();
             s.trim_end_matches(':').into()
         };
-        match *self {
-            MacAddress::Short(address) => write!(f, "{}", to_string(&address)),
-            MacAddress::Extend(address) => write!(f, "{}", to_string(&address)),
+        match mac_address {
+            MacAddress::Short(address) => to_string(address),
+            MacAddress::Extend(address) => to_string(address),
         }
+    }
+}
+
+impl From<MacAddress> for String {
+    fn from(mac_address: MacAddress) -> Self {
+        String::from(&mac_address)
+    }
+}
+
+impl Display for MacAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", String::from(self))
     }
 }
 

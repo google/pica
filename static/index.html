@@ -123,7 +123,7 @@ limitations under the License.
     console.log("Device Added", data);
 
     const {
-      device: { mac_address, x, y, z, yaw, pitch, roll },
+      mac_address, x, y, z, yaw, pitch, roll,
     } = data;
     map.devices = [
       ...map.devices,
@@ -143,7 +143,7 @@ limitations under the License.
     console.log("Device Removed", data);
 
     const {
-      device: { mac_address },
+      mac_address,
     } = data;
     if (info.device?.mac_address === mac_address) {
       info.device = null;
@@ -165,7 +165,7 @@ limitations under the License.
     console.log("Position updated", data);
 
     const {
-      device: { mac_address, x, y, z, yaw, pitch, roll },
+      mac_address, x, y, z, yaw, pitch, roll,
     } = data;
 
     const device = map.devices.find(
@@ -186,20 +186,20 @@ limitations under the License.
     console.log("Neighbor updated", data);
 
     const {
-      source_device: { mac_address: src_mac_address },
-      destination_device: { mac_address: dest_mac_address },
+      source_mac_address,
+      destination_mac_address,
       distance,
       azimuth,
       elevation,
     } = data;
 
     const device = map.devices.find(
-      (device) => device.mac_address === src_mac_address
+      (device) => device.mac_address === source_mac_address
     );
 
     const neighbor = device.neighbors.find(
-      (device) => device.mac_address == dest_mac_address
-    ) || { mac_address: dest_mac_address };
+      (device) => device.mac_address == destination_mac_address
+    ) || { mac_address: destination_mac_address };
 
     neighbor.distance = distance;
     neighbor.azimuth = azimuth;
