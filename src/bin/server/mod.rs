@@ -17,9 +17,11 @@ extern crate num_derive;
 extern crate num_traits;
 extern crate thiserror;
 
+mod web;
+
 use anyhow::Result;
 use clap::Parser;
-use pica::{web, Pica, PicaCommand};
+use pica::{Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use tokio::net::TcpListener;

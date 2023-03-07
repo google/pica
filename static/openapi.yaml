@@ -54,19 +54,23 @@ components:
         or an UCI Device as described in the Fira UCI Specification, noted `uci`.
       type: object
       properties:
-        Category:
-          description: Represents the device's category, uci or anchor.
-          type: string
-          enum: [uci, anchor]
-        MacAddress:
-          description: |
-            Valid UWB mac addresses must follow the above format
-              * Short Mode: "XX:XX"
-              * Extend Mode: "XX:XX:XX:XX:XX:XX:XX:XX"
-            where X is an hexadecimal number.
-          type: string
-        Position:
+        category:
+            $ref: "#/components/schemas/Category"
+        mac_address:
+            $ref: "#/components/schemas/MacAddress"
+        position:
             $ref: "#/components/schemas/Position"
+    Category:
+      description: Represents the device's category, uci or anchor.
+      type: string
+      enum: [uci, anchor]
+    MacAddress:
+      description: |
+        Valid UWB mac addresses must follow the above format
+          * Short Mode: "XX:XX"
+          * Extend Mode: "XX:XX:XX:XX:XX:XX:XX:XX"
+        where X is an hexadecimal number.
+      type: string
     Position:
       description:
         The position includes the Cartesian coordinates in cm, and the yaw, pitch, roll angles in degrees.
@@ -214,10 +218,7 @@ paths:
                              const: device-added
                              description: Device added to the scene
                            data:
-                             type: object
-                             properties:
-                               device:
-                                 $ref: "#/components/schemas/Device"
+                             $ref: "#/components/schemas/Device"
                       - type: object
                         properties:
                            event:
@@ -226,18 +227,17 @@ paths:
                            data:
                              type: object
                              properties:
-                               device:
-                                 $ref: "#/components/schemas/Device"
+                              category:
+                                  $ref: "#/components/schemas/Category"
+                              mac_address:
+                                  $ref: "#/components/schemas/MacAddress"
                       - type: object
                         properties:
                            event:
                              const: device-updated
                              description: Device position updated
                            data:
-                             type: object
-                             properties:
-                               device:
-                                 $ref: "#/components/schemas/Device"
+                             $ref: "#/components/schemas/Device"
                       - type: object
                         properties:
                            event:
@@ -246,10 +246,14 @@ paths:
                            data:
                              type: object
                              properties:
-                               source-device:
-                                 $ref: "#/components/schemas/Device"
-                               destination-device:
-                                 $ref: "#/components/schemas/Device"
+                               source_category:
+                                 $ref: "#/components/schemas/Category"
+                               source_mac_address:
+                                 $ref: "#/components/schemas/MacAddress"
+                               destination_category:
+                                 $ref: "#/components/schemas/Category"
+                               destination_mac_address:
+                                 $ref: "#/components/schemas/MacAddress"
                                distance:
                                  description: Distance in cm.
                                  type: integer # u16
@@ -258,7 +262,7 @@ paths:
                                azimuth:
                                  description: Azimuth in degrees
                                  type: integer
-                                 minium: -180
+                                 minimum: -180
                                  maximum: 180
                                elevation:
                                  description: Elevation is degrees
