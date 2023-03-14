@@ -21,7 +21,7 @@ path = "src/bin/server/mod.rs"
 
 [features]
 default = ["web"]
-web = ["dep:hyper"]
+web = ["hyper"]
 
 [dependencies]
 tokio = { version = "1.18.5", features = ["full"] }
