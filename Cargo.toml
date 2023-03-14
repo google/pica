@@ -21,7 +21,7 @@ path = "src/bin/server/mod.rs"
 
 [features]
 default = ["web"]
-web = []
+web = ["dep:hyper"]
 
 [dependencies]
 tokio = { version = "1.18.5", features = ["full"] }
@@ -32,7 +32,7 @@ num-derive = "*"
 num-traits = "*"
 thiserror = "*"
 glam = "0.20.3"
-hyper = { version = "0.14", features = ["server", "stream", "http1", "tcp"] }
+hyper = { version = "0.14", features = ["server", "stream", "http1", "tcp"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4.3"
