@@ -19,6 +19,10 @@ path = "src/lib.rs"
 name = "server"
 path = "src/bin/server/mod.rs"
 
+[features]
+default = ["web"]
+web = []
+
 [dependencies]
 tokio = { version = "1.18.5", features = ["full"] }
 tokio-stream = { version = "0.1.8", features = ["sync"] }
