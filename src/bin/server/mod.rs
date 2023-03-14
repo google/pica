@@ -17,6 +17,7 @@ extern crate num_derive;
 extern crate num_traits;
 extern crate thiserror;
 
+#[cfg(feature = "web")]
 mod web;
 
 use anyhow::Result;
@@ -71,11 +72,15 @@ async fn main() -> Result<()> {
     let mut pica = Pica::new(event_tx.clone(), args.pcapng_dir);
     let pica_tx = pica.tx();
 
+    #[cfg(feature = "web")]
     try_join!(
         accept_incoming(pica_tx.clone(), args.uci_port),
         pica.run(),
         web::serve(pica_tx, event_tx, args.web_port)
     )?;
+
+    #[cfg(not(feature = "web"))]
+    try_join!(accept_incoming(pica_tx.clone(), args.uci_port), pica.run(),)?;
 
     Ok(())
 }
