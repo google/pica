@@ -44,7 +44,8 @@ impl MacAddress {
 
 impl From<usize> for MacAddress {
     fn from(device_handle: usize) -> Self {
-        MacAddress::Extend(device_handle.to_be_bytes())
+        let handle = device_handle as u64;
+        MacAddress::Extend(handle.to_be_bytes())
     }
 }
 
