@@ -21,7 +21,7 @@ path = "src/bin/server/mod.rs"
 
 [features]
 default = ["web"]
-web = ["hyper"]
+web = ["hyper", "tokio/rt-multi-thread"]
 
 [dependencies]
 tokio = { version = "1.25.0", features = [ "fs", "io-util", "macros", "net", "rt" ] }
