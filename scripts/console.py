@@ -86,6 +86,7 @@ class Device:
 
     def pica_init_uci_device(
             self,
+            mac_address: str = "00:00",
             x: str = "0",
             y: str = "0",
             z: str = "0",
