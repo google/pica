@@ -160,7 +160,7 @@ limitations under the License.
     });
   });
 
-  events.addEventListener("position-updated", (event) => {
+  events.addEventListener("device-updated", (event) => {
     const data = JSON.parse(event.data);
     console.log("Position updated", data);
 
