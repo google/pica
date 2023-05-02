@@ -33,6 +33,7 @@ const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
 const TEST_VERSION: u16 = 0x1001; // Version 1.1
 
 // Capabilities are vendor defined
+// Android compliant: FIRA-287 UCI_Generic_Specification controlee capabilities_r4
 // Android parses capabilities, according to these definitions:
 // /android/packages/modules/Uwb/service/java/com/android/server/uwb/config/CapabilityParam.java
 pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
