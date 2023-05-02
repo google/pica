@@ -32,8 +32,8 @@ const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
 const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
 const TEST_VERSION: u16 = 0x1001; // Version 1.1
 
-// Capabilities are vendor defined, Android parses capabilities
-// according to these definitions:
+// Capabilities are vendor defined
+// Android parses capabilities, according to these definitions:
 // /android/packages/modules/Uwb/service/java/com/android/server/uwb/config/CapabilityParam.java
 pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     // Fira params
@@ -43,13 +43,16 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
     (CapTlvType::SupportedStsConfig, &[0x7]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
     (CapTlvType::SupportedMultiNodeModes, &[0xff]),
+    (CapTlvType::SupportedRangingTimeStruct, &[0x01]), // Block Based Scheduling (default)
+    (CapTlvType::SupportedScheduledMode, &[0x01]),     // Time scheduled ranging (default)
+    (CapTlvType::SupportedHoppingMode, &[0x00]),       // Hopping disable
     (CapTlvType::SupportedBlockStriding, &[0x1]),
     (CapTlvType::SupportedUwbInitiationTime, &[0x01]),
     (CapTlvType::SupportedChannels, &[0xff]),
     (CapTlvType::SupportedRframeConfig, &[0xff]),
+    (CapTlvType::SupportedCcConstraintLength, &[0xff]),
     (CapTlvType::SupportedBprfParameterSets, &[0xff]),
     (CapTlvType::SupportedHprfParameterSets, &[0xff]),
-    (CapTlvType::SupportedCcConstraintLength, &[0xff]),
     (CapTlvType::SupportedAoa, &[0xff]),
     (CapTlvType::SupportedAoaResultReqAntennaInterleaving, &[0x1]),
     (CapTlvType::SupportedExtendedMacAddress, &[0x1]),
