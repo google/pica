@@ -132,7 +132,7 @@ impl Default for AppConfig {
     }
 }
 
-fn app_config_has_mandatory_parameters(configs: &[AppConfigParameter]) -> bool {
+fn app_config_has_mandatory_parameters(configs: &[AppConfigTlv]) -> bool {
     const MANDATORY_PARAMETERS: [AppConfigTlvType; 6] = [
         AppConfigTlvType::DeviceRole,
         AppConfigTlvType::MultiNodeMode,
@@ -142,11 +142,9 @@ fn app_config_has_mandatory_parameters(configs: &[AppConfigParameter]) -> bool {
         AppConfigTlvType::DeviceType,
     ];
 
-    MANDATORY_PARAMETERS.iter().all(|&mparam| {
-        configs
-            .iter()
-            .any(|param| mparam == AppConfigTlvType::from_u8(param.id).unwrap())
-    })
+    MANDATORY_PARAMETERS
+        .iter()
+        .all(|&mparam| configs.iter().any(|param| mparam == param.cfg_id))
 }
 
 impl AppConfig {
@@ -163,7 +161,7 @@ impl AppConfig {
                 }
                 self.mac_address_mode = mode;
             }
-            AppConfigTlvType::RangingInterval => {
+            AppConfigTlvType::RangingDuration => {
                 let interval = u32::from_le_bytes(value[..].try_into().unwrap());
                 self.ranging_interval = time::Duration::from_millis(interval as u64)
             }
@@ -213,7 +211,7 @@ impl AppConfig {
                 self.multi_node_mode = MultiNodeMode::from_u8(value[0]).unwrap()
             }
             id => {
-                println!("Ignored AppConfig parameter {}", id);
+                println!("Ignored AppConfig parameter {:?}", id);
                 return Err(StatusCode::UciStatusInvalidParam);
             }
         };
@@ -227,7 +225,7 @@ impl AppConfig {
         self.raw.get(&id).cloned()
     }
 
-    fn extend(&mut self, configs: &[AppConfigParameter]) -> Vec<AppConfigStatus> {
+    fn extend(&mut self, configs: &[AppConfigTlv]) -> Vec<AppConfigStatus> {
         if !app_config_has_mandatory_parameters(configs) {
             // TODO: What shall we do in this situation?
         }
@@ -235,17 +233,11 @@ impl AppConfig {
         configs
             .iter()
             .fold(Vec::new(), |mut invalid_parameters, config| {
-                match AppConfigTlvType::from_u8(config.id) {
-                    Some(id) => match self.set_config(id, &config.value) {
-                        Ok(_) => (),
-                        Err(status) => invalid_parameters.push(AppConfigStatus {
-                            config_id: config.id,
-                            status,
-                        }),
-                    },
-                    None => invalid_parameters.push(AppConfigStatus {
-                        config_id: config.id,
-                        status: StatusCode::UciStatusInvalidParam,
+                match self.set_config(config.cfg_id, &config.v) {
+                    Ok(_) => (),
+                    Err(status) => invalid_parameters.push(AppConfigStatus {
+                        cfg_id: config.cfg_id,
+                        status,
                     }),
                 };
                 invalid_parameters
@@ -264,7 +256,7 @@ pub struct Session {
     pub sequence_number: u32,
     app_config: AppConfig,
     ranging_task: Option<JoinHandle<()>>,
-    tx: mpsc::Sender<UciPacketPacket>,
+    tx: mpsc::Sender<UciPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
 }
 
@@ -273,7 +265,7 @@ impl Session {
         id: u32,
         session_type: SessionType,
         device_handle: usize,
-        tx: mpsc::Sender<UciPacketPacket>,
+        tx: mpsc::Sender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         Self {
@@ -302,9 +294,9 @@ impl Session {
         tokio::spawn(async move {
             tx.send(
                 SessionStatusNtfBuilder {
-                    session_id,
+                    session_token: session_id,
                     session_state,
-                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands,
+                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands.into(),
                 }
                 .build()
                 .into(),
@@ -322,23 +314,20 @@ impl Session {
         self.set_state(SessionState::SessionStateInit);
     }
 
-    fn command_set_app_config(
-        &mut self,
-        cmd: SessionSetAppConfigCmdPacket,
-    ) -> SessionSetAppConfigRspPacket {
+    fn command_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> SessionSetAppConfigRsp {
         // TODO properly handle these asserts
         println!(
             "[{}:0x{:x}] Session Set App Config",
             self.device_handle, self.id
         );
-        assert_eq!(self.id, cmd.get_session_id());
+        assert_eq!(self.id, cmd.get_session_token());
         assert_eq!(self.session_type, SessionType::FiraRangingSession);
 
         let (status, invalid_parameters) = if self.state != SessionState::SessionStateInit {
             (StatusCode::UciStatusRejected, Vec::new())
         } else {
             let mut app_config = self.app_config.clone();
-            let invalid_parameters = app_config.extend(cmd.get_parameters());
+            let invalid_parameters = app_config.extend(cmd.get_tlvs());
             if invalid_parameters.is_empty() {
                 self.app_config = app_config;
                 self.set_state(SessionState::SessionStateIdle);
@@ -350,35 +339,33 @@ impl Session {
 
         SessionSetAppConfigRspBuilder {
             status,
-            parameters: invalid_parameters,
+            cfg_status: invalid_parameters,
         }
         .build()
     }
 
-    fn command_get_app_config(
-        &self,
-        cmd: SessionGetAppConfigCmdPacket,
-    ) -> SessionGetAppConfigRspPacket {
+    fn command_get_app_config(&self, cmd: SessionGetAppConfigCmd) -> SessionGetAppConfigRsp {
         println!(
             "[{}:0x{:x}] Session Get App Config",
             self.device_handle, self.id
         );
-        assert_eq!(self.id, cmd.get_session_id());
+        assert_eq!(self.id, cmd.get_session_token());
 
         let (status, valid_parameters) = {
-            let (valid_parameters, invalid_parameters) = cmd.get_parameters().iter().fold(
+            let (valid_parameters, invalid_parameters) = cmd.get_app_cfg().iter().fold(
                 (Vec::new(), Vec::new()),
                 |(mut valid_parameters, mut invalid_parameters), config_id| {
-                    match AppConfigTlvType::from_u8(*config_id)
+                    match AppConfigTlvType::try_from(*config_id)
+                        .ok()
                         .and_then(|id| self.app_config.get_config(id))
                     {
-                        Some(value) => valid_parameters.push(AppConfigParameter {
-                            id: *config_id,
-                            value,
+                        Some(value) => valid_parameters.push(AppConfigTlv {
+                            cfg_id: AppConfigTlvType::try_from(*config_id).unwrap(),
+                            v: value,
                         }),
-                        None => invalid_parameters.push(AppConfigParameter {
-                            id: *config_id,
-                            value: Vec::new(),
+                        None => invalid_parameters.push(AppConfigTlv {
+                            cfg_id: AppConfigTlvType::try_from(*config_id).unwrap(),
+                            v: Vec::new(),
                         }),
                     }
                     (valid_parameters, invalid_parameters)
@@ -392,14 +379,14 @@ impl Session {
         };
         SessionGetAppConfigRspBuilder {
             status,
-            parameters: valid_parameters,
+            tlvs: valid_parameters,
         }
         .build()
     }
 
-    fn command_get_state(&self, cmd: SessionGetStateCmdPacket) -> SessionGetStateRspPacket {
+    fn command_get_state(&self, cmd: SessionGetStateCmd) -> SessionGetStateRsp {
         println!("[{}:0x{:x}] Session Get State", self.device_handle, self.id);
-        assert_eq!(self.id, cmd.get_session_id());
+        assert_eq!(self.id, cmd.get_session_token());
         SessionGetStateRspBuilder {
             status: StatusCode::UciStatusOk,
             session_state: self.state,
@@ -409,13 +396,13 @@ impl Session {
 
     fn command_update_controller_multicast_list(
         &mut self,
-        cmd: SessionUpdateControllerMulticastListCmdPacket,
-    ) -> SessionUpdateControllerMulticastListRspPacket {
+        cmd: SessionUpdateControllerMulticastListCmd,
+    ) -> SessionUpdateControllerMulticastListRsp {
         println!(
             "[{}:0x{:x}] Session Update Controller Multicast List",
             self.device_handle, self.id
         );
-        assert_eq!(self.id, cmd.get_session_id());
+        assert_eq!(self.id, cmd.get_session_token());
         let status = {
             if (self.state != SessionState::SessionStateActive
                 && self.state != SessionState::SessionStateIdle)
@@ -425,12 +412,10 @@ impl Session {
             {
                 StatusCode::UciStatusRejected
             } else {
-                let action = UpdateMulticastListAction::from_u8(cmd.get_action()).unwrap();
-                let controlees = cmd.get_controlees();
+                let action = UpdateMulticastListAction::from_u8(cmd.get_action().into()).unwrap();
 
                 if action == UpdateMulticastListAction::Add
-                    && (controlees.len() + self.app_config.number_of_controlees)
-                        > MAX_NUMBER_OF_CONTROLEES
+                // TODO: Check whether the amount of controlee exceed the max number
                 {
                     StatusCode::UciStatusMulticastListFull
                 } else {
@@ -442,7 +427,7 @@ impl Session {
         SessionUpdateControllerMulticastListRspBuilder { status }.build()
     }
 
-    fn command_range_start(&mut self, cmd: RangeStartCmdPacket) -> RangeStartRspPacket {
+    fn command_range_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
         println!("[{}:0x{:x}] Range Start", self.device_handle, self.id);
         assert_eq!(self.id, cmd.get_session_id());
 
@@ -467,7 +452,7 @@ impl Session {
             self.set_state(SessionState::SessionStateActive);
             StatusCode::UciStatusOk
         };
-        RangeStartRspBuilder { status }.build()
+        SessionStartRspBuilder { status }.build()
     }
 
     fn stop_ranging_task(&mut self) {
@@ -476,7 +461,7 @@ impl Session {
             self.ranging_task = None;
         }
     }
-    fn command_range_stop(&mut self, cmd: RangeStopCmdPacket) -> RangeStopRspPacket {
+    fn command_range_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
         println!("[{}:0x{:x}] Range Stop", self.device_handle, self.id);
         assert_eq!(self.id, cmd.get_session_id());
 
@@ -487,47 +472,51 @@ impl Session {
             self.set_state(SessionState::SessionStateIdle);
             StatusCode::UciStatusOk
         };
-        RangeStopRspBuilder { status }.build()
+        SessionStopRspBuilder { status }.build()
     }
 
     fn command_get_ranging_count(
         &self,
-        cmd: RangeGetRangingCountCmdPacket,
-    ) -> RangeGetRangingCountRspPacket {
+        cmd: SessionGetRangingCountCmd,
+    ) -> SessionGetRangingCountRsp {
         println!(
             "[{}:0x{:x}] Range Get Ranging Count",
             self.device_handle, self.id
         );
         assert_eq!(self.id, cmd.get_session_id());
 
-        RangeGetRangingCountRspBuilder {
+        SessionGetRangingCountRspBuilder {
             status: StatusCode::UciStatusOk,
             count: self.sequence_number,
         }
         .build()
     }
 
-    pub fn session_command(&mut self, cmd: SessionCommandPacket) -> SessionResponsePacket {
+    pub fn session_command(&mut self, cmd: SessionConfigCommand) -> SessionConfigResponse {
         match cmd.specialize() {
-            SessionCommandChild::SessionSetAppConfigCmd(cmd) => {
+            SessionConfigCommandChild::SessionSetAppConfigCmd(cmd) => {
                 self.command_set_app_config(cmd).into()
             }
-            SessionCommandChild::SessionGetAppConfigCmd(cmd) => {
+            SessionConfigCommandChild::SessionGetAppConfigCmd(cmd) => {
                 self.command_get_app_config(cmd).into()
             }
-            SessionCommandChild::SessionGetStateCmd(cmd) => self.command_get_state(cmd).into(),
-            SessionCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
+            SessionConfigCommandChild::SessionGetStateCmd(cmd) => {
+                self.command_get_state(cmd).into()
+            }
+            SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
                 self.command_update_controller_multicast_list(cmd).into()
             }
             _ => panic!("Unsupported session command"),
         }
     }
 
-    pub fn ranging_command(&mut self, cmd: RangingCommandPacket) -> RangingResponsePacket {
+    pub fn ranging_command(&mut self, cmd: SessionControlCommand) -> SessionControlResponse {
         match cmd.specialize() {
-            RangingCommandChild::RangeStartCmd(cmd) => self.command_range_start(cmd).into(),
-            RangingCommandChild::RangeStopCmd(cmd) => self.command_range_stop(cmd).into(),
-            RangingCommandChild::RangeGetRangingCountCmd(cmd) => {
+            SessionControlCommandChild::SessionStartCmd(cmd) => {
+                self.command_range_start(cmd).into()
+            }
+            SessionControlCommandChild::SessionStopCmd(cmd) => self.command_range_stop(cmd).into(),
+            SessionControlCommandChild::SessionGetRangingCountCmd(cmd) => {
                 self.command_get_ranging_count(cmd).into()
             }
             _ => panic!("Unsupported ranging command"),

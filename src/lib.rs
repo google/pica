@@ -23,8 +23,6 @@ use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use num_traits::{FromPrimitive, ToPrimitive};
-
 mod pcapng;
 
 mod position;
@@ -108,7 +106,7 @@ pub enum PicaCommand {
     // Execute ranging command for selected device and session.
     Ranging(usize, u32),
     // Execute UCI command received for selected device.
-    Command(usize, UciCommandPacket),
+    Command(usize, UciCommand),
     // Init Uci Device
     InitUciDevice(MacAddress, Position, oneshot::Sender<PicaCommandStatus>),
     // Set Position
@@ -195,7 +193,7 @@ pub struct Pica {
 
 /// Result of UCI packet parsing.
 enum UciParseResult {
-    Ok(UciCommandPacket),
+    Ok(UciCommand),
     Err(Bytes),
     Skip,
 }
@@ -203,7 +201,7 @@ enum UciParseResult {
 /// Parse incoming UCI packets.
 /// Handle parsing errors by crafting a suitable error response packet.
 fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
-    match UciPacketPacket::parse(bytes) {
+    match UciPacket::parse(bytes) {
         // Parsing error. Determine what error response should be
         // returned to the host:
         // - response and notifications are ignored, no response
@@ -218,8 +216,8 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
             let opcode_id = bytes[1] & 0x3f;
 
             let status = match (
-                MessageType::from_u8(message_type),
-                GroupId::from_u8(group_id),
+                MessageType::try_from(message_type).ok(),
+                GroupId::try_from(group_id).ok(),
             ) {
                 (Some(MessageType::Command), Some(_)) => UciStatusCode::UciStatusUnknownOid,
                 (Some(MessageType::Command), None) => UciStatusCode::UciStatusUnknownGid,
@@ -228,11 +226,11 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
             // The PDL generated code cannot be used to generate
             // responses with invalid group identifiers.
             let response = vec![
-                (MessageType::Response.to_u8().unwrap() << 5) | group_id,
+                (u8::from(MessageType::Response) << 5) | group_id,
                 opcode_id,
                 0,
                 1,
-                status.to_u8().unwrap(),
+                u8::from(status),
             ];
             UciParseResult::Err(response.into())
         }
@@ -422,6 +420,7 @@ impl Pica {
                                 aoa_destination_elevation: remote.2 as u16,
                                 aoa_destination_elevation_fom: 100,
                                 slot_index: 0,
+                                rssi: u8::MAX,
                             })
                         }
                         MacAddress::Extend(_) => unimplemented!(),
@@ -433,12 +432,13 @@ impl Pica {
             .tx
             .send(
                 // TODO: support extended address
-                ShortMacTwoWayRangeDataNtfBuilder {
+                ShortMacTwoWaySessionInfoNtfBuilder {
                     sequence_number: session.sequence_number,
-                    session_id,
+                    session_token: session_id,
                     rcr_indicator: 0,            //TODO
                     current_ranging_interval: 0, //TODO
                     two_way_ranging_measurements: measurements,
+                    vendor_data: vec![],
                 }
                 .build()
                 .into(),
@@ -452,7 +452,7 @@ impl Pica {
         session.sequence_number += 1;
     }
 
-    async fn command(&mut self, device_handle: usize, cmd: UciCommandPacket) {
+    async fn command(&mut self, device_handle: usize, cmd: UciCommand) {
         // TODO: implement fragmentation support
         assert_eq!(
             cmd.get_packet_boundary_flag(),
@@ -465,7 +465,7 @@ impl Pica {
             .ok_or_else(|| PicaCommandError::DeviceNotFound(device_handle.into()))
         {
             Ok(device) => {
-                let response = device.command(cmd).into();
+                let response: UciPacket = device.command(cmd).into();
                 device
                     .tx
                     .send(response)
