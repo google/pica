@@ -216,11 +216,11 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
             let opcode_id = bytes[1] & 0x3f;
 
             let status = match (
-                MessageType::try_from(message_type).ok(),
-                GroupId::try_from(group_id).ok(),
+                MessageType::try_from(message_type),
+                GroupId::try_from(group_id),
             ) {
-                (Some(MessageType::Command), Some(_)) => UciStatusCode::UciStatusUnknownOid,
-                (Some(MessageType::Command), None) => UciStatusCode::UciStatusUnknownGid,
+                (Ok(MessageType::Command), Ok(_)) => UciStatusCode::UciStatusUnknownOid,
+                (Ok(MessageType::Command), Err(_)) => UciStatusCode::UciStatusUnknownGid,
                 _ => return UciParseResult::Skip,
             };
             // The PDL generated code cannot be used to generate
@@ -230,7 +230,7 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
                 opcode_id,
                 0,
                 1,
-                u8::from(status),
+                status.into(),
             ];
             UciParseResult::Err(response.into())
         }

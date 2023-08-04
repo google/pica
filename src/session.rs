@@ -355,18 +355,18 @@ impl Session {
             let (valid_parameters, invalid_parameters) = cmd.get_app_cfg().iter().fold(
                 (Vec::new(), Vec::new()),
                 |(mut valid_parameters, mut invalid_parameters), config_id| {
-                    match AppConfigTlvType::try_from(*config_id)
-                        .ok()
-                        .and_then(|id| self.app_config.get_config(id))
-                    {
-                        Some(value) => valid_parameters.push(AppConfigTlv {
-                            cfg_id: AppConfigTlvType::try_from(*config_id).unwrap(),
-                            v: value,
-                        }),
-                        None => invalid_parameters.push(AppConfigTlv {
-                            cfg_id: AppConfigTlvType::try_from(*config_id).unwrap(),
-                            v: Vec::new(),
-                        }),
+                    match AppConfigTlvType::try_from(*config_id) {
+                        Ok(id) => match self.app_config.get_config(id) {
+                            Some(value) => valid_parameters.push(AppConfigTlv {
+                                cfg_id: id,
+                                v: value,
+                            }),
+                            None => invalid_parameters.push(AppConfigTlv {
+                                cfg_id: id,
+                                v: Vec::new(),
+                            }),
+                        },
+                        Err(_) => println!("Failed to parse AppConfigTlv: {:?}", *config_id),
                     }
                     (valid_parameters, invalid_parameters)
                 },

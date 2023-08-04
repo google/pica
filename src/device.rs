@@ -241,15 +241,18 @@ impl Device {
                 // If the status code is ok, return the params
                 // If there is at least one invalid param, return the list of invalid params
                 // If the ID is not present in our config, return the Type with length = 0
-                match self.config.get(&DeviceConfigId::try_from(*id).unwrap()) {
-                    Some(value) => valid_parameters.push(DeviceConfigTlv {
-                        cfg_id: DeviceConfigId::try_from(*id).unwrap(),
-                        v: value.clone(),
-                    }),
-                    None => invalid_parameters.push(DeviceConfigTlv {
-                        cfg_id: DeviceConfigId::try_from(*id).unwrap(),
-                        v: Vec::new(),
-                    }),
+                match DeviceConfigId::try_from(*id) {
+                    Ok(cfg_id) => match self.config.get(&cfg_id) {
+                        Some(value) => valid_parameters.push(DeviceConfigTlv {
+                            cfg_id,
+                            v: value.clone(),
+                        }),
+                        None => invalid_parameters.push(DeviceConfigTlv {
+                            cfg_id,
+                            v: Vec::new(),
+                        }),
+                    },
+                    Err(_) => println!("Failed to parse config id: {:?}", id),
                 }
 
                 (valid_parameters, invalid_parameters)
