@@ -1287,6 +1287,26 @@ test AndroidRangeDiagnosticsNtf {
     "\x6c\x02\x00\x34\x00\x00\x00\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x03\x01\x08\x00\x01\x02\x01\x02\x01\x02\x01\x01\x02\x15\x00\x01\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x00\x02\x04\x00\x01\x02\x03\x04\x00\x01\x00\x00",
 }
 
+packet UciVendor_9_Command : UciCommand (group_id = VENDOR_RESERVED_9) {
+    _payload_,
+}
+
+packet UciVendor_A_Command : UciCommand (group_id = VENDOR_RESERVED_A) {
+    _payload_,
+}
+
+packet UciVendor_B_Command : UciCommand (group_id = VENDOR_RESERVED_B) {
+    _payload_,
+}
+
+packet UciVendor_E_Command : UciCommand (group_id = VENDOR_RESERVED_E) {
+    _payload_,
+}
+
+packet UciVendor_F_Command : UciCommand (group_id = VENDOR_RESERVED_F) {
+    _payload_,
+}
+
 packet UciVendor_9_Response : UciResponse (group_id = VENDOR_RESERVED_9) {
     _payload_,
 }
