@@ -358,7 +358,6 @@ impl AppConfig {
         &mut self,
         id: AppConfigTlvType,
         value: &[u8],
-        state: SessionState,
     ) -> std::result::Result<(), StatusCode> {
         match id {
             AppConfigTlvType::MacAddressMode => {
@@ -429,9 +428,6 @@ impl AppConfig {
             }
             AppConfigTlvType::RangingRoundControl => self.ranging_round_control = value[0],
             AppConfigTlvType::AoaResultReq => {
-                if state == SessionState::SessionStateActive {
-                    return Err(StatusCode::UciStatusSessionActive);
-                }
                 self.aoa_result_req = AoaResultReq::from_u8(value[0]).unwrap()
             }
             AppConfigTlvType::RngDataNtf => {
@@ -537,7 +533,7 @@ impl AppConfig {
         self.raw.get(&id).cloned()
     }
 
-    fn extend(&mut self, configs: &[AppConfigTlv], state: SessionState) -> Vec<AppConfigStatus> {
+    fn extend(&mut self, configs: &[AppConfigTlv]) -> Vec<AppConfigStatus> {
         if !app_config_has_mandatory_parameters(configs) {
             // TODO: What shall we do in this situation?
         }
@@ -545,7 +541,7 @@ impl AppConfig {
         configs
             .iter()
             .fold(Vec::new(), |mut invalid_parameters, config| {
-                match self.set_config(config.cfg_id, &config.v, state) {
+                match self.set_config(config.cfg_id, &config.v) {
                     Ok(_) => (),
                     Err(status) => invalid_parameters.push(AppConfigStatus {
                         cfg_id: config.cfg_id,
@@ -639,13 +635,28 @@ impl Session {
         assert_eq!(self.id, cmd.get_session_token());
         assert_eq!(self.session_type, SessionType::FiraRangingSession);
 
+        if self.state == SessionState::SessionStateActive {
+            const IMMUTABLE_PARAMETERS: &[AppConfigTlvType] = &[AppConfigTlvType::AoaResultReq];
+            if cmd
+                .get_tlvs()
+                .iter()
+                .any(|cfg| IMMUTABLE_PARAMETERS.contains(&cfg.cfg_id))
+            {
+                return SessionSetAppConfigRspBuilder {
+                    status: StatusCode::UciStatusSessionActive,
+                    cfg_status: vec![],
+                }
+                .build();
+            }
+        }
+
         let (status, invalid_parameters) = if self.state != SessionState::SessionStateInit
             && self.state != SessionState::SessionStateActive
         {
             (StatusCode::UciStatusRejected, Vec::new())
         } else {
             let mut app_config = self.app_config.clone();
-            let invalid_parameters = app_config.extend(cmd.get_tlvs(), self.state);
+            let invalid_parameters = app_config.extend(cmd.get_tlvs());
             if invalid_parameters.is_empty() {
                 self.app_config = app_config;
                 if self.state == SessionState::SessionStateInit {
