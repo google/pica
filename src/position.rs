@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::uci_packets::PicaPosition;
 use glam::{EulerRot, Quat, Vec3};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
-use std::convert::From;
 use std::default::Default;
 use std::fmt::Display;
 
@@ -124,19 +122,6 @@ impl Position {
 impl Default for Position {
     fn default() -> Self {
         Self::new(0, 0, 0, 0, 0, 0)
-    }
-}
-
-impl From<&PicaPosition> for Position {
-    fn from(other: &PicaPosition) -> Self {
-        Self::new(
-            other.x as i16,
-            other.y as i16,
-            other.z as i16,
-            other.yaw as i16,
-            other.pitch as i8,
-            other.roll as i16,
-        )
     }
 }
 

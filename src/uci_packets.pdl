@@ -96,14 +96,6 @@ enum AppDataOpCode : 6 {
     APP_DATA_RX = 0x01,
 }
 
-enum PicaOpCode : 6 {
-    PICA_INIT_DEVICE = 0x00,
-    PICA_SET_DEVICE_POSITION = 0x01,
-    PICA_CREATE_BEACON = 0x02,
-    PICA_SET_BEACON_POSITION = 0x03,
-    PICA_DESTROY_BEACON = 0x04,
-}
-
 // Android vendor commands
 enum AndroidOpCode : 6 {
     ANDROID_GET_POWER_STATS = 0x0,
@@ -1162,15 +1154,6 @@ packet SessionGetRangingCountRsp : SessionControlResponse (opcode = 0x3) { // SE
 
 test SessionGetRangingCountRsp {
     "\x42\x03\x00\x05\x00\x00\x00\x00\x02\x03\x04\x05",
-}
-
-struct PicaPosition {
-    x: 16,
-    y: 16,
-    z: 16,
-    yaw: 16,
-    pitch: 8,
-    roll: 16,
 }
 
 packet AndroidGetPowerStatsCmd: AndroidCommand (opcode = 0x0) { //ANDROID_GET_POWER_STATS
