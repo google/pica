@@ -2915,6 +2915,11 @@ pub enum UciCommandDataChild {
     SessionConfigCommand(SessionConfigCommandData),
     SessionControlCommand(SessionControlCommandData),
     AndroidCommand(AndroidCommandData),
+    UciVendor_9_Command(UciVendor_9_CommandData),
+    UciVendor_A_Command(UciVendor_A_CommandData),
+    UciVendor_B_Command(UciVendor_B_CommandData),
+    UciVendor_E_Command(UciVendor_E_CommandData),
+    UciVendor_F_Command(UciVendor_F_CommandData),
     Payload(Bytes),
     None,
 }
@@ -2925,6 +2930,11 @@ impl UciCommandDataChild {
             UciCommandDataChild::SessionConfigCommand(value) => value.get_total_size(),
             UciCommandDataChild::SessionControlCommand(value) => value.get_total_size(),
             UciCommandDataChild::AndroidCommand(value) => value.get_total_size(),
+            UciCommandDataChild::UciVendor_9_Command(value) => value.get_total_size(),
+            UciCommandDataChild::UciVendor_A_Command(value) => value.get_total_size(),
+            UciCommandDataChild::UciVendor_B_Command(value) => value.get_total_size(),
+            UciCommandDataChild::UciVendor_E_Command(value) => value.get_total_size(),
+            UciCommandDataChild::UciVendor_F_Command(value) => value.get_total_size(),
             UciCommandDataChild::Payload(bytes) => bytes.len(),
             UciCommandDataChild::None => 0,
         }
@@ -2937,6 +2947,11 @@ pub enum UciCommandChild {
     SessionConfigCommand(SessionConfigCommand),
     SessionControlCommand(SessionControlCommand),
     AndroidCommand(AndroidCommand),
+    UciVendor_9_Command(UciVendor_9_Command),
+    UciVendor_A_Command(UciVendor_A_Command),
+    UciVendor_B_Command(UciVendor_B_Command),
+    UciVendor_E_Command(UciVendor_E_Command),
+    UciVendor_F_Command(UciVendor_F_Command),
     Payload(Bytes),
     None,
 }
@@ -2993,6 +3008,31 @@ impl UciCommandData {
                 let child_data = AndroidCommandData::parse_inner(&mut cell, opcode)?;
                 UciCommandDataChild::AndroidCommand(child_data)
             }
+            (GroupId::VendorReserved9) if UciVendor_9_CommandData::conforms(&payload) => {
+                let mut cell = Cell::new(payload);
+                let child_data = UciVendor_9_CommandData::parse_inner(&mut cell)?;
+                UciCommandDataChild::UciVendor_9_Command(child_data)
+            }
+            (GroupId::VendorReservedA) if UciVendor_A_CommandData::conforms(&payload) => {
+                let mut cell = Cell::new(payload);
+                let child_data = UciVendor_A_CommandData::parse_inner(&mut cell)?;
+                UciCommandDataChild::UciVendor_A_Command(child_data)
+            }
+            (GroupId::VendorReservedB) if UciVendor_B_CommandData::conforms(&payload) => {
+                let mut cell = Cell::new(payload);
+                let child_data = UciVendor_B_CommandData::parse_inner(&mut cell)?;
+                UciCommandDataChild::UciVendor_B_Command(child_data)
+            }
+            (GroupId::VendorReservedE) if UciVendor_E_CommandData::conforms(&payload) => {
+                let mut cell = Cell::new(payload);
+                let child_data = UciVendor_E_CommandData::parse_inner(&mut cell)?;
+                UciCommandDataChild::UciVendor_E_Command(child_data)
+            }
+            (GroupId::VendorReservedF) if UciVendor_F_CommandData::conforms(&payload) => {
+                let mut cell = Cell::new(payload);
+                let child_data = UciVendor_F_CommandData::parse_inner(&mut cell)?;
+                UciCommandDataChild::UciVendor_F_Command(child_data)
+            }
             _ if !payload.is_empty() => {
                 UciCommandDataChild::Payload(Bytes::copy_from_slice(payload))
             }
@@ -3006,6 +3046,11 @@ impl UciCommandData {
             UciCommandDataChild::SessionConfigCommand(child) => child.write_to(buffer),
             UciCommandDataChild::SessionControlCommand(child) => child.write_to(buffer),
             UciCommandDataChild::AndroidCommand(child) => child.write_to(buffer),
+            UciCommandDataChild::UciVendor_9_Command(child) => child.write_to(buffer),
+            UciCommandDataChild::UciVendor_A_Command(child) => child.write_to(buffer),
+            UciCommandDataChild::UciVendor_B_Command(child) => child.write_to(buffer),
+            UciCommandDataChild::UciVendor_E_Command(child) => child.write_to(buffer),
+            UciCommandDataChild::UciVendor_F_Command(child) => child.write_to(buffer),
             UciCommandDataChild::Payload(payload) => buffer.put_slice(payload),
             UciCommandDataChild::None => {}
         }
@@ -3073,6 +3118,21 @@ impl UciCommand {
             }
             UciCommandDataChild::AndroidCommand(_) => UciCommandChild::AndroidCommand(
                 AndroidCommand::new(self.ucipacket.clone()).unwrap(),
+            ),
+            UciCommandDataChild::UciVendor_9_Command(_) => UciCommandChild::UciVendor_9_Command(
+                UciVendor_9_Command::new(self.ucipacket.clone()).unwrap(),
+            ),
+            UciCommandDataChild::UciVendor_A_Command(_) => UciCommandChild::UciVendor_A_Command(
+                UciVendor_A_Command::new(self.ucipacket.clone()).unwrap(),
+            ),
+            UciCommandDataChild::UciVendor_B_Command(_) => UciCommandChild::UciVendor_B_Command(
+                UciVendor_B_Command::new(self.ucipacket.clone()).unwrap(),
+            ),
+            UciCommandDataChild::UciVendor_E_Command(_) => UciCommandChild::UciVendor_E_Command(
+                UciVendor_E_Command::new(self.ucipacket.clone()).unwrap(),
+            ),
+            UciCommandDataChild::UciVendor_F_Command(_) => UciCommandChild::UciVendor_F_Command(
+                UciVendor_F_Command::new(self.ucipacket.clone()).unwrap(),
             ),
             UciCommandDataChild::Payload(payload) => UciCommandChild::Payload(payload.clone()),
             UciCommandDataChild::None => UciCommandChild::None,
@@ -23026,6 +23086,1076 @@ impl From<AndroidRangeDiagnosticsNtfBuilder> for AndroidNotification {
 }
 impl From<AndroidRangeDiagnosticsNtfBuilder> for AndroidRangeDiagnosticsNtf {
     fn from(builder: AndroidRangeDiagnosticsNtfBuilder) -> AndroidRangeDiagnosticsNtf {
+        builder.build().into()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_9_CommandDataChild {
+    Payload(Bytes),
+    None,
+}
+impl UciVendor_9_CommandDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            UciVendor_9_CommandDataChild::Payload(bytes) => bytes.len(),
+            UciVendor_9_CommandDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_9_CommandChild {
+    Payload(Bytes),
+    None,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_9_CommandData {
+    child: UciVendor_9_CommandDataChild,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_9_Command {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucipacket: UciPacketData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucicommand: UciCommandData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucivendor_9_command: UciVendor_9_CommandData,
+}
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_9_CommandBuilder {
+    pub opcode: u8,
+    pub payload: Option<Bytes>,
+}
+impl UciVendor_9_CommandData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let payload = bytes.get();
+        bytes.get_mut().advance(payload.len());
+        let child = match () {
+            _ if !payload.is_empty() => {
+                UciVendor_9_CommandDataChild::Payload(Bytes::copy_from_slice(payload))
+            }
+            _ => UciVendor_9_CommandDataChild::None,
+        };
+        Ok(Self { child })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        match &self.child {
+            UciVendor_9_CommandDataChild::Payload(payload) => buffer.put_slice(payload),
+            UciVendor_9_CommandDataChild::None => {}
+        }
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        self.child.get_total_size()
+    }
+}
+impl Packet for UciVendor_9_Command {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
+        self.ucipacket.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<UciVendor_9_Command> for Bytes {
+    fn from(packet: UciVendor_9_Command) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<UciVendor_9_Command> for Vec<u8> {
+    fn from(packet: UciVendor_9_Command) -> Self {
+        packet.to_vec()
+    }
+}
+impl From<UciVendor_9_Command> for UciPacket {
+    fn from(packet: UciVendor_9_Command) -> UciPacket {
+        UciPacket::new(packet.ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_9_Command> for UciCommand {
+    fn from(packet: UciVendor_9_Command) -> UciCommand {
+        UciCommand::new(packet.ucipacket).unwrap()
+    }
+}
+impl TryFrom<UciPacket> for UciVendor_9_Command {
+    type Error = Error;
+    fn try_from(packet: UciPacket) -> Result<UciVendor_9_Command> {
+        UciVendor_9_Command::new(packet.ucipacket)
+    }
+}
+impl UciVendor_9_Command {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let data = UciPacketData::parse_inner(&mut bytes)?;
+        Self::new(data)
+    }
+    pub fn specialize(&self) -> UciVendor_9_CommandChild {
+        match &self.ucivendor_9_command.child {
+            UciVendor_9_CommandDataChild::Payload(payload) => {
+                UciVendor_9_CommandChild::Payload(payload.clone())
+            }
+            UciVendor_9_CommandDataChild::None => UciVendor_9_CommandChild::None,
+        }
+    }
+    fn new(ucipacket: UciPacketData) -> Result<Self> {
+        let ucicommand = match &ucipacket.child {
+            UciPacketDataChild::UciCommand(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &ucipacket.child),
+                });
+            }
+        };
+        let ucivendor_9_command = match &ucicommand.child {
+            UciCommandDataChild::UciVendor_9_Command(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciCommandDataChild::UciVendor_9_Command),
+                    actual: format!("{:?}", &ucicommand.child),
+                });
+            }
+        };
+        Ok(Self {
+            ucipacket,
+            ucicommand,
+            ucivendor_9_command,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.ucipacket.group_id
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.ucipacket.message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.ucipacket.opcode
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.ucipacket.packet_boundary_flag
+    }
+    pub fn get_payload(&self) -> &[u8] {
+        match &self.ucivendor_9_command.child {
+            UciVendor_9_CommandDataChild::Payload(bytes) => &bytes,
+            UciVendor_9_CommandDataChild::None => &[],
+        }
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        self.ucivendor_9_command.write_to(buffer)
+    }
+    pub fn get_size(&self) -> usize {
+        self.ucipacket.get_size()
+    }
+}
+impl UciVendor_9_CommandBuilder {
+    pub fn build(self) -> UciVendor_9_Command {
+        let ucivendor_9_command = UciVendor_9_CommandData {
+            child: match self.payload {
+                None => UciVendor_9_CommandDataChild::None,
+                Some(bytes) => UciVendor_9_CommandDataChild::Payload(bytes),
+            },
+        };
+        let ucicommand = UciCommandData {
+            child: UciCommandDataChild::UciVendor_9_Command(ucivendor_9_command),
+        };
+        let ucipacket = UciPacketData {
+            group_id: GroupId::VendorReserved9,
+            message_type: MessageType::Command,
+            opcode: self.opcode,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            child: UciPacketDataChild::UciCommand(ucicommand),
+        };
+        UciVendor_9_Command::new(ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_9_CommandBuilder> for UciPacket {
+    fn from(builder: UciVendor_9_CommandBuilder) -> UciPacket {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_9_CommandBuilder> for UciCommand {
+    fn from(builder: UciVendor_9_CommandBuilder) -> UciCommand {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_9_CommandBuilder> for UciVendor_9_Command {
+    fn from(builder: UciVendor_9_CommandBuilder) -> UciVendor_9_Command {
+        builder.build().into()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_A_CommandDataChild {
+    Payload(Bytes),
+    None,
+}
+impl UciVendor_A_CommandDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            UciVendor_A_CommandDataChild::Payload(bytes) => bytes.len(),
+            UciVendor_A_CommandDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_A_CommandChild {
+    Payload(Bytes),
+    None,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_A_CommandData {
+    child: UciVendor_A_CommandDataChild,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_A_Command {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucipacket: UciPacketData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucicommand: UciCommandData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucivendor_a_command: UciVendor_A_CommandData,
+}
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_A_CommandBuilder {
+    pub opcode: u8,
+    pub payload: Option<Bytes>,
+}
+impl UciVendor_A_CommandData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let payload = bytes.get();
+        bytes.get_mut().advance(payload.len());
+        let child = match () {
+            _ if !payload.is_empty() => {
+                UciVendor_A_CommandDataChild::Payload(Bytes::copy_from_slice(payload))
+            }
+            _ => UciVendor_A_CommandDataChild::None,
+        };
+        Ok(Self { child })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        match &self.child {
+            UciVendor_A_CommandDataChild::Payload(payload) => buffer.put_slice(payload),
+            UciVendor_A_CommandDataChild::None => {}
+        }
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        self.child.get_total_size()
+    }
+}
+impl Packet for UciVendor_A_Command {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
+        self.ucipacket.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<UciVendor_A_Command> for Bytes {
+    fn from(packet: UciVendor_A_Command) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<UciVendor_A_Command> for Vec<u8> {
+    fn from(packet: UciVendor_A_Command) -> Self {
+        packet.to_vec()
+    }
+}
+impl From<UciVendor_A_Command> for UciPacket {
+    fn from(packet: UciVendor_A_Command) -> UciPacket {
+        UciPacket::new(packet.ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_A_Command> for UciCommand {
+    fn from(packet: UciVendor_A_Command) -> UciCommand {
+        UciCommand::new(packet.ucipacket).unwrap()
+    }
+}
+impl TryFrom<UciPacket> for UciVendor_A_Command {
+    type Error = Error;
+    fn try_from(packet: UciPacket) -> Result<UciVendor_A_Command> {
+        UciVendor_A_Command::new(packet.ucipacket)
+    }
+}
+impl UciVendor_A_Command {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let data = UciPacketData::parse_inner(&mut bytes)?;
+        Self::new(data)
+    }
+    pub fn specialize(&self) -> UciVendor_A_CommandChild {
+        match &self.ucivendor_a_command.child {
+            UciVendor_A_CommandDataChild::Payload(payload) => {
+                UciVendor_A_CommandChild::Payload(payload.clone())
+            }
+            UciVendor_A_CommandDataChild::None => UciVendor_A_CommandChild::None,
+        }
+    }
+    fn new(ucipacket: UciPacketData) -> Result<Self> {
+        let ucicommand = match &ucipacket.child {
+            UciPacketDataChild::UciCommand(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &ucipacket.child),
+                });
+            }
+        };
+        let ucivendor_a_command = match &ucicommand.child {
+            UciCommandDataChild::UciVendor_A_Command(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciCommandDataChild::UciVendor_A_Command),
+                    actual: format!("{:?}", &ucicommand.child),
+                });
+            }
+        };
+        Ok(Self {
+            ucipacket,
+            ucicommand,
+            ucivendor_a_command,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.ucipacket.group_id
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.ucipacket.message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.ucipacket.opcode
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.ucipacket.packet_boundary_flag
+    }
+    pub fn get_payload(&self) -> &[u8] {
+        match &self.ucivendor_a_command.child {
+            UciVendor_A_CommandDataChild::Payload(bytes) => &bytes,
+            UciVendor_A_CommandDataChild::None => &[],
+        }
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        self.ucivendor_a_command.write_to(buffer)
+    }
+    pub fn get_size(&self) -> usize {
+        self.ucipacket.get_size()
+    }
+}
+impl UciVendor_A_CommandBuilder {
+    pub fn build(self) -> UciVendor_A_Command {
+        let ucivendor_a_command = UciVendor_A_CommandData {
+            child: match self.payload {
+                None => UciVendor_A_CommandDataChild::None,
+                Some(bytes) => UciVendor_A_CommandDataChild::Payload(bytes),
+            },
+        };
+        let ucicommand = UciCommandData {
+            child: UciCommandDataChild::UciVendor_A_Command(ucivendor_a_command),
+        };
+        let ucipacket = UciPacketData {
+            group_id: GroupId::VendorReservedA,
+            message_type: MessageType::Command,
+            opcode: self.opcode,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            child: UciPacketDataChild::UciCommand(ucicommand),
+        };
+        UciVendor_A_Command::new(ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_A_CommandBuilder> for UciPacket {
+    fn from(builder: UciVendor_A_CommandBuilder) -> UciPacket {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_A_CommandBuilder> for UciCommand {
+    fn from(builder: UciVendor_A_CommandBuilder) -> UciCommand {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_A_CommandBuilder> for UciVendor_A_Command {
+    fn from(builder: UciVendor_A_CommandBuilder) -> UciVendor_A_Command {
+        builder.build().into()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_B_CommandDataChild {
+    Payload(Bytes),
+    None,
+}
+impl UciVendor_B_CommandDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            UciVendor_B_CommandDataChild::Payload(bytes) => bytes.len(),
+            UciVendor_B_CommandDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_B_CommandChild {
+    Payload(Bytes),
+    None,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_B_CommandData {
+    child: UciVendor_B_CommandDataChild,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_B_Command {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucipacket: UciPacketData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucicommand: UciCommandData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucivendor_b_command: UciVendor_B_CommandData,
+}
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_B_CommandBuilder {
+    pub opcode: u8,
+    pub payload: Option<Bytes>,
+}
+impl UciVendor_B_CommandData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let payload = bytes.get();
+        bytes.get_mut().advance(payload.len());
+        let child = match () {
+            _ if !payload.is_empty() => {
+                UciVendor_B_CommandDataChild::Payload(Bytes::copy_from_slice(payload))
+            }
+            _ => UciVendor_B_CommandDataChild::None,
+        };
+        Ok(Self { child })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        match &self.child {
+            UciVendor_B_CommandDataChild::Payload(payload) => buffer.put_slice(payload),
+            UciVendor_B_CommandDataChild::None => {}
+        }
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        self.child.get_total_size()
+    }
+}
+impl Packet for UciVendor_B_Command {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
+        self.ucipacket.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<UciVendor_B_Command> for Bytes {
+    fn from(packet: UciVendor_B_Command) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<UciVendor_B_Command> for Vec<u8> {
+    fn from(packet: UciVendor_B_Command) -> Self {
+        packet.to_vec()
+    }
+}
+impl From<UciVendor_B_Command> for UciPacket {
+    fn from(packet: UciVendor_B_Command) -> UciPacket {
+        UciPacket::new(packet.ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_B_Command> for UciCommand {
+    fn from(packet: UciVendor_B_Command) -> UciCommand {
+        UciCommand::new(packet.ucipacket).unwrap()
+    }
+}
+impl TryFrom<UciPacket> for UciVendor_B_Command {
+    type Error = Error;
+    fn try_from(packet: UciPacket) -> Result<UciVendor_B_Command> {
+        UciVendor_B_Command::new(packet.ucipacket)
+    }
+}
+impl UciVendor_B_Command {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let data = UciPacketData::parse_inner(&mut bytes)?;
+        Self::new(data)
+    }
+    pub fn specialize(&self) -> UciVendor_B_CommandChild {
+        match &self.ucivendor_b_command.child {
+            UciVendor_B_CommandDataChild::Payload(payload) => {
+                UciVendor_B_CommandChild::Payload(payload.clone())
+            }
+            UciVendor_B_CommandDataChild::None => UciVendor_B_CommandChild::None,
+        }
+    }
+    fn new(ucipacket: UciPacketData) -> Result<Self> {
+        let ucicommand = match &ucipacket.child {
+            UciPacketDataChild::UciCommand(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &ucipacket.child),
+                });
+            }
+        };
+        let ucivendor_b_command = match &ucicommand.child {
+            UciCommandDataChild::UciVendor_B_Command(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciCommandDataChild::UciVendor_B_Command),
+                    actual: format!("{:?}", &ucicommand.child),
+                });
+            }
+        };
+        Ok(Self {
+            ucipacket,
+            ucicommand,
+            ucivendor_b_command,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.ucipacket.group_id
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.ucipacket.message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.ucipacket.opcode
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.ucipacket.packet_boundary_flag
+    }
+    pub fn get_payload(&self) -> &[u8] {
+        match &self.ucivendor_b_command.child {
+            UciVendor_B_CommandDataChild::Payload(bytes) => &bytes,
+            UciVendor_B_CommandDataChild::None => &[],
+        }
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        self.ucivendor_b_command.write_to(buffer)
+    }
+    pub fn get_size(&self) -> usize {
+        self.ucipacket.get_size()
+    }
+}
+impl UciVendor_B_CommandBuilder {
+    pub fn build(self) -> UciVendor_B_Command {
+        let ucivendor_b_command = UciVendor_B_CommandData {
+            child: match self.payload {
+                None => UciVendor_B_CommandDataChild::None,
+                Some(bytes) => UciVendor_B_CommandDataChild::Payload(bytes),
+            },
+        };
+        let ucicommand = UciCommandData {
+            child: UciCommandDataChild::UciVendor_B_Command(ucivendor_b_command),
+        };
+        let ucipacket = UciPacketData {
+            group_id: GroupId::VendorReservedB,
+            message_type: MessageType::Command,
+            opcode: self.opcode,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            child: UciPacketDataChild::UciCommand(ucicommand),
+        };
+        UciVendor_B_Command::new(ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_B_CommandBuilder> for UciPacket {
+    fn from(builder: UciVendor_B_CommandBuilder) -> UciPacket {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_B_CommandBuilder> for UciCommand {
+    fn from(builder: UciVendor_B_CommandBuilder) -> UciCommand {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_B_CommandBuilder> for UciVendor_B_Command {
+    fn from(builder: UciVendor_B_CommandBuilder) -> UciVendor_B_Command {
+        builder.build().into()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_E_CommandDataChild {
+    Payload(Bytes),
+    None,
+}
+impl UciVendor_E_CommandDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            UciVendor_E_CommandDataChild::Payload(bytes) => bytes.len(),
+            UciVendor_E_CommandDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_E_CommandChild {
+    Payload(Bytes),
+    None,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_E_CommandData {
+    child: UciVendor_E_CommandDataChild,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_E_Command {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucipacket: UciPacketData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucicommand: UciCommandData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucivendor_e_command: UciVendor_E_CommandData,
+}
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_E_CommandBuilder {
+    pub opcode: u8,
+    pub payload: Option<Bytes>,
+}
+impl UciVendor_E_CommandData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let payload = bytes.get();
+        bytes.get_mut().advance(payload.len());
+        let child = match () {
+            _ if !payload.is_empty() => {
+                UciVendor_E_CommandDataChild::Payload(Bytes::copy_from_slice(payload))
+            }
+            _ => UciVendor_E_CommandDataChild::None,
+        };
+        Ok(Self { child })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        match &self.child {
+            UciVendor_E_CommandDataChild::Payload(payload) => buffer.put_slice(payload),
+            UciVendor_E_CommandDataChild::None => {}
+        }
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        self.child.get_total_size()
+    }
+}
+impl Packet for UciVendor_E_Command {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
+        self.ucipacket.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<UciVendor_E_Command> for Bytes {
+    fn from(packet: UciVendor_E_Command) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<UciVendor_E_Command> for Vec<u8> {
+    fn from(packet: UciVendor_E_Command) -> Self {
+        packet.to_vec()
+    }
+}
+impl From<UciVendor_E_Command> for UciPacket {
+    fn from(packet: UciVendor_E_Command) -> UciPacket {
+        UciPacket::new(packet.ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_E_Command> for UciCommand {
+    fn from(packet: UciVendor_E_Command) -> UciCommand {
+        UciCommand::new(packet.ucipacket).unwrap()
+    }
+}
+impl TryFrom<UciPacket> for UciVendor_E_Command {
+    type Error = Error;
+    fn try_from(packet: UciPacket) -> Result<UciVendor_E_Command> {
+        UciVendor_E_Command::new(packet.ucipacket)
+    }
+}
+impl UciVendor_E_Command {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let data = UciPacketData::parse_inner(&mut bytes)?;
+        Self::new(data)
+    }
+    pub fn specialize(&self) -> UciVendor_E_CommandChild {
+        match &self.ucivendor_e_command.child {
+            UciVendor_E_CommandDataChild::Payload(payload) => {
+                UciVendor_E_CommandChild::Payload(payload.clone())
+            }
+            UciVendor_E_CommandDataChild::None => UciVendor_E_CommandChild::None,
+        }
+    }
+    fn new(ucipacket: UciPacketData) -> Result<Self> {
+        let ucicommand = match &ucipacket.child {
+            UciPacketDataChild::UciCommand(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &ucipacket.child),
+                });
+            }
+        };
+        let ucivendor_e_command = match &ucicommand.child {
+            UciCommandDataChild::UciVendor_E_Command(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciCommandDataChild::UciVendor_E_Command),
+                    actual: format!("{:?}", &ucicommand.child),
+                });
+            }
+        };
+        Ok(Self {
+            ucipacket,
+            ucicommand,
+            ucivendor_e_command,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.ucipacket.group_id
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.ucipacket.message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.ucipacket.opcode
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.ucipacket.packet_boundary_flag
+    }
+    pub fn get_payload(&self) -> &[u8] {
+        match &self.ucivendor_e_command.child {
+            UciVendor_E_CommandDataChild::Payload(bytes) => &bytes,
+            UciVendor_E_CommandDataChild::None => &[],
+        }
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        self.ucivendor_e_command.write_to(buffer)
+    }
+    pub fn get_size(&self) -> usize {
+        self.ucipacket.get_size()
+    }
+}
+impl UciVendor_E_CommandBuilder {
+    pub fn build(self) -> UciVendor_E_Command {
+        let ucivendor_e_command = UciVendor_E_CommandData {
+            child: match self.payload {
+                None => UciVendor_E_CommandDataChild::None,
+                Some(bytes) => UciVendor_E_CommandDataChild::Payload(bytes),
+            },
+        };
+        let ucicommand = UciCommandData {
+            child: UciCommandDataChild::UciVendor_E_Command(ucivendor_e_command),
+        };
+        let ucipacket = UciPacketData {
+            group_id: GroupId::VendorReservedE,
+            message_type: MessageType::Command,
+            opcode: self.opcode,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            child: UciPacketDataChild::UciCommand(ucicommand),
+        };
+        UciVendor_E_Command::new(ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_E_CommandBuilder> for UciPacket {
+    fn from(builder: UciVendor_E_CommandBuilder) -> UciPacket {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_E_CommandBuilder> for UciCommand {
+    fn from(builder: UciVendor_E_CommandBuilder) -> UciCommand {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_E_CommandBuilder> for UciVendor_E_Command {
+    fn from(builder: UciVendor_E_CommandBuilder) -> UciVendor_E_Command {
+        builder.build().into()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_F_CommandDataChild {
+    Payload(Bytes),
+    None,
+}
+impl UciVendor_F_CommandDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            UciVendor_F_CommandDataChild::Payload(bytes) => bytes.len(),
+            UciVendor_F_CommandDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum UciVendor_F_CommandChild {
+    Payload(Bytes),
+    None,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_F_CommandData {
+    child: UciVendor_F_CommandDataChild,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_F_Command {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucipacket: UciPacketData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucicommand: UciCommandData,
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    ucivendor_f_command: UciVendor_F_CommandData,
+}
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UciVendor_F_CommandBuilder {
+    pub opcode: u8,
+    pub payload: Option<Bytes>,
+}
+impl UciVendor_F_CommandData {
+    fn conforms(bytes: &[u8]) -> bool {
+        true
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let payload = bytes.get();
+        bytes.get_mut().advance(payload.len());
+        let child = match () {
+            _ if !payload.is_empty() => {
+                UciVendor_F_CommandDataChild::Payload(Bytes::copy_from_slice(payload))
+            }
+            _ => UciVendor_F_CommandDataChild::None,
+        };
+        Ok(Self { child })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        match &self.child {
+            UciVendor_F_CommandDataChild::Payload(payload) => buffer.put_slice(payload),
+            UciVendor_F_CommandDataChild::None => {}
+        }
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        self.child.get_total_size()
+    }
+}
+impl Packet for UciVendor_F_Command {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
+        self.ucipacket.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<UciVendor_F_Command> for Bytes {
+    fn from(packet: UciVendor_F_Command) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<UciVendor_F_Command> for Vec<u8> {
+    fn from(packet: UciVendor_F_Command) -> Self {
+        packet.to_vec()
+    }
+}
+impl From<UciVendor_F_Command> for UciPacket {
+    fn from(packet: UciVendor_F_Command) -> UciPacket {
+        UciPacket::new(packet.ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_F_Command> for UciCommand {
+    fn from(packet: UciVendor_F_Command) -> UciCommand {
+        UciCommand::new(packet.ucipacket).unwrap()
+    }
+}
+impl TryFrom<UciPacket> for UciVendor_F_Command {
+    type Error = Error;
+    fn try_from(packet: UciPacket) -> Result<UciVendor_F_Command> {
+        UciVendor_F_Command::new(packet.ucipacket)
+    }
+}
+impl UciVendor_F_Command {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let data = UciPacketData::parse_inner(&mut bytes)?;
+        Self::new(data)
+    }
+    pub fn specialize(&self) -> UciVendor_F_CommandChild {
+        match &self.ucivendor_f_command.child {
+            UciVendor_F_CommandDataChild::Payload(payload) => {
+                UciVendor_F_CommandChild::Payload(payload.clone())
+            }
+            UciVendor_F_CommandDataChild::None => UciVendor_F_CommandChild::None,
+        }
+    }
+    fn new(ucipacket: UciPacketData) -> Result<Self> {
+        let ucicommand = match &ucipacket.child {
+            UciPacketDataChild::UciCommand(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &ucipacket.child),
+                });
+            }
+        };
+        let ucivendor_f_command = match &ucicommand.child {
+            UciCommandDataChild::UciVendor_F_Command(value) => value.clone(),
+            _ => {
+                return Err(Error::InvalidChildError {
+                    expected: stringify!(UciCommandDataChild::UciVendor_F_Command),
+                    actual: format!("{:?}", &ucicommand.child),
+                });
+            }
+        };
+        Ok(Self {
+            ucipacket,
+            ucicommand,
+            ucivendor_f_command,
+        })
+    }
+    pub fn get_group_id(&self) -> GroupId {
+        self.ucipacket.group_id
+    }
+    pub fn get_message_type(&self) -> MessageType {
+        self.ucipacket.message_type
+    }
+    pub fn get_opcode(&self) -> u8 {
+        self.ucipacket.opcode
+    }
+    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
+        self.ucipacket.packet_boundary_flag
+    }
+    pub fn get_payload(&self) -> &[u8] {
+        match &self.ucivendor_f_command.child {
+            UciVendor_F_CommandDataChild::Payload(bytes) => &bytes,
+            UciVendor_F_CommandDataChild::None => &[],
+        }
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        self.ucivendor_f_command.write_to(buffer)
+    }
+    pub fn get_size(&self) -> usize {
+        self.ucipacket.get_size()
+    }
+}
+impl UciVendor_F_CommandBuilder {
+    pub fn build(self) -> UciVendor_F_Command {
+        let ucivendor_f_command = UciVendor_F_CommandData {
+            child: match self.payload {
+                None => UciVendor_F_CommandDataChild::None,
+                Some(bytes) => UciVendor_F_CommandDataChild::Payload(bytes),
+            },
+        };
+        let ucicommand = UciCommandData {
+            child: UciCommandDataChild::UciVendor_F_Command(ucivendor_f_command),
+        };
+        let ucipacket = UciPacketData {
+            group_id: GroupId::VendorReservedF,
+            message_type: MessageType::Command,
+            opcode: self.opcode,
+            packet_boundary_flag: PacketBoundaryFlag::Complete,
+            child: UciPacketDataChild::UciCommand(ucicommand),
+        };
+        UciVendor_F_Command::new(ucipacket).unwrap()
+    }
+}
+impl From<UciVendor_F_CommandBuilder> for UciPacket {
+    fn from(builder: UciVendor_F_CommandBuilder) -> UciPacket {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_F_CommandBuilder> for UciCommand {
+    fn from(builder: UciVendor_F_CommandBuilder) -> UciCommand {
+        builder.build().into()
+    }
+}
+impl From<UciVendor_F_CommandBuilder> for UciVendor_F_Command {
+    fn from(builder: UciVendor_F_CommandBuilder) -> UciVendor_F_Command {
         builder.build().into()
     }
 }

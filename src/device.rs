@@ -508,6 +508,36 @@ impl Device {
                     _ => panic!("Unsupported Android command"),
                 }
             }
+            UciCommandChild::UciVendor_9_Command(vendor_command) => UciVendor_9_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_A_Command(vendor_command) => UciVendor_A_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_B_Command(vendor_command) => UciVendor_B_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_E_Command(vendor_command) => UciVendor_E_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
+            UciCommandChild::UciVendor_F_Command(vendor_command) => UciVendor_F_ResponseBuilder {
+                opcode: vendor_command.get_opcode(),
+                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            }
+            .build()
+            .into(),
             // TODO: Handle properly without panic
             _ => UciResponseBuilder {
                 group_id: GroupId::Core,
