@@ -473,7 +473,7 @@ enum MessageType: 3 {
 // UCI packet description in compliance with the FIRA UCI spec.
 // Only this packet should be sent/expected across the HAL interface.
 packet UciPacket {
-    group_id_or_data_packet_format: GroupIdOrDataPacketFormat,
+    group_id: GroupId,
     packet_boundary_flag: PacketBoundaryFlag,
     message_type: MessageType,
     opcode: 6,

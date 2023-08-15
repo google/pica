@@ -36,10 +36,10 @@ pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
 
 #[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceType {
-    /// [MAC] 5.1.1 Device controlling the ranging features through Control Messages
-    Controller,
     /// [MAC] 5.1.2 Device utilizing the ranging features set through Control Messages
-    Controlee,
+    Controlee = 0x00,
+    /// [MAC] 5.1.1 Device controlling the ranging features through Control Messages
+    Controller = 0x01,
 }
 
 #[derive(Copy, Clone, FromPrimitive)]
@@ -96,6 +96,144 @@ enum UpdateMulticastListAction {
     Delete = 0x01,
 }
 
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum RangingRoundUsage {
+    UlTdoa = 0x00,
+    SsTwrDeferredMode = 0x01,
+    DsTwrDeferredMode = 0x02,
+    SsTwrNonDeferredMode = 0x03,
+    DsTwrNonDeferredMode = 0x04,
+    DlTdoa = 0x05,
+    OwrAoaMeasurement = 0x06,
+    DataTransferMode = 0x09,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum StsConfig {
+    Static = 0x00,
+    Dynamic = 0x01,
+    DynamicForControleeIndividualKey = 0x02,
+    Provisioned = 0x03,
+    ProvisionedForControleeIndividualKey = 0x04,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum MacFcsType {
+    MacFcsTypeCrc16 = 0x00,
+    MacFcsTypeCrc32 = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum AoaResultReq {
+    NoAoaResult = 0x00,
+    ReqAoaResults = 0x01,
+    ReqAoaResultsAzimuthOnly = 0x02,
+    ReqAoaResultsElevationOnly = 0x03,
+    ReqAoaResultsInterleaved = 0x04,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum RframeConfig {
+    Sp0 = 0x00,
+    Sp1 = 0x01,
+    Sp3 = 0x03,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum PsduDataRate {
+    Rate6M81 = 0x00,
+    Rate7M80 = 0x01,
+    Rate27M2 = 0x02,
+    Rate31M2 = 0x03,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum PreambleDuration {
+    PreambleDurationT32Symbols = 0x00,
+    PreambleDurationT64Symbols = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum RangingTimeStruct {
+    IntervalBasedScheduling = 0x00,
+    BlockBasedScheduling = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum PrfMode {
+    PrfModeBprf = 0x00,
+    PrfModeHprf = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum SchedulingMode {
+    ContentionBased = 0x00,
+    TimeScheduled = 0x01,
+    HybridScheduled = 0x02,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum HoppingMode {
+    Disable = 0x00,
+    FiraEnable = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum StsLength {
+    StsLength32 = 0x00,
+    StsLength64 = 0x01,
+    StsLength128 = 0x02,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum BprfPhrDataRate {
+    BprfPhrDataRate850K = 0x00,
+    BprfPhrDataRate6M81 = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum SfdIdValue {
+    SfdIdValue0 = 0x00,
+    SfdIdValue1 = 0x01,
+    SfdIdValue2 = 0x02,
+    SfdIdValue3 = 0x03,
+    SfdIdValue4 = 0x04,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+enum StsSegmentCountValue {
+    StsSegmentCountValue0 = 0x00,
+    StsSegmentCountValue1 = 0x01,
+    StsSegmentCountValue2 = 0x02,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum RangeDataNtfConfig {
+    Disable = 0x00,
+    Enable = 0x01,
+    EnableProximityLevelTrig = 0x02,
+    EnableAoaLevelTrig = 0x03,
+    EnableProximityAoaLevelTrig = 0x04,
+    EnableProximityEdgeTrig = 0x05,
+    EnableAoaEdgeTrig = 0x06,
+    EnableProximityAoaEdgeTrig = 0x07,
+}
 /// cf. [UCI] 8.3 Table 29
 #[derive(Clone)]
 pub struct AppConfig {
@@ -103,7 +241,7 @@ pub struct AppConfig {
     raw: HashMap<AppConfigTlvType, Vec<u8>>,
 
     device_type: DeviceType,
-    _device_role: DeviceRole,
+    device_role: DeviceRole,
     mac_address_mode: MacAddressMode,
     device_mac_address: MacAddress,
     number_of_controlees: usize,
@@ -112,6 +250,40 @@ pub struct AppConfig {
     slot_duration: u16,
     channel_number: ChannelNumber,
     multi_node_mode: MultiNodeMode,
+    ranging_round_usage: RangingRoundUsage,
+    sts_config: StsConfig,
+    mac_fcs_type: MacFcsType,
+    ranging_round_control: u8,
+    aoa_result_req: AoaResultReq,
+    rng_data_ntf: RangeDataNtfConfig,
+    rng_data_ntf_proximity_near: u16,
+    rng_data_ntf_proximity_far: u16,
+    r_frame_config: RframeConfig,
+    rssi_reporting: bool,
+    preamble_code_index: u8,
+    sfd_id: SfdIdValue,
+    psdu_data_rate: PsduDataRate,
+    preamble_duration: PreambleDuration,
+    ranging_time_struct: RangingTimeStruct,
+    slots_per_rr: u8,
+    tx_adaptive_payload_power: bool,
+    prf_mode: PrfMode,
+    schedule_mode: SchedulingMode,
+    key_rotation: bool,
+    key_rotation_rate: u8,
+    session_priority: u8,
+    number_of_sts_segments: StsSegmentCountValue,
+    max_rr_retry: u16,
+    hopping_mode: HoppingMode,
+    block_stride_length: u8,
+    result_report_config: bool,
+    in_band_termination_attempt_count: u8,
+    bprf_phr_data_rate: BprfPhrDataRate,
+    max_number_of_measurements: u8,
+    sts_length: StsLength,
+    uwb_initiation_time: u32,
+    vendor_id: Option<Vec<u8>>,
+    static_sts_iv: Option<Vec<u8>>,
 }
 
 impl Default for AppConfig {
@@ -119,7 +291,7 @@ impl Default for AppConfig {
         AppConfig {
             raw: HashMap::new(),
             mac_address_mode: MacAddressMode::AddressMode0,
-            _device_role: DeviceRole::Responder,
+            device_role: DeviceRole::Responder,
             device_type: DeviceType::Controlee,
             ranging_interval: DEFAULT_RANGING_INTERVAL,
             slot_duration: DEFAULT_SLOT_DURATION,
@@ -128,6 +300,40 @@ impl Default for AppConfig {
             number_of_controlees: 0,
             dst_mac_addresses: Vec::new(),
             multi_node_mode: MultiNodeMode::Unicast,
+            ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+            sts_config: StsConfig::Static,
+            mac_fcs_type: MacFcsType::MacFcsTypeCrc16,
+            ranging_round_control: 6_u8,
+            aoa_result_req: AoaResultReq::ReqAoaResults,
+            rng_data_ntf: RangeDataNtfConfig::Enable,
+            rng_data_ntf_proximity_near: 0,
+            rng_data_ntf_proximity_far: 0,
+            r_frame_config: RframeConfig::Sp3,
+            rssi_reporting: false,
+            preamble_code_index: 10,
+            sfd_id: SfdIdValue::SfdIdValue2,
+            psdu_data_rate: PsduDataRate::Rate6M81,
+            preamble_duration: PreambleDuration::PreambleDurationT64Symbols,
+            ranging_time_struct: RangingTimeStruct::IntervalBasedScheduling,
+            slots_per_rr: 25,
+            tx_adaptive_payload_power: false,
+            prf_mode: PrfMode::PrfModeBprf,
+            schedule_mode: SchedulingMode::TimeScheduled,
+            key_rotation: false,
+            key_rotation_rate: 0,
+            session_priority: 50,
+            number_of_sts_segments: StsSegmentCountValue::StsSegmentCountValue1,
+            max_rr_retry: 0,
+            hopping_mode: HoppingMode::Disable,
+            block_stride_length: 0,
+            result_report_config: true,
+            in_band_termination_attempt_count: 1,
+            bprf_phr_data_rate: BprfPhrDataRate::BprfPhrDataRate850K,
+            max_number_of_measurements: 0,
+            sts_length: StsLength::StsLength64,
+            uwb_initiation_time: 0,
+            vendor_id: None,
+            static_sts_iv: None,
         }
     }
 }
@@ -209,6 +415,108 @@ impl AppConfig {
             }
             AppConfigTlvType::MultiNodeMode => {
                 self.multi_node_mode = MultiNodeMode::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::DeviceType => {
+                self.device_type = DeviceType::from_u8(value[0]).unwrap();
+            }
+            AppConfigTlvType::RangingRoundUsage => {
+                self.ranging_round_usage = RangingRoundUsage::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::StsConfig => self.sts_config = StsConfig::from_u8(value[0]).unwrap(),
+            AppConfigTlvType::MacFcsType => {
+                self.mac_fcs_type = MacFcsType::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::RangingRoundControl => self.ranging_round_control = value[0],
+            AppConfigTlvType::AoaResultReq => {
+                self.aoa_result_req = AoaResultReq::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::RngDataNtf => {
+                self.rng_data_ntf = RangeDataNtfConfig::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::RngDataNtfProximityNear => {
+                self.rng_data_ntf_proximity_near = u16::from_le_bytes(value[..].try_into().unwrap())
+            }
+            AppConfigTlvType::RngDataNtfProximityFar => {
+                self.rng_data_ntf_proximity_far = u16::from_le_bytes(value[..].try_into().unwrap())
+            }
+            AppConfigTlvType::DeviceRole => {
+                self.device_role = DeviceRole::from_u8(value[0]).unwrap();
+            }
+            AppConfigTlvType::RframeConfig => {
+                self.r_frame_config = RframeConfig::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::RssiReporting => {
+                self.rssi_reporting = match value[0] {
+                    0 => false,
+                    1 => true,
+                    _ => panic!("Invalid rssi reporting value!"),
+                }
+            }
+            AppConfigTlvType::PreambleCodeIndex => self.preamble_code_index = value[0],
+            AppConfigTlvType::SfdId => self.sfd_id = SfdIdValue::from_u8(value[0]).unwrap(),
+            AppConfigTlvType::PsduDataRate => {
+                self.psdu_data_rate = PsduDataRate::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::PreambleDuration => {
+                self.preamble_duration = PreambleDuration::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::RangingTimeStruct => {
+                self.ranging_time_struct = RangingTimeStruct::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::SlotsPerRr => self.slots_per_rr = value[0],
+            AppConfigTlvType::TxAdaptivePayloadPower => {
+                self.tx_adaptive_payload_power = match value[0] {
+                    0 => false,
+                    1 => true,
+                    _ => panic!("Invalid tx adaptive payload power value!"),
+                }
+            }
+            AppConfigTlvType::PrfMode => self.prf_mode = PrfMode::from_u8(value[0]).unwrap(),
+            AppConfigTlvType::ScheduledMode => {
+                self.schedule_mode = SchedulingMode::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::KeyRotation => {
+                self.key_rotation = match value[0] {
+                    0 => false,
+                    1 => true,
+                    _ => panic!("Invalid key rotation value!"),
+                }
+            }
+            AppConfigTlvType::KeyRotationRate => self.key_rotation_rate = value[0],
+            AppConfigTlvType::SessionPriority => self.session_priority = value[0],
+            AppConfigTlvType::VendorId => {
+                self.vendor_id = Some(value.to_vec());
+            }
+            AppConfigTlvType::StaticStsIv => {
+                self.static_sts_iv = Some(value.to_vec());
+            }
+            AppConfigTlvType::NumberOfStsSegments => {
+                self.number_of_sts_segments = StsSegmentCountValue::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::MaxRrRetry => {
+                self.max_rr_retry = u16::from_le_bytes(value[..].try_into().unwrap())
+            }
+            AppConfigTlvType::UwbInitiationTime => {
+                self.uwb_initiation_time = u32::from_le_bytes(value[..].try_into().unwrap())
+            }
+            AppConfigTlvType::HoppingMode => {
+                self.hopping_mode = HoppingMode::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::BlockStrideLength => self.block_stride_length = value[0],
+            AppConfigTlvType::ResultReportConfig => {
+                self.result_report_config = match value[0] {
+                    0 => false,
+                    1 => true,
+                    _ => panic!("Invalid result report config value!"),
+                }
+            }
+            AppConfigTlvType::BprfPhrDataRate => {
+                self.bprf_phr_data_rate = BprfPhrDataRate::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::MaxNumberOfMeasurements => self.max_number_of_measurements = value[0],
+            AppConfigTlvType::StsLength => self.sts_length = StsLength::from_u8(value[0]).unwrap(),
+            AppConfigTlvType::InBandTerminationAttemptCount => {
+                self.in_band_termination_attempt_count = value[0]
             }
             id => {
                 println!("Ignored AppConfig parameter {:?}", id);
@@ -310,6 +618,10 @@ impl Session {
         &self.app_config.dst_mac_addresses
     }
 
+    pub fn is_ranging_data_ntf_enabled(&self) -> RangeDataNtfConfig {
+        self.app_config.rng_data_ntf
+    }
+
     pub fn init(&mut self) {
         self.set_state(SessionState::SessionStateInit);
     }
@@ -323,14 +635,33 @@ impl Session {
         assert_eq!(self.id, cmd.get_session_token());
         assert_eq!(self.session_type, SessionType::FiraRangingSession);
 
-        let (status, invalid_parameters) = if self.state != SessionState::SessionStateInit {
+        if self.state == SessionState::SessionStateActive {
+            const IMMUTABLE_PARAMETERS: &[AppConfigTlvType] = &[AppConfigTlvType::AoaResultReq];
+            if cmd
+                .get_tlvs()
+                .iter()
+                .any(|cfg| IMMUTABLE_PARAMETERS.contains(&cfg.cfg_id))
+            {
+                return SessionSetAppConfigRspBuilder {
+                    status: StatusCode::UciStatusSessionActive,
+                    cfg_status: vec![],
+                }
+                .build();
+            }
+        }
+
+        let (status, invalid_parameters) = if self.state != SessionState::SessionStateInit
+            && self.state != SessionState::SessionStateActive
+        {
             (StatusCode::UciStatusRejected, Vec::new())
         } else {
             let mut app_config = self.app_config.clone();
             let invalid_parameters = app_config.extend(cmd.get_tlvs());
             if invalid_parameters.is_empty() {
                 self.app_config = app_config;
-                self.set_state(SessionState::SessionStateIdle);
+                if self.state == SessionState::SessionStateInit {
+                    self.set_state(SessionState::SessionStateIdle);
+                }
                 (StatusCode::UciStatusOk, invalid_parameters)
             } else {
                 (StatusCode::UciStatusInvalidParam, invalid_parameters)

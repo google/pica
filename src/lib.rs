@@ -41,6 +41,8 @@ use session::MAX_SESSION;
 mod mac_address;
 pub use mac_address::MacAddress;
 
+use crate::session::RangeDataNtfConfig;
+
 // UCI Generic Specification v1.1.0 § 4.4
 const HEADER_SIZE: usize = 4;
 const MAX_PAYLOAD_SIZE: usize = 255;
@@ -427,29 +429,30 @@ impl Pica {
                     }
                 }
             });
+        if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
+            device
+                .tx
+                .send(
+                    // TODO: support extended address
+                    ShortMacTwoWaySessionInfoNtfBuilder {
+                        sequence_number: session.sequence_number,
+                        session_token: session_id,
+                        rcr_indicator: 0,            //TODO
+                        current_ranging_interval: 0, //TODO
+                        two_way_ranging_measurements: measurements,
+                        vendor_data: vec![],
+                    }
+                    .build()
+                    .into(),
+                )
+                .await
+                .unwrap();
 
-        device
-            .tx
-            .send(
-                // TODO: support extended address
-                ShortMacTwoWaySessionInfoNtfBuilder {
-                    sequence_number: session.sequence_number,
-                    session_token: session_id,
-                    rcr_indicator: 0,            //TODO
-                    current_ranging_interval: 0, //TODO
-                    two_way_ranging_measurements: measurements,
-                    vendor_data: vec![],
-                }
-                .build()
-                .into(),
-            )
-            .await
-            .unwrap();
+            let device = self.get_device_mut(device_handle).unwrap();
+            let session = device.get_session_mut(session_id).unwrap();
 
-        let device = self.get_device_mut(device_handle).unwrap();
-        let session = device.get_session_mut(session_id).unwrap();
-
-        session.sequence_number += 1;
+            session.sequence_number += 1;
+        }
     }
 
     async fn command(&mut self, device_handle: usize, cmd: UciCommand) {
