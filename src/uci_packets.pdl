@@ -462,78 +462,89 @@ enum MessageType: 3 {
     RESERVED_FOR_TESTING_2 = 0x05,
 }
 
-// UCI packet description in compliance with the FIRA UCI spec.
-// Only this packet should be sent/expected across the HAL interface.
-packet UciPacket {
-    group_id: GroupId,
-    packet_boundary_flag: PacketBoundaryFlag,
-    message_type: MessageType,
+// Generic format for UCI packet headers.
+// No data packets are defined, the header fields are taken from the
+// Control packets.
+packet PacketHeader {
+  _reserved_ : 4,
+  pbf : PacketBoundaryFlag,
+  mt : MessageType,
+  _reserved_ : 16,
+  payload_length : 8,
+}
+
+// Unframed UCI control packet. The framing information is masked
+// including the payload length. The user must handle segmentation and
+// reassembly on the raw bytes before attempting to parse the packet.
+packet ControlPacket {
+    gid : GroupId,
+    _reserved_ : 1,
+    mt : MessageType,
     opcode: 6,
     _reserved_: 2,
-    _reserved_: 8,
-    _size_(_payload_): 8,
+    _reserved_: 16,
     _payload_,
 }
 
 // TODO(b/202760099): Handle fragmentation of packets if the size exceed max allowed.
-packet UciCommand : UciPacket (message_type = COMMAND, packet_boundary_flag = COMPLETE) {
+packet UciCommand : ControlPacket (mt = COMMAND) {
     _payload_,
 }
 
-packet UciResponse : UciPacket (message_type = RESPONSE, packet_boundary_flag = COMPLETE) {
+packet UciResponse : ControlPacket (mt = RESPONSE) {
     _payload_,
 }
 
-packet UciNotification : UciPacket (message_type = NOTIFICATION, packet_boundary_flag = COMPLETE) {
+packet UciNotification : ControlPacket (mt = NOTIFICATION) {
     _payload_,
 }
 
-packet CoreCommand : UciCommand (group_id = CORE) {
+packet CoreCommand : UciCommand (gid = CORE) {
     _body_,
 }
 
-packet CoreResponse : UciResponse (group_id = CORE) {
+packet CoreResponse : UciResponse (gid = CORE) {
     _body_,
 }
 
-packet CoreNotification : UciNotification (group_id = CORE) {
+packet CoreNotification : UciNotification (gid = CORE) {
     _body_,
 }
 
-packet SessionConfigCommand : UciCommand (group_id = SESSION_CONFIG) {
+packet SessionConfigCommand : UciCommand (gid = SESSION_CONFIG) {
     _body_,
 }
 
-packet SessionConfigResponse : UciResponse (group_id = SESSION_CONFIG) {
+packet SessionConfigResponse : UciResponse (gid = SESSION_CONFIG) {
     _body_,
 }
 
-packet SessionConfigNotification : UciNotification (group_id = SESSION_CONFIG) {
+packet SessionConfigNotification : UciNotification (gid = SESSION_CONFIG) {
     _body_,
 }
 
-packet SessionControlCommand : UciCommand (group_id = SESSION_CONTROL) {
+packet SessionControlCommand : UciCommand (gid = SESSION_CONTROL) {
     session_id: 32,
     _body_,
 }
 
-packet SessionControlResponse : UciResponse (group_id = SESSION_CONTROL) {
+packet SessionControlResponse : UciResponse (gid = SESSION_CONTROL) {
     _body_,
 }
 
-packet SessionControlNotification : UciNotification (group_id = SESSION_CONTROL) {
+packet SessionControlNotification : UciNotification (gid = SESSION_CONTROL) {
     _body_,
 }
 
-packet AndroidCommand : UciCommand (group_id = VENDOR_ANDROID) {
+packet AndroidCommand : UciCommand (gid = VENDOR_ANDROID) {
     _body_,
 }
 
-packet AndroidResponse : UciResponse (group_id = VENDOR_ANDROID) {
+packet AndroidResponse : UciResponse (gid = VENDOR_ANDROID) {
     _body_,
 }
 
-packet AndroidNotification : UciNotification (group_id = VENDOR_ANDROID) {
+packet AndroidNotification : UciNotification (gid = VENDOR_ANDROID) {
     _body_,
 }
 
@@ -1270,66 +1281,66 @@ test AndroidRangeDiagnosticsNtf {
     "\x6c\x02\x00\x34\x00\x00\x00\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x03\x01\x08\x00\x01\x02\x01\x02\x01\x02\x01\x01\x02\x15\x00\x01\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x00\x02\x04\x00\x01\x02\x03\x04\x00\x01\x00\x00",
 }
 
-packet UciVendor_9_Command : UciCommand (group_id = VENDOR_RESERVED_9) {
+packet UciVendor_9_Command : UciCommand (gid = VENDOR_RESERVED_9) {
     _payload_,
 }
 
-packet UciVendor_A_Command : UciCommand (group_id = VENDOR_RESERVED_A) {
+packet UciVendor_A_Command : UciCommand (gid = VENDOR_RESERVED_A) {
     _payload_,
 }
 
-packet UciVendor_B_Command : UciCommand (group_id = VENDOR_RESERVED_B) {
+packet UciVendor_B_Command : UciCommand (gid = VENDOR_RESERVED_B) {
     _payload_,
 }
 
-packet UciVendor_E_Command : UciCommand (group_id = VENDOR_RESERVED_E) {
+packet UciVendor_E_Command : UciCommand (gid = VENDOR_RESERVED_E) {
     _payload_,
 }
 
-packet UciVendor_F_Command : UciCommand (group_id = VENDOR_RESERVED_F) {
+packet UciVendor_F_Command : UciCommand (gid = VENDOR_RESERVED_F) {
     _payload_,
 }
 
-packet UciVendor_9_Response : UciResponse (group_id = VENDOR_RESERVED_9) {
+packet UciVendor_9_Response : UciResponse (gid = VENDOR_RESERVED_9) {
     _payload_,
 }
 
-packet UciVendor_A_Response : UciResponse (group_id = VENDOR_RESERVED_A) {
+packet UciVendor_A_Response : UciResponse (gid = VENDOR_RESERVED_A) {
     _payload_,
 }
 
-packet UciVendor_B_Response : UciResponse (group_id = VENDOR_RESERVED_B) {
+packet UciVendor_B_Response : UciResponse (gid = VENDOR_RESERVED_B) {
     _payload_,
 }
 
-packet UciVendor_E_Response : UciResponse (group_id = VENDOR_RESERVED_E) {
+packet UciVendor_E_Response : UciResponse (gid = VENDOR_RESERVED_E) {
     _payload_,
 }
 
-packet UciVendor_F_Response : UciResponse (group_id = VENDOR_RESERVED_F) {
+packet UciVendor_F_Response : UciResponse (gid = VENDOR_RESERVED_F) {
     _payload_,
 }
 
-packet UciVendor_9_Notification : UciNotification (group_id = VENDOR_RESERVED_9) {
+packet UciVendor_9_Notification : UciNotification (gid = VENDOR_RESERVED_9) {
     _payload_,
 }
 
-packet UciVendor_A_Notification : UciNotification (group_id = VENDOR_RESERVED_A) {
+packet UciVendor_A_Notification : UciNotification (gid = VENDOR_RESERVED_A) {
     _payload_,
 }
 
-packet UciVendor_B_Notification : UciNotification (group_id = VENDOR_RESERVED_B) {
+packet UciVendor_B_Notification : UciNotification (gid = VENDOR_RESERVED_B) {
     _payload_,
 }
 
-packet UciVendor_E_Notification : UciNotification (group_id = VENDOR_RESERVED_E) {
+packet UciVendor_E_Notification : UciNotification (gid = VENDOR_RESERVED_E) {
     _payload_,
 }
 
-packet UciVendor_F_Notification : UciNotification (group_id = VENDOR_RESERVED_F) {
+packet UciVendor_F_Notification : UciNotification (gid = VENDOR_RESERVED_F) {
     _payload_,
 }
 
-packet TestNotification : UciNotification (group_id = TEST) {
+packet TestNotification : UciNotification (gid = TEST) {
     _payload_,
 }
