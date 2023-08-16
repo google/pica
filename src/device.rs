@@ -76,7 +76,7 @@ pub struct Device {
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
-    pub tx: mpsc::Sender<UciPacket>,
+    pub tx: mpsc::Sender<ControlPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
     config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
@@ -87,7 +87,7 @@ pub struct Device {
 impl Device {
     pub fn new(
         device_handle: usize,
-        tx: mpsc::Sender<UciPacket>,
+        tx: mpsc::Sender<ControlPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         let mac_address = {
@@ -167,13 +167,8 @@ impl Device {
         .build()
     }
 
-    pub fn command_get_caps_info(&self, cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
+    pub fn command_get_caps_info(&self, _cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
         println!("[{}] GetCapsInfo", self.handle);
-        assert_eq!(
-            cmd.get_packet_boundary_flag(),
-            PacketBoundaryFlag::Complete,
-            "Boundary flag is true, implement fragmentation"
-        );
 
         let caps = DEFAULT_CAPS_INFO
             .iter()
@@ -193,11 +188,6 @@ impl Device {
     pub fn command_set_config(&mut self, cmd: SetConfigCmd) -> SetConfigRsp {
         println!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
-        assert_eq!(
-            cmd.get_packet_boundary_flag(),
-            PacketBoundaryFlag::Complete,
-            "Boundary flag is true, implement fragmentation"
-        );
 
         let (valid_parameters, invalid_config_status) = cmd.get_tlvs().iter().fold(
             (HashMap::new(), Vec::new()),
@@ -225,14 +215,9 @@ impl Device {
 
     pub fn command_get_config(&self, cmd: GetConfigCmd) -> GetConfigRsp {
         println!("[{}] GetConfig", self.handle);
-        assert_eq!(
-            cmd.get_packet_boundary_flag(),
-            PacketBoundaryFlag::Complete,
-            "Boundary flag is true, implement fragmentation"
-        );
-        let ids = cmd.get_cfg_id();
 
         // TODO: do this config shall be set on device reset
+        let ids = cmd.get_cfg_id();
         let (valid_parameters, invalid_parameters) = ids.iter().fold(
             (Vec::new(), Vec::new()),
             |(mut valid_parameters, mut invalid_parameters), id| {
@@ -540,7 +525,7 @@ impl Device {
             .into(),
             // TODO: Handle properly without panic
             _ => UciResponseBuilder {
-                group_id: GroupId::Core,
+                gid: GroupId::Core,
                 opcode: 0,
                 payload: None,
             }

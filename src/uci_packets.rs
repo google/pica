@@ -2545,58 +2545,25 @@ impl From<MessageType> for u64 {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum UciPacketDataChild {
-    UciCommand(UciCommandData),
-    UciResponse(UciResponseData),
-    UciNotification(UciNotificationData),
-    Payload(Bytes),
-    None,
-}
-impl UciPacketDataChild {
-    fn get_total_size(&self) -> usize {
-        match self {
-            UciPacketDataChild::UciCommand(value) => value.get_total_size(),
-            UciPacketDataChild::UciResponse(value) => value.get_total_size(),
-            UciPacketDataChild::UciNotification(value) => value.get_total_size(),
-            UciPacketDataChild::Payload(bytes) => bytes.len(),
-            UciPacketDataChild::None => 0,
-        }
-    }
+pub struct PacketHeaderData {
+    pbf: PacketBoundaryFlag,
+    mt: MessageType,
+    payload_length: u8,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum UciPacketChild {
-    UciCommand(UciCommand),
-    UciResponse(UciResponse),
-    UciNotification(UciNotification),
-    Payload(Bytes),
-    None,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct UciPacketData {
-    group_id: GroupId,
-    packet_boundary_flag: PacketBoundaryFlag,
-    message_type: MessageType,
-    opcode: u8,
-    child: UciPacketDataChild,
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct UciPacket {
+pub struct PacketHeader {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    packetheader: PacketHeaderData,
 }
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct UciPacketBuilder {
-    pub group_id: GroupId,
-    pub message_type: MessageType,
-    pub opcode: u8,
-    pub packet_boundary_flag: PacketBoundaryFlag,
-    pub payload: Option<Bytes>,
+pub struct PacketHeaderBuilder {
+    pub mt: MessageType,
+    pub payload_length: u8,
+    pub pbf: PacketBoundaryFlag,
 }
-impl UciPacketData {
+impl PacketHeaderData {
     fn conforms(bytes: &[u8]) -> bool {
         bytes.len() >= 4
     }
@@ -2608,135 +2575,276 @@ impl UciPacketData {
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
         if bytes.get().remaining() < 1 {
             return Err(Error::InvalidLengthError {
-                obj: "UciPacket".to_string(),
+                obj: "PacketHeader".to_string(),
                 wanted: 1,
                 got: bytes.get().remaining(),
             });
         }
         let chunk = bytes.get_mut().get_u8();
-        let group_id = GroupId::try_from((chunk & 0xf)).map_err(|unknown_val| {
+        let pbf = PacketBoundaryFlag::try_from(((chunk >> 4) & 0x1)).map_err(|unknown_val| {
             Error::InvalidEnumValueError {
-                obj: "UciPacket".to_string(),
-                field: "group_id".to_string(),
+                obj: "PacketHeader".to_string(),
+                field: "pbf".to_string(),
+                value: unknown_val as u64,
+                type_: "PacketBoundaryFlag".to_string(),
+            }
+        })?;
+        let mt = MessageType::try_from(((chunk >> 5) & 0x7)).map_err(|unknown_val| {
+            Error::InvalidEnumValueError {
+                obj: "PacketHeader".to_string(),
+                field: "mt".to_string(),
+                value: unknown_val as u64,
+                type_: "MessageType".to_string(),
+            }
+        })?;
+        if bytes.get().remaining() < 2 {
+            return Err(Error::InvalidLengthError {
+                obj: "PacketHeader".to_string(),
+                wanted: 2,
+                got: bytes.get().remaining(),
+            });
+        }
+        bytes.get_mut().advance(2);
+        if bytes.get().remaining() < 1 {
+            return Err(Error::InvalidLengthError {
+                obj: "PacketHeader".to_string(),
+                wanted: 1,
+                got: bytes.get().remaining(),
+            });
+        }
+        let payload_length = bytes.get_mut().get_u8();
+        Ok(Self {
+            pbf,
+            mt,
+            payload_length,
+        })
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        let value = (u8::from(self.pbf) << 4) | (u8::from(self.mt) << 5);
+        buffer.put_u8(value);
+        buffer.put_bytes(0, 2);
+        buffer.put_u8(self.payload_length);
+    }
+    fn get_total_size(&self) -> usize {
+        self.get_size()
+    }
+    fn get_size(&self) -> usize {
+        4
+    }
+}
+impl Packet for PacketHeader {
+    fn to_bytes(self) -> Bytes {
+        let mut buffer = BytesMut::with_capacity(self.packetheader.get_size());
+        self.packetheader.write_to(&mut buffer);
+        buffer.freeze()
+    }
+    fn to_vec(self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+}
+impl From<PacketHeader> for Bytes {
+    fn from(packet: PacketHeader) -> Self {
+        packet.to_bytes()
+    }
+}
+impl From<PacketHeader> for Vec<u8> {
+    fn from(packet: PacketHeader) -> Self {
+        packet.to_vec()
+    }
+}
+impl PacketHeader {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        let data = PacketHeaderData::parse_inner(&mut bytes)?;
+        Self::new(data)
+    }
+    fn new(packetheader: PacketHeaderData) -> Result<Self> {
+        Ok(Self { packetheader })
+    }
+    pub fn get_mt(&self) -> MessageType {
+        self.packetheader.mt
+    }
+    pub fn get_payload_length(&self) -> u8 {
+        self.packetheader.payload_length
+    }
+    pub fn get_pbf(&self) -> PacketBoundaryFlag {
+        self.packetheader.pbf
+    }
+    fn write_to(&self, buffer: &mut BytesMut) {
+        self.packetheader.write_to(buffer)
+    }
+    pub fn get_size(&self) -> usize {
+        self.packetheader.get_size()
+    }
+}
+impl PacketHeaderBuilder {
+    pub fn build(self) -> PacketHeader {
+        let packetheader = PacketHeaderData {
+            mt: self.mt,
+            payload_length: self.payload_length,
+            pbf: self.pbf,
+        };
+        PacketHeader::new(packetheader).unwrap()
+    }
+}
+impl From<PacketHeaderBuilder> for PacketHeader {
+    fn from(builder: PacketHeaderBuilder) -> PacketHeader {
+        builder.build().into()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ControlPacketDataChild {
+    UciCommand(UciCommandData),
+    UciResponse(UciResponseData),
+    UciNotification(UciNotificationData),
+    Payload(Bytes),
+    None,
+}
+impl ControlPacketDataChild {
+    fn get_total_size(&self) -> usize {
+        match self {
+            ControlPacketDataChild::UciCommand(value) => value.get_total_size(),
+            ControlPacketDataChild::UciResponse(value) => value.get_total_size(),
+            ControlPacketDataChild::UciNotification(value) => value.get_total_size(),
+            ControlPacketDataChild::Payload(bytes) => bytes.len(),
+            ControlPacketDataChild::None => 0,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ControlPacketChild {
+    UciCommand(UciCommand),
+    UciResponse(UciResponse),
+    UciNotification(UciNotification),
+    Payload(Bytes),
+    None,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ControlPacketData {
+    gid: GroupId,
+    mt: MessageType,
+    opcode: u8,
+    child: ControlPacketDataChild,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ControlPacket {
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    controlpacket: ControlPacketData,
+}
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ControlPacketBuilder {
+    pub gid: GroupId,
+    pub mt: MessageType,
+    pub opcode: u8,
+    pub payload: Option<Bytes>,
+}
+impl ControlPacketData {
+    fn conforms(bytes: &[u8]) -> bool {
+        bytes.len() >= 4
+    }
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cell = Cell::new(bytes);
+        let packet = Self::parse_inner(&mut cell)?;
+        Ok(packet)
+    }
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
+        if bytes.get().remaining() < 1 {
+            return Err(Error::InvalidLengthError {
+                obj: "ControlPacket".to_string(),
+                wanted: 1,
+                got: bytes.get().remaining(),
+            });
+        }
+        let chunk = bytes.get_mut().get_u8();
+        let gid = GroupId::try_from((chunk & 0xf)).map_err(|unknown_val| {
+            Error::InvalidEnumValueError {
+                obj: "ControlPacket".to_string(),
+                field: "gid".to_string(),
                 value: unknown_val as u64,
                 type_: "GroupId".to_string(),
             }
         })?;
-        let packet_boundary_flag =
-            PacketBoundaryFlag::try_from(((chunk >> 4) & 0x1)).map_err(|unknown_val| {
-                Error::InvalidEnumValueError {
-                    obj: "UciPacket".to_string(),
-                    field: "packet_boundary_flag".to_string(),
-                    value: unknown_val as u64,
-                    type_: "PacketBoundaryFlag".to_string(),
-                }
-            })?;
-        let message_type = MessageType::try_from(((chunk >> 5) & 0x7)).map_err(|unknown_val| {
+        let mt = MessageType::try_from(((chunk >> 5) & 0x7)).map_err(|unknown_val| {
             Error::InvalidEnumValueError {
-                obj: "UciPacket".to_string(),
-                field: "message_type".to_string(),
+                obj: "ControlPacket".to_string(),
+                field: "mt".to_string(),
                 value: unknown_val as u64,
                 type_: "MessageType".to_string(),
             }
         })?;
         if bytes.get().remaining() < 1 {
             return Err(Error::InvalidLengthError {
-                obj: "UciPacket".to_string(),
+                obj: "ControlPacket".to_string(),
                 wanted: 1,
                 got: bytes.get().remaining(),
             });
         }
         let chunk = bytes.get_mut().get_u8();
         let opcode = (chunk & 0x3f);
-        if bytes.get().remaining() < 1 {
+        if bytes.get().remaining() < 2 {
             return Err(Error::InvalidLengthError {
-                obj: "UciPacket".to_string(),
-                wanted: 1,
+                obj: "ControlPacket".to_string(),
+                wanted: 2,
                 got: bytes.get().remaining(),
             });
         }
-        bytes.get_mut().advance(1);
-        if bytes.get().remaining() < 1 {
-            return Err(Error::InvalidLengthError {
-                obj: "UciPacket".to_string(),
-                wanted: 1,
-                got: bytes.get().remaining(),
-            });
-        }
-        let payload_size = bytes.get_mut().get_u8() as usize;
-        if bytes.get().remaining() < payload_size {
-            return Err(Error::InvalidLengthError {
-                obj: "UciPacket".to_string(),
-                wanted: payload_size,
-                got: bytes.get().remaining(),
-            });
-        }
-        let payload = &bytes.get()[..payload_size];
-        bytes.get_mut().advance(payload_size);
-        let child = match (message_type, packet_boundary_flag) {
-            (MessageType::Command, PacketBoundaryFlag::Complete)
-                if UciCommandData::conforms(&payload) =>
-            {
+        bytes.get_mut().advance(2);
+        let payload = bytes.get();
+        bytes.get_mut().advance(payload.len());
+        let child = match (mt) {
+            (MessageType::Command) if UciCommandData::conforms(&payload) => {
                 let mut cell = Cell::new(payload);
-                let child_data = UciCommandData::parse_inner(&mut cell, group_id, opcode)?;
-                UciPacketDataChild::UciCommand(child_data)
+                let child_data = UciCommandData::parse_inner(&mut cell, gid, opcode)?;
+                ControlPacketDataChild::UciCommand(child_data)
             }
-            (MessageType::Response, PacketBoundaryFlag::Complete)
-                if UciResponseData::conforms(&payload) =>
-            {
+            (MessageType::Response) if UciResponseData::conforms(&payload) => {
                 let mut cell = Cell::new(payload);
-                let child_data = UciResponseData::parse_inner(&mut cell, group_id, opcode)?;
-                UciPacketDataChild::UciResponse(child_data)
+                let child_data = UciResponseData::parse_inner(&mut cell, gid, opcode)?;
+                ControlPacketDataChild::UciResponse(child_data)
             }
-            (MessageType::Notification, PacketBoundaryFlag::Complete)
-                if UciNotificationData::conforms(&payload) =>
-            {
+            (MessageType::Notification) if UciNotificationData::conforms(&payload) => {
                 let mut cell = Cell::new(payload);
-                let child_data = UciNotificationData::parse_inner(&mut cell, group_id, opcode)?;
-                UciPacketDataChild::UciNotification(child_data)
+                let child_data = UciNotificationData::parse_inner(&mut cell, gid, opcode)?;
+                ControlPacketDataChild::UciNotification(child_data)
             }
             _ if !payload.is_empty() => {
-                UciPacketDataChild::Payload(Bytes::copy_from_slice(payload))
+                ControlPacketDataChild::Payload(Bytes::copy_from_slice(payload))
             }
-            _ => UciPacketDataChild::None,
+            _ => ControlPacketDataChild::None,
         };
         Ok(Self {
-            group_id,
-            packet_boundary_flag,
-            message_type,
+            gid,
+            mt,
             opcode,
             child,
         })
     }
     fn write_to(&self, buffer: &mut BytesMut) {
-        let value = u8::from(self.group_id)
-            | (u8::from(self.packet_boundary_flag) << 4)
-            | (u8::from(self.message_type) << 5);
+        let value = u8::from(self.gid) | (u8::from(self.mt) << 5);
         buffer.put_u8(value);
         if self.opcode > 0x3f {
             panic!(
                 "Invalid value for {}::{}: {} > {}",
-                "UciPacket", "opcode", self.opcode, 0x3f
+                "ControlPacket", "opcode", self.opcode, 0x3f
             );
         }
         buffer.put_u8(self.opcode);
-        buffer.put_bytes(0, 1);
-        if self.child.get_total_size() > 0xff {
-            panic!(
-                "Invalid length for {}::{}: {} > {}",
-                "UciPacket",
-                "_payload_",
-                self.child.get_total_size(),
-                0xff
-            );
-        }
-        buffer.put_u8(self.child.get_total_size() as u8);
+        buffer.put_bytes(0, 2);
         match &self.child {
-            UciPacketDataChild::UciCommand(child) => child.write_to(buffer),
-            UciPacketDataChild::UciResponse(child) => child.write_to(buffer),
-            UciPacketDataChild::UciNotification(child) => child.write_to(buffer),
-            UciPacketDataChild::Payload(payload) => buffer.put_slice(payload),
-            UciPacketDataChild::None => {}
+            ControlPacketDataChild::UciCommand(child) => child.write_to(buffer),
+            ControlPacketDataChild::UciResponse(child) => child.write_to(buffer),
+            ControlPacketDataChild::UciNotification(child) => child.write_to(buffer),
+            ControlPacketDataChild::Payload(payload) => buffer.put_slice(payload),
+            ControlPacketDataChild::None => {}
         }
     }
     fn get_total_size(&self) -> usize {
@@ -2746,90 +2854,88 @@ impl UciPacketData {
         4 + self.child.get_total_size()
     }
 }
-impl Packet for UciPacket {
+impl Packet for ControlPacket {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
         self.to_bytes().to_vec()
     }
 }
-impl From<UciPacket> for Bytes {
-    fn from(packet: UciPacket) -> Self {
+impl From<ControlPacket> for Bytes {
+    fn from(packet: ControlPacket) -> Self {
         packet.to_bytes()
     }
 }
-impl From<UciPacket> for Vec<u8> {
-    fn from(packet: UciPacket) -> Self {
+impl From<ControlPacket> for Vec<u8> {
+    fn from(packet: ControlPacket) -> Self {
         packet.to_vec()
     }
 }
-impl UciPacket {
+impl ControlPacket {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let mut cell = Cell::new(bytes);
         let packet = Self::parse_inner(&mut cell)?;
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    pub fn specialize(&self) -> UciPacketChild {
-        match &self.ucipacket.child {
-            UciPacketDataChild::UciCommand(_) => {
-                UciPacketChild::UciCommand(UciCommand::new(self.ucipacket.clone()).unwrap())
+    pub fn specialize(&self) -> ControlPacketChild {
+        match &self.controlpacket.child {
+            ControlPacketDataChild::UciCommand(_) => {
+                ControlPacketChild::UciCommand(UciCommand::new(self.controlpacket.clone()).unwrap())
             }
-            UciPacketDataChild::UciResponse(_) => {
-                UciPacketChild::UciResponse(UciResponse::new(self.ucipacket.clone()).unwrap())
-            }
-            UciPacketDataChild::UciNotification(_) => UciPacketChild::UciNotification(
-                UciNotification::new(self.ucipacket.clone()).unwrap(),
+            ControlPacketDataChild::UciResponse(_) => ControlPacketChild::UciResponse(
+                UciResponse::new(self.controlpacket.clone()).unwrap(),
             ),
-            UciPacketDataChild::Payload(payload) => UciPacketChild::Payload(payload.clone()),
-            UciPacketDataChild::None => UciPacketChild::None,
+            ControlPacketDataChild::UciNotification(_) => ControlPacketChild::UciNotification(
+                UciNotification::new(self.controlpacket.clone()).unwrap(),
+            ),
+            ControlPacketDataChild::Payload(payload) => {
+                ControlPacketChild::Payload(payload.clone())
+            }
+            ControlPacketDataChild::None => ControlPacketChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        Ok(Self { ucipacket })
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        Ok(Self { controlpacket })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
-        self.ucipacket.write_to(buffer)
+        self.controlpacket.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
-impl UciPacketBuilder {
-    pub fn build(self) -> UciPacket {
-        let ucipacket = UciPacketData {
-            group_id: self.group_id,
-            message_type: self.message_type,
+impl ControlPacketBuilder {
+    pub fn build(self) -> ControlPacket {
+        let controlpacket = ControlPacketData {
+            gid: self.gid,
+            mt: self.mt,
             opcode: self.opcode,
-            packet_boundary_flag: self.packet_boundary_flag,
             child: match self.payload {
-                None => UciPacketDataChild::None,
-                Some(bytes) => UciPacketDataChild::Payload(bytes),
+                None => ControlPacketDataChild::None,
+                Some(bytes) => ControlPacketDataChild::Payload(bytes),
             },
         };
-        UciPacket::new(ucipacket).unwrap()
+        ControlPacket::new(controlpacket).unwrap()
     }
 }
-impl From<UciPacketBuilder> for UciPacket {
-    fn from(builder: UciPacketBuilder) -> UciPacket {
+impl From<ControlPacketBuilder> for ControlPacket {
+    fn from(builder: ControlPacketBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -2889,14 +2995,14 @@ pub struct UciCommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciCommand {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
 }
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciCommandBuilder {
-    pub group_id: GroupId,
+    pub gid: GroupId,
     pub opcode: u8,
     pub payload: Option<Bytes>,
 }
@@ -2904,15 +3010,15 @@ impl UciCommandData {
     fn conforms(bytes: &[u8]) -> bool {
         true
     }
-    fn parse(bytes: &[u8], group_id: GroupId, opcode: u8) -> Result<Self> {
+    fn parse(bytes: &[u8], gid: GroupId, opcode: u8) -> Result<Self> {
         let mut cell = Cell::new(bytes);
-        let packet = Self::parse_inner(&mut cell, group_id, opcode)?;
+        let packet = Self::parse_inner(&mut cell, gid, opcode)?;
         Ok(packet)
     }
-    fn parse_inner(mut bytes: &mut Cell<&[u8]>, group_id: GroupId, opcode: u8) -> Result<Self> {
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>, gid: GroupId, opcode: u8) -> Result<Self> {
         let payload = bytes.get();
         bytes.get_mut().advance(payload.len());
-        let child = match (group_id) {
+        let child = match (gid) {
             (GroupId::Core) if CoreCommandData::conforms(&payload) => {
                 let mut cell = Cell::new(payload);
                 let child_data = CoreCommandData::parse_inner(&mut cell, opcode)?;
@@ -2989,8 +3095,8 @@ impl UciCommandData {
 }
 impl Packet for UciCommand {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -3007,15 +3113,15 @@ impl From<UciCommand> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciCommand> for UciPacket {
-    fn from(packet: UciCommand) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciCommand> for ControlPacket {
+    fn from(packet: UciCommand) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciCommand {
+impl TryFrom<ControlPacket> for UciCommand {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciCommand> {
-        UciCommand::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciCommand> {
+        UciCommand::new(packet.controlpacket)
     }
 }
 impl UciCommand {
@@ -3025,76 +3131,73 @@ impl UciCommand {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciCommandChild {
         match &self.ucicommand.child {
             UciCommandDataChild::CoreCommand(_) => {
-                UciCommandChild::CoreCommand(CoreCommand::new(self.ucipacket.clone()).unwrap())
+                UciCommandChild::CoreCommand(CoreCommand::new(self.controlpacket.clone()).unwrap())
             }
             UciCommandDataChild::SessionConfigCommand(_) => UciCommandChild::SessionConfigCommand(
-                SessionConfigCommand::new(self.ucipacket.clone()).unwrap(),
+                SessionConfigCommand::new(self.controlpacket.clone()).unwrap(),
             ),
             UciCommandDataChild::SessionControlCommand(_) => {
                 UciCommandChild::SessionControlCommand(
-                    SessionControlCommand::new(self.ucipacket.clone()).unwrap(),
+                    SessionControlCommand::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciCommandDataChild::AndroidCommand(_) => UciCommandChild::AndroidCommand(
-                AndroidCommand::new(self.ucipacket.clone()).unwrap(),
+                AndroidCommand::new(self.controlpacket.clone()).unwrap(),
             ),
             UciCommandDataChild::UciVendor_9_Command(_) => UciCommandChild::UciVendor_9_Command(
-                UciVendor_9_Command::new(self.ucipacket.clone()).unwrap(),
+                UciVendor_9_Command::new(self.controlpacket.clone()).unwrap(),
             ),
             UciCommandDataChild::UciVendor_A_Command(_) => UciCommandChild::UciVendor_A_Command(
-                UciVendor_A_Command::new(self.ucipacket.clone()).unwrap(),
+                UciVendor_A_Command::new(self.controlpacket.clone()).unwrap(),
             ),
             UciCommandDataChild::UciVendor_B_Command(_) => UciCommandChild::UciVendor_B_Command(
-                UciVendor_B_Command::new(self.ucipacket.clone()).unwrap(),
+                UciVendor_B_Command::new(self.controlpacket.clone()).unwrap(),
             ),
             UciCommandDataChild::UciVendor_E_Command(_) => UciCommandChild::UciVendor_E_Command(
-                UciVendor_E_Command::new(self.ucipacket.clone()).unwrap(),
+                UciVendor_E_Command::new(self.controlpacket.clone()).unwrap(),
             ),
             UciCommandDataChild::UciVendor_F_Command(_) => UciCommandChild::UciVendor_F_Command(
-                UciVendor_F_Command::new(self.ucipacket.clone()).unwrap(),
+                UciVendor_F_Command::new(self.controlpacket.clone()).unwrap(),
             ),
             UciCommandDataChild::Payload(payload) => UciCommandChild::Payload(payload.clone()),
             UciCommandDataChild::None => UciCommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.ucicommand.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciCommandBuilder {
@@ -3105,18 +3208,17 @@ impl UciCommandBuilder {
                 Some(bytes) => UciCommandDataChild::Payload(bytes),
             },
         };
-        let ucipacket = UciPacketData {
-            group_id: self.group_id,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: self.gid,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        UciCommand::new(ucipacket).unwrap()
+        UciCommand::new(controlpacket).unwrap()
     }
 }
-impl From<UciCommandBuilder> for UciPacket {
-    fn from(builder: UciCommandBuilder) -> UciPacket {
+impl From<UciCommandBuilder> for ControlPacket {
+    fn from(builder: UciCommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -3181,14 +3283,14 @@ pub struct UciResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciResponse {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
 }
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciResponseBuilder {
-    pub group_id: GroupId,
+    pub gid: GroupId,
     pub opcode: u8,
     pub payload: Option<Bytes>,
 }
@@ -3196,15 +3298,15 @@ impl UciResponseData {
     fn conforms(bytes: &[u8]) -> bool {
         true
     }
-    fn parse(bytes: &[u8], group_id: GroupId, opcode: u8) -> Result<Self> {
+    fn parse(bytes: &[u8], gid: GroupId, opcode: u8) -> Result<Self> {
         let mut cell = Cell::new(bytes);
-        let packet = Self::parse_inner(&mut cell, group_id, opcode)?;
+        let packet = Self::parse_inner(&mut cell, gid, opcode)?;
         Ok(packet)
     }
-    fn parse_inner(mut bytes: &mut Cell<&[u8]>, group_id: GroupId, opcode: u8) -> Result<Self> {
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>, gid: GroupId, opcode: u8) -> Result<Self> {
         let payload = bytes.get();
         bytes.get_mut().advance(payload.len());
-        let child = match (group_id) {
+        let child = match (gid) {
             (GroupId::Core) if CoreResponseData::conforms(&payload) => {
                 let mut cell = Cell::new(payload);
                 let child_data = CoreResponseData::parse_inner(&mut cell, opcode)?;
@@ -3281,8 +3383,8 @@ impl UciResponseData {
 }
 impl Packet for UciResponse {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -3299,15 +3401,15 @@ impl From<UciResponse> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciResponse> for UciPacket {
-    fn from(packet: UciResponse) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciResponse> for ControlPacket {
+    fn from(packet: UciResponse) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciResponse {
+impl TryFrom<ControlPacket> for UciResponse {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciResponse> {
-        UciResponse::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciResponse> {
+        UciResponse::new(packet.controlpacket)
     }
 }
 impl UciResponse {
@@ -3317,88 +3419,85 @@ impl UciResponse {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciResponseChild {
         match &self.uciresponse.child {
-            UciResponseDataChild::CoreResponse(_) => {
-                UciResponseChild::CoreResponse(CoreResponse::new(self.ucipacket.clone()).unwrap())
-            }
+            UciResponseDataChild::CoreResponse(_) => UciResponseChild::CoreResponse(
+                CoreResponse::new(self.controlpacket.clone()).unwrap(),
+            ),
             UciResponseDataChild::SessionConfigResponse(_) => {
                 UciResponseChild::SessionConfigResponse(
-                    SessionConfigResponse::new(self.ucipacket.clone()).unwrap(),
+                    SessionConfigResponse::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciResponseDataChild::SessionControlResponse(_) => {
                 UciResponseChild::SessionControlResponse(
-                    SessionControlResponse::new(self.ucipacket.clone()).unwrap(),
+                    SessionControlResponse::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciResponseDataChild::AndroidResponse(_) => UciResponseChild::AndroidResponse(
-                AndroidResponse::new(self.ucipacket.clone()).unwrap(),
+                AndroidResponse::new(self.controlpacket.clone()).unwrap(),
             ),
             UciResponseDataChild::UciVendor_9_Response(_) => {
                 UciResponseChild::UciVendor_9_Response(
-                    UciVendor_9_Response::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_9_Response::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciResponseDataChild::UciVendor_A_Response(_) => {
                 UciResponseChild::UciVendor_A_Response(
-                    UciVendor_A_Response::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_A_Response::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciResponseDataChild::UciVendor_B_Response(_) => {
                 UciResponseChild::UciVendor_B_Response(
-                    UciVendor_B_Response::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_B_Response::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciResponseDataChild::UciVendor_E_Response(_) => {
                 UciResponseChild::UciVendor_E_Response(
-                    UciVendor_E_Response::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_E_Response::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciResponseDataChild::UciVendor_F_Response(_) => {
                 UciResponseChild::UciVendor_F_Response(
-                    UciVendor_F_Response::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_F_Response::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciResponseDataChild::Payload(payload) => UciResponseChild::Payload(payload.clone()),
             UciResponseDataChild::None => UciResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.uciresponse.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciResponseBuilder {
@@ -3409,18 +3508,17 @@ impl UciResponseBuilder {
                 Some(bytes) => UciResponseDataChild::Payload(bytes),
             },
         };
-        let ucipacket = UciPacketData {
-            group_id: self.group_id,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: self.gid,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        UciResponse::new(ucipacket).unwrap()
+        UciResponse::new(controlpacket).unwrap()
     }
 }
-impl From<UciResponseBuilder> for UciPacket {
-    fn from(builder: UciResponseBuilder) -> UciPacket {
+impl From<UciResponseBuilder> for ControlPacket {
+    fn from(builder: UciResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -3488,14 +3586,14 @@ pub struct UciNotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciNotification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
 }
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciNotificationBuilder {
-    pub group_id: GroupId,
+    pub gid: GroupId,
     pub opcode: u8,
     pub payload: Option<Bytes>,
 }
@@ -3503,15 +3601,15 @@ impl UciNotificationData {
     fn conforms(bytes: &[u8]) -> bool {
         true
     }
-    fn parse(bytes: &[u8], group_id: GroupId, opcode: u8) -> Result<Self> {
+    fn parse(bytes: &[u8], gid: GroupId, opcode: u8) -> Result<Self> {
         let mut cell = Cell::new(bytes);
-        let packet = Self::parse_inner(&mut cell, group_id, opcode)?;
+        let packet = Self::parse_inner(&mut cell, gid, opcode)?;
         Ok(packet)
     }
-    fn parse_inner(mut bytes: &mut Cell<&[u8]>, group_id: GroupId, opcode: u8) -> Result<Self> {
+    fn parse_inner(mut bytes: &mut Cell<&[u8]>, gid: GroupId, opcode: u8) -> Result<Self> {
         let payload = bytes.get();
         bytes.get_mut().advance(payload.len());
-        let child = match (group_id) {
+        let child = match (gid) {
             (GroupId::Core) if CoreNotificationData::conforms(&payload) => {
                 let mut cell = Cell::new(payload);
                 let child_data = CoreNotificationData::parse_inner(&mut cell, opcode)?;
@@ -3594,8 +3692,8 @@ impl UciNotificationData {
 }
 impl Packet for UciNotification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -3612,15 +3710,15 @@ impl From<UciNotification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciNotification> for UciPacket {
-    fn from(packet: UciNotification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciNotification> for ControlPacket {
+    fn from(packet: UciNotification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciNotification {
+impl TryFrom<ControlPacket> for UciNotification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciNotification> {
-        UciNotification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciNotification> {
+        UciNotification::new(packet.controlpacket)
     }
 }
 impl UciNotification {
@@ -3630,59 +3728,59 @@ impl UciNotification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciNotificationChild {
         match &self.ucinotification.child {
             UciNotificationDataChild::CoreNotification(_) => {
                 UciNotificationChild::CoreNotification(
-                    CoreNotification::new(self.ucipacket.clone()).unwrap(),
+                    CoreNotification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::SessionConfigNotification(_) => {
                 UciNotificationChild::SessionConfigNotification(
-                    SessionConfigNotification::new(self.ucipacket.clone()).unwrap(),
+                    SessionConfigNotification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::SessionControlNotification(_) => {
                 UciNotificationChild::SessionControlNotification(
-                    SessionControlNotification::new(self.ucipacket.clone()).unwrap(),
+                    SessionControlNotification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::AndroidNotification(_) => {
                 UciNotificationChild::AndroidNotification(
-                    AndroidNotification::new(self.ucipacket.clone()).unwrap(),
+                    AndroidNotification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::UciVendor_9_Notification(_) => {
                 UciNotificationChild::UciVendor_9_Notification(
-                    UciVendor_9_Notification::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_9_Notification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::UciVendor_A_Notification(_) => {
                 UciNotificationChild::UciVendor_A_Notification(
-                    UciVendor_A_Notification::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_A_Notification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::UciVendor_B_Notification(_) => {
                 UciNotificationChild::UciVendor_B_Notification(
-                    UciVendor_B_Notification::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_B_Notification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::UciVendor_E_Notification(_) => {
                 UciNotificationChild::UciVendor_E_Notification(
-                    UciVendor_E_Notification::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_E_Notification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::UciVendor_F_Notification(_) => {
                 UciNotificationChild::UciVendor_F_Notification(
-                    UciVendor_F_Notification::new(self.ucipacket.clone()).unwrap(),
+                    UciVendor_F_Notification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::TestNotification(_) => {
                 UciNotificationChild::TestNotification(
-                    TestNotification::new(self.ucipacket.clone()).unwrap(),
+                    TestNotification::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             UciNotificationDataChild::Payload(payload) => {
@@ -3691,38 +3789,35 @@ impl UciNotification {
             UciNotificationDataChild::None => UciNotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.ucinotification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciNotificationBuilder {
@@ -3733,18 +3828,17 @@ impl UciNotificationBuilder {
                 Some(bytes) => UciNotificationDataChild::Payload(bytes),
             },
         };
-        let ucipacket = UciPacketData {
-            group_id: self.group_id,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: self.gid,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        UciNotification::new(ucipacket).unwrap()
+        UciNotification::new(controlpacket).unwrap()
     }
 }
-impl From<UciNotificationBuilder> for UciPacket {
-    fn from(builder: UciNotificationBuilder) -> UciPacket {
+impl From<UciNotificationBuilder> for ControlPacket {
+    fn from(builder: UciNotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -3800,7 +3894,7 @@ pub struct CoreCommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CoreCommand {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -3883,8 +3977,8 @@ impl CoreCommandData {
 }
 impl Packet for CoreCommand {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -3901,20 +3995,20 @@ impl From<CoreCommand> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<CoreCommand> for UciPacket {
-    fn from(packet: CoreCommand) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<CoreCommand> for ControlPacket {
+    fn from(packet: CoreCommand) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<CoreCommand> for UciCommand {
     fn from(packet: CoreCommand) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for CoreCommand {
+impl TryFrom<ControlPacket> for CoreCommand {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<CoreCommand> {
-        CoreCommand::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<CoreCommand> {
+        CoreCommand::new(packet.controlpacket)
     }
 }
 impl CoreCommand {
@@ -3924,42 +4018,42 @@ impl CoreCommand {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> CoreCommandChild {
         match &self.corecommand.child {
             CoreCommandDataChild::DeviceResetCmd(_) => CoreCommandChild::DeviceResetCmd(
-                DeviceResetCmd::new(self.ucipacket.clone()).unwrap(),
+                DeviceResetCmd::new(self.controlpacket.clone()).unwrap(),
             ),
             CoreCommandDataChild::GetDeviceInfoCmd(_) => CoreCommandChild::GetDeviceInfoCmd(
-                GetDeviceInfoCmd::new(self.ucipacket.clone()).unwrap(),
+                GetDeviceInfoCmd::new(self.controlpacket.clone()).unwrap(),
             ),
             CoreCommandDataChild::GetCapsInfoCmd(_) => CoreCommandChild::GetCapsInfoCmd(
-                GetCapsInfoCmd::new(self.ucipacket.clone()).unwrap(),
+                GetCapsInfoCmd::new(self.controlpacket.clone()).unwrap(),
             ),
-            CoreCommandDataChild::SetConfigCmd(_) => {
-                CoreCommandChild::SetConfigCmd(SetConfigCmd::new(self.ucipacket.clone()).unwrap())
-            }
-            CoreCommandDataChild::GetConfigCmd(_) => {
-                CoreCommandChild::GetConfigCmd(GetConfigCmd::new(self.ucipacket.clone()).unwrap())
-            }
+            CoreCommandDataChild::SetConfigCmd(_) => CoreCommandChild::SetConfigCmd(
+                SetConfigCmd::new(self.controlpacket.clone()).unwrap(),
+            ),
+            CoreCommandDataChild::GetConfigCmd(_) => CoreCommandChild::GetConfigCmd(
+                GetConfigCmd::new(self.controlpacket.clone()).unwrap(),
+            ),
             CoreCommandDataChild::CoreQueryTimeStampCmd(_) => {
                 CoreCommandChild::CoreQueryTimeStampCmd(
-                    CoreQueryTimeStampCmd::new(self.ucipacket.clone()).unwrap(),
+                    CoreQueryTimeStampCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             CoreCommandDataChild::Payload(payload) => CoreCommandChild::Payload(payload.clone()),
             CoreCommandDataChild::None => CoreCommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -3973,28 +4067,25 @@ impl CoreCommand {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             corecommand,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.corecommand.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl CoreCommandBuilder {
@@ -4008,18 +4099,17 @@ impl CoreCommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::CoreCommand(corecommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        CoreCommand::new(ucipacket).unwrap()
+        CoreCommand::new(controlpacket).unwrap()
     }
 }
-impl From<CoreCommandBuilder> for UciPacket {
-    fn from(builder: CoreCommandBuilder) -> UciPacket {
+impl From<CoreCommandBuilder> for ControlPacket {
+    fn from(builder: CoreCommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -4080,7 +4170,7 @@ pub struct CoreResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CoreResponse {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -4163,8 +4253,8 @@ impl CoreResponseData {
 }
 impl Packet for CoreResponse {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -4181,20 +4271,20 @@ impl From<CoreResponse> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<CoreResponse> for UciPacket {
-    fn from(packet: CoreResponse) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<CoreResponse> for ControlPacket {
+    fn from(packet: CoreResponse) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<CoreResponse> for UciResponse {
     fn from(packet: CoreResponse) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for CoreResponse {
+impl TryFrom<ControlPacket> for CoreResponse {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<CoreResponse> {
-        CoreResponse::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<CoreResponse> {
+        CoreResponse::new(packet.controlpacket)
     }
 }
 impl CoreResponse {
@@ -4204,42 +4294,42 @@ impl CoreResponse {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> CoreResponseChild {
         match &self.coreresponse.child {
             CoreResponseDataChild::DeviceResetRsp(_) => CoreResponseChild::DeviceResetRsp(
-                DeviceResetRsp::new(self.ucipacket.clone()).unwrap(),
+                DeviceResetRsp::new(self.controlpacket.clone()).unwrap(),
             ),
             CoreResponseDataChild::GetDeviceInfoRsp(_) => CoreResponseChild::GetDeviceInfoRsp(
-                GetDeviceInfoRsp::new(self.ucipacket.clone()).unwrap(),
+                GetDeviceInfoRsp::new(self.controlpacket.clone()).unwrap(),
             ),
             CoreResponseDataChild::GetCapsInfoRsp(_) => CoreResponseChild::GetCapsInfoRsp(
-                GetCapsInfoRsp::new(self.ucipacket.clone()).unwrap(),
+                GetCapsInfoRsp::new(self.controlpacket.clone()).unwrap(),
             ),
-            CoreResponseDataChild::SetConfigRsp(_) => {
-                CoreResponseChild::SetConfigRsp(SetConfigRsp::new(self.ucipacket.clone()).unwrap())
-            }
-            CoreResponseDataChild::GetConfigRsp(_) => {
-                CoreResponseChild::GetConfigRsp(GetConfigRsp::new(self.ucipacket.clone()).unwrap())
-            }
+            CoreResponseDataChild::SetConfigRsp(_) => CoreResponseChild::SetConfigRsp(
+                SetConfigRsp::new(self.controlpacket.clone()).unwrap(),
+            ),
+            CoreResponseDataChild::GetConfigRsp(_) => CoreResponseChild::GetConfigRsp(
+                GetConfigRsp::new(self.controlpacket.clone()).unwrap(),
+            ),
             CoreResponseDataChild::CoreQueryTimeStampRsp(_) => {
                 CoreResponseChild::CoreQueryTimeStampRsp(
-                    CoreQueryTimeStampRsp::new(self.ucipacket.clone()).unwrap(),
+                    CoreQueryTimeStampRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             CoreResponseDataChild::Payload(payload) => CoreResponseChild::Payload(payload.clone()),
             CoreResponseDataChild::None => CoreResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -4253,28 +4343,25 @@ impl CoreResponse {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             coreresponse,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.coreresponse.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl CoreResponseBuilder {
@@ -4288,18 +4375,17 @@ impl CoreResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::CoreResponse(coreresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        CoreResponse::new(ucipacket).unwrap()
+        CoreResponse::new(controlpacket).unwrap()
     }
 }
-impl From<CoreResponseBuilder> for UciPacket {
-    fn from(builder: CoreResponseBuilder) -> UciPacket {
+impl From<CoreResponseBuilder> for ControlPacket {
+    fn from(builder: CoreResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -4348,7 +4434,7 @@ pub struct CoreNotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CoreNotification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -4407,8 +4493,8 @@ impl CoreNotificationData {
 }
 impl Packet for CoreNotification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -4425,20 +4511,20 @@ impl From<CoreNotification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<CoreNotification> for UciPacket {
-    fn from(packet: CoreNotification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<CoreNotification> for ControlPacket {
+    fn from(packet: CoreNotification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<CoreNotification> for UciNotification {
     fn from(packet: CoreNotification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for CoreNotification {
+impl TryFrom<ControlPacket> for CoreNotification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<CoreNotification> {
-        CoreNotification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<CoreNotification> {
+        CoreNotification::new(packet.controlpacket)
     }
 }
 impl CoreNotification {
@@ -4448,18 +4534,18 @@ impl CoreNotification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> CoreNotificationChild {
         match &self.corenotification.child {
             CoreNotificationDataChild::DeviceStatusNtf(_) => {
                 CoreNotificationChild::DeviceStatusNtf(
-                    DeviceStatusNtf::new(self.ucipacket.clone()).unwrap(),
+                    DeviceStatusNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             CoreNotificationDataChild::GenericError(_) => CoreNotificationChild::GenericError(
-                GenericError::new(self.ucipacket.clone()).unwrap(),
+                GenericError::new(self.controlpacket.clone()).unwrap(),
             ),
             CoreNotificationDataChild::Payload(payload) => {
                 CoreNotificationChild::Payload(payload.clone())
@@ -4467,13 +4553,13 @@ impl CoreNotification {
             CoreNotificationDataChild::None => CoreNotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -4487,28 +4573,25 @@ impl CoreNotification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             corenotification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.corenotification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl CoreNotificationBuilder {
@@ -4522,18 +4605,17 @@ impl CoreNotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::CoreNotification(corenotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        CoreNotification::new(ucipacket).unwrap()
+        CoreNotification::new(controlpacket).unwrap()
     }
 }
-impl From<CoreNotificationBuilder> for UciPacket {
-    fn from(builder: CoreNotificationBuilder) -> UciPacket {
+impl From<CoreNotificationBuilder> for ControlPacket {
+    fn from(builder: CoreNotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -4614,7 +4696,7 @@ pub struct SessionConfigCommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionConfigCommand {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -4730,8 +4812,8 @@ impl SessionConfigCommandData {
 }
 impl Packet for SessionConfigCommand {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -4748,20 +4830,20 @@ impl From<SessionConfigCommand> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionConfigCommand> for UciPacket {
-    fn from(packet: SessionConfigCommand) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionConfigCommand> for ControlPacket {
+    fn from(packet: SessionConfigCommand) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionConfigCommand> for UciCommand {
     fn from(packet: SessionConfigCommand) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionConfigCommand {
+impl TryFrom<ControlPacket> for SessionConfigCommand {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionConfigCommand> {
-        SessionConfigCommand::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionConfigCommand> {
+        SessionConfigCommand::new(packet.controlpacket)
     }
 }
 impl SessionConfigCommand {
@@ -4771,59 +4853,60 @@ impl SessionConfigCommand {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionConfigCommandChild {
         match &self.sessionconfigcommand.child {
             SessionConfigCommandDataChild::SessionInitCmd(_) => {
                 SessionConfigCommandChild::SessionInitCmd(
-                    SessionInitCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionInitCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionDeinitCmd(_) => {
                 SessionConfigCommandChild::SessionDeinitCmd(
-                    SessionDeinitCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionDeinitCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionSetAppConfigCmd(_) => {
                 SessionConfigCommandChild::SessionSetAppConfigCmd(
-                    SessionSetAppConfigCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionSetAppConfigCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionGetAppConfigCmd(_) => {
                 SessionConfigCommandChild::SessionGetAppConfigCmd(
-                    SessionGetAppConfigCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetAppConfigCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionGetCountCmd(_) => {
                 SessionConfigCommandChild::SessionGetCountCmd(
-                    SessionGetCountCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetCountCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionGetStateCmd(_) => {
                 SessionConfigCommandChild::SessionGetStateCmd(
-                    SessionGetStateCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetStateCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionUpdateDtTagRangingRoundsCmd(_) => {
                 SessionConfigCommandChild::SessionUpdateDtTagRangingRoundsCmd(
-                    SessionUpdateDtTagRangingRoundsCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionUpdateDtTagRangingRoundsCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionUpdateControllerMulticastListCmd(_) => {
                 SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(
-                    SessionUpdateControllerMulticastListCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionUpdateControllerMulticastListCmd::new(self.controlpacket.clone())
+                        .unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionSetHybridConfigCmd(_) => {
                 SessionConfigCommandChild::SessionSetHybridConfigCmd(
-                    SessionSetHybridConfigCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionSetHybridConfigCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::SessionQueryMaxDataSizeCmd(_) => {
                 SessionConfigCommandChild::SessionQueryMaxDataSizeCmd(
-                    SessionQueryMaxDataSizeCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionQueryMaxDataSizeCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigCommandDataChild::Payload(payload) => {
@@ -4832,13 +4915,13 @@ impl SessionConfigCommand {
             SessionConfigCommandDataChild::None => SessionConfigCommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -4852,28 +4935,25 @@ impl SessionConfigCommand {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.sessionconfigcommand.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionConfigCommandBuilder {
@@ -4887,18 +4967,17 @@ impl SessionConfigCommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionConfigCommand::new(ucipacket).unwrap()
+        SessionConfigCommand::new(controlpacket).unwrap()
     }
 }
-impl From<SessionConfigCommandBuilder> for UciPacket {
-    fn from(builder: SessionConfigCommandBuilder) -> UciPacket {
+impl From<SessionConfigCommandBuilder> for ControlPacket {
+    fn from(builder: SessionConfigCommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -4982,7 +5061,7 @@ pub struct SessionConfigResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionConfigResponse {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -5104,8 +5183,8 @@ impl SessionConfigResponseData {
 }
 impl Packet for SessionConfigResponse {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -5122,20 +5201,20 @@ impl From<SessionConfigResponse> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionConfigResponse> for UciPacket {
-    fn from(packet: SessionConfigResponse) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionConfigResponse> for ControlPacket {
+    fn from(packet: SessionConfigResponse) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionConfigResponse> for UciResponse {
     fn from(packet: SessionConfigResponse) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionConfigResponse {
+impl TryFrom<ControlPacket> for SessionConfigResponse {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionConfigResponse> {
-        SessionConfigResponse::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionConfigResponse> {
+        SessionConfigResponse::new(packet.controlpacket)
     }
 }
 impl SessionConfigResponse {
@@ -5145,64 +5224,65 @@ impl SessionConfigResponse {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionConfigResponseChild {
         match &self.sessionconfigresponse.child {
             SessionConfigResponseDataChild::SessionInitRsp_V2(_) => {
                 SessionConfigResponseChild::SessionInitRsp_V2(
-                    SessionInitRsp_V2::new(self.ucipacket.clone()).unwrap(),
+                    SessionInitRsp_V2::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionInitRsp(_) => {
                 SessionConfigResponseChild::SessionInitRsp(
-                    SessionInitRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionInitRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionDeinitRsp(_) => {
                 SessionConfigResponseChild::SessionDeinitRsp(
-                    SessionDeinitRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionDeinitRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionSetAppConfigRsp(_) => {
                 SessionConfigResponseChild::SessionSetAppConfigRsp(
-                    SessionSetAppConfigRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionSetAppConfigRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionGetAppConfigRsp(_) => {
                 SessionConfigResponseChild::SessionGetAppConfigRsp(
-                    SessionGetAppConfigRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetAppConfigRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionGetCountRsp(_) => {
                 SessionConfigResponseChild::SessionGetCountRsp(
-                    SessionGetCountRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetCountRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionGetStateRsp(_) => {
                 SessionConfigResponseChild::SessionGetStateRsp(
-                    SessionGetStateRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetStateRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionUpdateDtTagRangingRoundsRsp(_) => {
                 SessionConfigResponseChild::SessionUpdateDtTagRangingRoundsRsp(
-                    SessionUpdateDtTagRangingRoundsRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionUpdateDtTagRangingRoundsRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionSetHybridConfigRsp(_) => {
                 SessionConfigResponseChild::SessionSetHybridConfigRsp(
-                    SessionSetHybridConfigRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionSetHybridConfigRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionUpdateControllerMulticastListRsp(_) => {
                 SessionConfigResponseChild::SessionUpdateControllerMulticastListRsp(
-                    SessionUpdateControllerMulticastListRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionUpdateControllerMulticastListRsp::new(self.controlpacket.clone())
+                        .unwrap(),
                 )
             }
             SessionConfigResponseDataChild::SessionQueryMaxDataSizeRsp(_) => {
                 SessionConfigResponseChild::SessionQueryMaxDataSizeRsp(
-                    SessionQueryMaxDataSizeRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionQueryMaxDataSizeRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigResponseDataChild::Payload(payload) => {
@@ -5211,13 +5291,13 @@ impl SessionConfigResponse {
             SessionConfigResponseDataChild::None => SessionConfigResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -5231,28 +5311,25 @@ impl SessionConfigResponse {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.sessionconfigresponse.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionConfigResponseBuilder {
@@ -5266,18 +5343,17 @@ impl SessionConfigResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionConfigResponse::new(ucipacket).unwrap()
+        SessionConfigResponse::new(controlpacket).unwrap()
     }
 }
-impl From<SessionConfigResponseBuilder> for UciPacket {
-    fn from(builder: SessionConfigResponseBuilder) -> UciPacket {
+impl From<SessionConfigResponseBuilder> for ControlPacket {
+    fn from(builder: SessionConfigResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -5328,7 +5404,7 @@ pub struct SessionConfigNotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionConfigNotification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -5392,8 +5468,8 @@ impl SessionConfigNotificationData {
 }
 impl Packet for SessionConfigNotification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -5410,20 +5486,20 @@ impl From<SessionConfigNotification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionConfigNotification> for UciPacket {
-    fn from(packet: SessionConfigNotification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionConfigNotification> for ControlPacket {
+    fn from(packet: SessionConfigNotification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionConfigNotification> for UciNotification {
     fn from(packet: SessionConfigNotification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionConfigNotification {
+impl TryFrom<ControlPacket> for SessionConfigNotification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionConfigNotification> {
-        SessionConfigNotification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionConfigNotification> {
+        SessionConfigNotification::new(packet.controlpacket)
     }
 }
 impl SessionConfigNotification {
@@ -5433,19 +5509,20 @@ impl SessionConfigNotification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionConfigNotificationChild {
         match &self.sessionconfignotification.child {
             SessionConfigNotificationDataChild::SessionStatusNtf(_) => {
                 SessionConfigNotificationChild::SessionStatusNtf(
-                    SessionStatusNtf::new(self.ucipacket.clone()).unwrap(),
+                    SessionStatusNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionConfigNotificationDataChild::SessionUpdateControllerMulticastListNtf(_) => {
                 SessionConfigNotificationChild::SessionUpdateControllerMulticastListNtf(
-                    SessionUpdateControllerMulticastListNtf::new(self.ucipacket.clone()).unwrap(),
+                    SessionUpdateControllerMulticastListNtf::new(self.controlpacket.clone())
+                        .unwrap(),
                 )
             }
             SessionConfigNotificationDataChild::Payload(payload) => {
@@ -5454,13 +5531,13 @@ impl SessionConfigNotification {
             SessionConfigNotificationDataChild::None => SessionConfigNotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -5474,28 +5551,25 @@ impl SessionConfigNotification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessionconfignotification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.sessionconfignotification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionConfigNotificationBuilder {
@@ -5509,18 +5583,17 @@ impl SessionConfigNotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionConfigNotification(sessionconfignotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        SessionConfigNotification::new(ucipacket).unwrap()
+        SessionConfigNotification::new(controlpacket).unwrap()
     }
 }
-impl From<SessionConfigNotificationBuilder> for UciPacket {
-    fn from(builder: SessionConfigNotificationBuilder) -> UciPacket {
+impl From<SessionConfigNotificationBuilder> for ControlPacket {
+    fn from(builder: SessionConfigNotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -5575,7 +5648,7 @@ pub struct SessionControlCommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionControlCommand {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -5652,8 +5725,8 @@ impl SessionControlCommandData {
 }
 impl Packet for SessionControlCommand {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -5670,20 +5743,20 @@ impl From<SessionControlCommand> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionControlCommand> for UciPacket {
-    fn from(packet: SessionControlCommand) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionControlCommand> for ControlPacket {
+    fn from(packet: SessionControlCommand) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionControlCommand> for UciCommand {
     fn from(packet: SessionControlCommand) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionControlCommand {
+impl TryFrom<ControlPacket> for SessionControlCommand {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionControlCommand> {
-        SessionControlCommand::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionControlCommand> {
+        SessionControlCommand::new(packet.controlpacket)
     }
 }
 impl SessionControlCommand {
@@ -5693,24 +5766,24 @@ impl SessionControlCommand {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionControlCommandChild {
         match &self.sessioncontrolcommand.child {
             SessionControlCommandDataChild::SessionStartCmd(_) => {
                 SessionControlCommandChild::SessionStartCmd(
-                    SessionStartCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionStartCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlCommandDataChild::SessionStopCmd(_) => {
                 SessionControlCommandChild::SessionStopCmd(
-                    SessionStopCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionStopCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlCommandDataChild::SessionGetRangingCountCmd(_) => {
                 SessionControlCommandChild::SessionGetRangingCountCmd(
-                    SessionGetRangingCountCmd::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetRangingCountCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlCommandDataChild::Payload(payload) => {
@@ -5719,13 +5792,13 @@ impl SessionControlCommand {
             SessionControlCommandDataChild::None => SessionControlCommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -5739,22 +5812,19 @@ impl SessionControlCommand {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessioncontrolcommand,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_id(&self) -> u32 {
         self.sessioncontrolcommand.session_id
@@ -5763,7 +5833,7 @@ impl SessionControlCommand {
         self.sessioncontrolcommand.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionControlCommandBuilder {
@@ -5778,18 +5848,17 @@ impl SessionControlCommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionControlCommand(sessioncontrolcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionControlCommand::new(ucipacket).unwrap()
+        SessionControlCommand::new(controlpacket).unwrap()
     }
 }
-impl From<SessionControlCommandBuilder> for UciPacket {
-    fn from(builder: SessionControlCommandBuilder) -> UciPacket {
+impl From<SessionControlCommandBuilder> for ControlPacket {
+    fn from(builder: SessionControlCommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -5843,7 +5912,7 @@ pub struct SessionControlResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionControlResponse {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -5910,8 +5979,8 @@ impl SessionControlResponseData {
 }
 impl Packet for SessionControlResponse {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -5928,20 +5997,20 @@ impl From<SessionControlResponse> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionControlResponse> for UciPacket {
-    fn from(packet: SessionControlResponse) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionControlResponse> for ControlPacket {
+    fn from(packet: SessionControlResponse) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionControlResponse> for UciResponse {
     fn from(packet: SessionControlResponse) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionControlResponse {
+impl TryFrom<ControlPacket> for SessionControlResponse {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionControlResponse> {
-        SessionControlResponse::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionControlResponse> {
+        SessionControlResponse::new(packet.controlpacket)
     }
 }
 impl SessionControlResponse {
@@ -5951,24 +6020,24 @@ impl SessionControlResponse {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionControlResponseChild {
         match &self.sessioncontrolresponse.child {
             SessionControlResponseDataChild::SessionStartRsp(_) => {
                 SessionControlResponseChild::SessionStartRsp(
-                    SessionStartRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionStartRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlResponseDataChild::SessionStopRsp(_) => {
                 SessionControlResponseChild::SessionStopRsp(
-                    SessionStopRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionStopRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlResponseDataChild::SessionGetRangingCountRsp(_) => {
                 SessionControlResponseChild::SessionGetRangingCountRsp(
-                    SessionGetRangingCountRsp::new(self.ucipacket.clone()).unwrap(),
+                    SessionGetRangingCountRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlResponseDataChild::Payload(payload) => {
@@ -5977,13 +6046,13 @@ impl SessionControlResponse {
             SessionControlResponseDataChild::None => SessionControlResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -5997,28 +6066,25 @@ impl SessionControlResponse {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessioncontrolresponse,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.sessioncontrolresponse.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionControlResponseBuilder {
@@ -6032,18 +6098,17 @@ impl SessionControlResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionControlResponse(sessioncontrolresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionControlResponse::new(ucipacket).unwrap()
+        SessionControlResponse::new(controlpacket).unwrap()
     }
 }
-impl From<SessionControlResponseBuilder> for UciPacket {
-    fn from(builder: SessionControlResponseBuilder) -> UciPacket {
+impl From<SessionControlResponseBuilder> for ControlPacket {
+    fn from(builder: SessionControlResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -6097,7 +6162,7 @@ pub struct SessionControlNotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionControlNotification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -6164,8 +6229,8 @@ impl SessionControlNotificationData {
 }
 impl Packet for SessionControlNotification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -6182,20 +6247,20 @@ impl From<SessionControlNotification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionControlNotification> for UciPacket {
-    fn from(packet: SessionControlNotification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionControlNotification> for ControlPacket {
+    fn from(packet: SessionControlNotification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionControlNotification> for UciNotification {
     fn from(packet: SessionControlNotification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionControlNotification {
+impl TryFrom<ControlPacket> for SessionControlNotification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionControlNotification> {
-        SessionControlNotification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionControlNotification> {
+        SessionControlNotification::new(packet.controlpacket)
     }
 }
 impl SessionControlNotification {
@@ -6205,24 +6270,24 @@ impl SessionControlNotification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionControlNotificationChild {
         match &self.sessioncontrolnotification.child {
             SessionControlNotificationDataChild::DataCreditNtf(_) => {
                 SessionControlNotificationChild::DataCreditNtf(
-                    DataCreditNtf::new(self.ucipacket.clone()).unwrap(),
+                    DataCreditNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlNotificationDataChild::DataTransferStatusNtf(_) => {
                 SessionControlNotificationChild::DataTransferStatusNtf(
-                    DataTransferStatusNtf::new(self.ucipacket.clone()).unwrap(),
+                    DataTransferStatusNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlNotificationDataChild::SessionInfoNtf(_) => {
                 SessionControlNotificationChild::SessionInfoNtf(
-                    SessionInfoNtf::new(self.ucipacket.clone()).unwrap(),
+                    SessionInfoNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionControlNotificationDataChild::Payload(payload) => {
@@ -6231,13 +6296,13 @@ impl SessionControlNotification {
             SessionControlNotificationDataChild::None => SessionControlNotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -6251,28 +6316,25 @@ impl SessionControlNotification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.sessioncontrolnotification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionControlNotificationBuilder {
@@ -6286,18 +6348,17 @@ impl SessionControlNotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        SessionControlNotification::new(ucipacket).unwrap()
+        SessionControlNotification::new(controlpacket).unwrap()
     }
 }
-impl From<SessionControlNotificationBuilder> for UciPacket {
-    fn from(builder: SessionControlNotificationBuilder) -> UciPacket {
+impl From<SessionControlNotificationBuilder> for ControlPacket {
+    fn from(builder: SessionControlNotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -6346,7 +6407,7 @@ pub struct AndroidCommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidCommand {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -6405,8 +6466,8 @@ impl AndroidCommandData {
 }
 impl Packet for AndroidCommand {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -6423,20 +6484,20 @@ impl From<AndroidCommand> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidCommand> for UciPacket {
-    fn from(packet: AndroidCommand) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidCommand> for ControlPacket {
+    fn from(packet: AndroidCommand) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidCommand> for UciCommand {
     fn from(packet: AndroidCommand) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidCommand {
+impl TryFrom<ControlPacket> for AndroidCommand {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidCommand> {
-        AndroidCommand::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidCommand> {
+        AndroidCommand::new(packet.controlpacket)
     }
 }
 impl AndroidCommand {
@@ -6446,19 +6507,19 @@ impl AndroidCommand {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> AndroidCommandChild {
         match &self.androidcommand.child {
             AndroidCommandDataChild::AndroidGetPowerStatsCmd(_) => {
                 AndroidCommandChild::AndroidGetPowerStatsCmd(
-                    AndroidGetPowerStatsCmd::new(self.ucipacket.clone()).unwrap(),
+                    AndroidGetPowerStatsCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             AndroidCommandDataChild::AndroidSetCountryCodeCmd(_) => {
                 AndroidCommandChild::AndroidSetCountryCodeCmd(
-                    AndroidSetCountryCodeCmd::new(self.ucipacket.clone()).unwrap(),
+                    AndroidSetCountryCodeCmd::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             AndroidCommandDataChild::Payload(payload) => {
@@ -6467,13 +6528,13 @@ impl AndroidCommand {
             AndroidCommandDataChild::None => AndroidCommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -6487,28 +6548,25 @@ impl AndroidCommand {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             androidcommand,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.androidcommand.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidCommandBuilder {
@@ -6522,18 +6580,17 @@ impl AndroidCommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::AndroidCommand(androidcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        AndroidCommand::new(ucipacket).unwrap()
+        AndroidCommand::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidCommandBuilder> for UciPacket {
-    fn from(builder: AndroidCommandBuilder) -> UciPacket {
+impl From<AndroidCommandBuilder> for ControlPacket {
+    fn from(builder: AndroidCommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -6582,7 +6639,7 @@ pub struct AndroidResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidResponse {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -6641,8 +6698,8 @@ impl AndroidResponseData {
 }
 impl Packet for AndroidResponse {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -6659,20 +6716,20 @@ impl From<AndroidResponse> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidResponse> for UciPacket {
-    fn from(packet: AndroidResponse) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidResponse> for ControlPacket {
+    fn from(packet: AndroidResponse) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidResponse> for UciResponse {
     fn from(packet: AndroidResponse) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidResponse {
+impl TryFrom<ControlPacket> for AndroidResponse {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidResponse> {
-        AndroidResponse::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidResponse> {
+        AndroidResponse::new(packet.controlpacket)
     }
 }
 impl AndroidResponse {
@@ -6682,19 +6739,19 @@ impl AndroidResponse {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> AndroidResponseChild {
         match &self.androidresponse.child {
             AndroidResponseDataChild::AndroidGetPowerStatsRsp(_) => {
                 AndroidResponseChild::AndroidGetPowerStatsRsp(
-                    AndroidGetPowerStatsRsp::new(self.ucipacket.clone()).unwrap(),
+                    AndroidGetPowerStatsRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             AndroidResponseDataChild::AndroidSetCountryCodeRsp(_) => {
                 AndroidResponseChild::AndroidSetCountryCodeRsp(
-                    AndroidSetCountryCodeRsp::new(self.ucipacket.clone()).unwrap(),
+                    AndroidSetCountryCodeRsp::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             AndroidResponseDataChild::Payload(payload) => {
@@ -6703,13 +6760,13 @@ impl AndroidResponse {
             AndroidResponseDataChild::None => AndroidResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -6723,28 +6780,25 @@ impl AndroidResponse {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             androidresponse,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.androidresponse.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidResponseBuilder {
@@ -6758,18 +6812,17 @@ impl AndroidResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::AndroidResponse(androidresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        AndroidResponse::new(ucipacket).unwrap()
+        AndroidResponse::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidResponseBuilder> for UciPacket {
-    fn from(builder: AndroidResponseBuilder) -> UciPacket {
+impl From<AndroidResponseBuilder> for ControlPacket {
+    fn from(builder: AndroidResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -6817,7 +6870,7 @@ pub struct AndroidNotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidNotification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -6872,8 +6925,8 @@ impl AndroidNotificationData {
 }
 impl Packet for AndroidNotification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -6890,20 +6943,20 @@ impl From<AndroidNotification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidNotification> for UciPacket {
-    fn from(packet: AndroidNotification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidNotification> for ControlPacket {
+    fn from(packet: AndroidNotification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidNotification> for UciNotification {
     fn from(packet: AndroidNotification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidNotification {
+impl TryFrom<ControlPacket> for AndroidNotification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidNotification> {
-        AndroidNotification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidNotification> {
+        AndroidNotification::new(packet.controlpacket)
     }
 }
 impl AndroidNotification {
@@ -6913,14 +6966,14 @@ impl AndroidNotification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> AndroidNotificationChild {
         match &self.androidnotification.child {
             AndroidNotificationDataChild::AndroidRangeDiagnosticsNtf(_) => {
                 AndroidNotificationChild::AndroidRangeDiagnosticsNtf(
-                    AndroidRangeDiagnosticsNtf::new(self.ucipacket.clone()).unwrap(),
+                    AndroidRangeDiagnosticsNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             AndroidNotificationDataChild::Payload(payload) => {
@@ -6929,13 +6982,13 @@ impl AndroidNotification {
             AndroidNotificationDataChild::None => AndroidNotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -6949,28 +7002,25 @@ impl AndroidNotification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             androidnotification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.androidnotification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidNotificationBuilder {
@@ -6984,18 +7034,17 @@ impl AndroidNotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::AndroidNotification(androidnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        AndroidNotification::new(ucipacket).unwrap()
+        AndroidNotification::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidNotificationBuilder> for UciPacket {
-    fn from(builder: AndroidNotificationBuilder) -> UciPacket {
+impl From<AndroidNotificationBuilder> for ControlPacket {
+    fn from(builder: AndroidNotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -7018,7 +7067,7 @@ pub struct DeviceResetCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DeviceResetCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -7071,8 +7120,8 @@ impl DeviceResetCmdData {
 }
 impl Packet for DeviceResetCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -7089,25 +7138,25 @@ impl From<DeviceResetCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<DeviceResetCmd> for UciPacket {
-    fn from(packet: DeviceResetCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<DeviceResetCmd> for ControlPacket {
+    fn from(packet: DeviceResetCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DeviceResetCmd> for UciCommand {
     fn from(packet: DeviceResetCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DeviceResetCmd> for CoreCommand {
     fn from(packet: DeviceResetCmd) -> CoreCommand {
-        CoreCommand::new(packet.ucipacket).unwrap()
+        CoreCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for DeviceResetCmd {
+impl TryFrom<ControlPacket> for DeviceResetCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<DeviceResetCmd> {
-        DeviceResetCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<DeviceResetCmd> {
+        DeviceResetCmd::new(packet.controlpacket)
     }
 }
 impl DeviceResetCmd {
@@ -7117,16 +7166,16 @@ impl DeviceResetCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -7149,23 +7198,20 @@ impl DeviceResetCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             corecommand,
             deviceresetcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_reset_config(&self) -> ResetConfig {
         self.deviceresetcmd.reset_config
@@ -7174,7 +7220,7 @@ impl DeviceResetCmd {
         self.deviceresetcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl DeviceResetCmdBuilder {
@@ -7188,18 +7234,17 @@ impl DeviceResetCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::CoreCommand(corecommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Command,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        DeviceResetCmd::new(ucipacket).unwrap()
+        DeviceResetCmd::new(controlpacket).unwrap()
     }
 }
-impl From<DeviceResetCmdBuilder> for UciPacket {
-    fn from(builder: DeviceResetCmdBuilder) -> UciPacket {
+impl From<DeviceResetCmdBuilder> for ControlPacket {
+    fn from(builder: DeviceResetCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -7227,7 +7272,7 @@ pub struct DeviceResetRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DeviceResetRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -7279,8 +7324,8 @@ impl DeviceResetRspData {
 }
 impl Packet for DeviceResetRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -7297,25 +7342,25 @@ impl From<DeviceResetRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<DeviceResetRsp> for UciPacket {
-    fn from(packet: DeviceResetRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<DeviceResetRsp> for ControlPacket {
+    fn from(packet: DeviceResetRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DeviceResetRsp> for UciResponse {
     fn from(packet: DeviceResetRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DeviceResetRsp> for CoreResponse {
     fn from(packet: DeviceResetRsp) -> CoreResponse {
-        CoreResponse::new(packet.ucipacket).unwrap()
+        CoreResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for DeviceResetRsp {
+impl TryFrom<ControlPacket> for DeviceResetRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<DeviceResetRsp> {
-        DeviceResetRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<DeviceResetRsp> {
+        DeviceResetRsp::new(packet.controlpacket)
     }
 }
 impl DeviceResetRsp {
@@ -7325,16 +7370,16 @@ impl DeviceResetRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -7357,23 +7402,20 @@ impl DeviceResetRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             coreresponse,
             deviceresetrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.deviceresetrsp.status
@@ -7382,7 +7424,7 @@ impl DeviceResetRsp {
         self.deviceresetrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl DeviceResetRspBuilder {
@@ -7396,18 +7438,17 @@ impl DeviceResetRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::CoreResponse(coreresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Response,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        DeviceResetRsp::new(ucipacket).unwrap()
+        DeviceResetRsp::new(controlpacket).unwrap()
     }
 }
-impl From<DeviceResetRspBuilder> for UciPacket {
-    fn from(builder: DeviceResetRspBuilder) -> UciPacket {
+impl From<DeviceResetRspBuilder> for ControlPacket {
+    fn from(builder: DeviceResetRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -7435,7 +7476,7 @@ pub struct DeviceStatusNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DeviceStatusNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -7488,8 +7529,8 @@ impl DeviceStatusNtfData {
 }
 impl Packet for DeviceStatusNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -7506,25 +7547,25 @@ impl From<DeviceStatusNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<DeviceStatusNtf> for UciPacket {
-    fn from(packet: DeviceStatusNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<DeviceStatusNtf> for ControlPacket {
+    fn from(packet: DeviceStatusNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DeviceStatusNtf> for UciNotification {
     fn from(packet: DeviceStatusNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DeviceStatusNtf> for CoreNotification {
     fn from(packet: DeviceStatusNtf) -> CoreNotification {
-        CoreNotification::new(packet.ucipacket).unwrap()
+        CoreNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for DeviceStatusNtf {
+impl TryFrom<ControlPacket> for DeviceStatusNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<DeviceStatusNtf> {
-        DeviceStatusNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<DeviceStatusNtf> {
+        DeviceStatusNtf::new(packet.controlpacket)
     }
 }
 impl DeviceStatusNtf {
@@ -7534,16 +7575,16 @@ impl DeviceStatusNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -7566,7 +7607,7 @@ impl DeviceStatusNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             corenotification,
             devicestatusntf,
@@ -7575,23 +7616,20 @@ impl DeviceStatusNtf {
     pub fn get_device_state(&self) -> DeviceState {
         self.devicestatusntf.device_state
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.devicestatusntf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl DeviceStatusNtfBuilder {
@@ -7605,18 +7643,17 @@ impl DeviceStatusNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::CoreNotification(corenotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Notification,
             opcode: 1,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        DeviceStatusNtf::new(ucipacket).unwrap()
+        DeviceStatusNtf::new(controlpacket).unwrap()
     }
 }
-impl From<DeviceStatusNtfBuilder> for UciPacket {
-    fn from(builder: DeviceStatusNtfBuilder) -> UciPacket {
+impl From<DeviceStatusNtfBuilder> for ControlPacket {
+    fn from(builder: DeviceStatusNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -7642,7 +7679,7 @@ pub struct GetDeviceInfoCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GetDeviceInfoCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -7675,8 +7712,8 @@ impl GetDeviceInfoCmdData {
 }
 impl Packet for GetDeviceInfoCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -7693,25 +7730,25 @@ impl From<GetDeviceInfoCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<GetDeviceInfoCmd> for UciPacket {
-    fn from(packet: GetDeviceInfoCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<GetDeviceInfoCmd> for ControlPacket {
+    fn from(packet: GetDeviceInfoCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetDeviceInfoCmd> for UciCommand {
     fn from(packet: GetDeviceInfoCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetDeviceInfoCmd> for CoreCommand {
     fn from(packet: GetDeviceInfoCmd) -> CoreCommand {
-        CoreCommand::new(packet.ucipacket).unwrap()
+        CoreCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for GetDeviceInfoCmd {
+impl TryFrom<ControlPacket> for GetDeviceInfoCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<GetDeviceInfoCmd> {
-        GetDeviceInfoCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<GetDeviceInfoCmd> {
+        GetDeviceInfoCmd::new(packet.controlpacket)
     }
 }
 impl GetDeviceInfoCmd {
@@ -7721,16 +7758,16 @@ impl GetDeviceInfoCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -7753,29 +7790,26 @@ impl GetDeviceInfoCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             corecommand,
             getdeviceinfocmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.getdeviceinfocmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl GetDeviceInfoCmdBuilder {
@@ -7787,18 +7821,17 @@ impl GetDeviceInfoCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::CoreCommand(corecommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Command,
             opcode: 2,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        GetDeviceInfoCmd::new(ucipacket).unwrap()
+        GetDeviceInfoCmd::new(controlpacket).unwrap()
     }
 }
-impl From<GetDeviceInfoCmdBuilder> for UciPacket {
-    fn from(builder: GetDeviceInfoCmdBuilder) -> UciPacket {
+impl From<GetDeviceInfoCmdBuilder> for ControlPacket {
+    fn from(builder: GetDeviceInfoCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -7831,7 +7864,7 @@ pub struct GetDeviceInfoRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GetDeviceInfoRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -7953,8 +7986,8 @@ impl GetDeviceInfoRspData {
 }
 impl Packet for GetDeviceInfoRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -7971,25 +8004,25 @@ impl From<GetDeviceInfoRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<GetDeviceInfoRsp> for UciPacket {
-    fn from(packet: GetDeviceInfoRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<GetDeviceInfoRsp> for ControlPacket {
+    fn from(packet: GetDeviceInfoRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetDeviceInfoRsp> for UciResponse {
     fn from(packet: GetDeviceInfoRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetDeviceInfoRsp> for CoreResponse {
     fn from(packet: GetDeviceInfoRsp) -> CoreResponse {
-        CoreResponse::new(packet.ucipacket).unwrap()
+        CoreResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for GetDeviceInfoRsp {
+impl TryFrom<ControlPacket> for GetDeviceInfoRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<GetDeviceInfoRsp> {
-        GetDeviceInfoRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<GetDeviceInfoRsp> {
+        GetDeviceInfoRsp::new(packet.controlpacket)
     }
 }
 impl GetDeviceInfoRsp {
@@ -7999,16 +8032,16 @@ impl GetDeviceInfoRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -8031,26 +8064,23 @@ impl GetDeviceInfoRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             coreresponse,
             getdeviceinforsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_version(&self) -> u16 {
         self.getdeviceinforsp.mac_version
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_phy_version(&self) -> u16 {
         self.getdeviceinforsp.phy_version
@@ -8071,7 +8101,7 @@ impl GetDeviceInfoRsp {
         self.getdeviceinforsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl GetDeviceInfoRspBuilder {
@@ -8090,18 +8120,17 @@ impl GetDeviceInfoRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::CoreResponse(coreresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Response,
             opcode: 2,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        GetDeviceInfoRsp::new(ucipacket).unwrap()
+        GetDeviceInfoRsp::new(controlpacket).unwrap()
     }
 }
-impl From<GetDeviceInfoRspBuilder> for UciPacket {
-    fn from(builder: GetDeviceInfoRspBuilder) -> UciPacket {
+impl From<GetDeviceInfoRspBuilder> for ControlPacket {
+    fn from(builder: GetDeviceInfoRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -8127,7 +8156,7 @@ pub struct GetCapsInfoCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GetCapsInfoCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -8160,8 +8189,8 @@ impl GetCapsInfoCmdData {
 }
 impl Packet for GetCapsInfoCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -8178,25 +8207,25 @@ impl From<GetCapsInfoCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<GetCapsInfoCmd> for UciPacket {
-    fn from(packet: GetCapsInfoCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<GetCapsInfoCmd> for ControlPacket {
+    fn from(packet: GetCapsInfoCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetCapsInfoCmd> for UciCommand {
     fn from(packet: GetCapsInfoCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetCapsInfoCmd> for CoreCommand {
     fn from(packet: GetCapsInfoCmd) -> CoreCommand {
-        CoreCommand::new(packet.ucipacket).unwrap()
+        CoreCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for GetCapsInfoCmd {
+impl TryFrom<ControlPacket> for GetCapsInfoCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<GetCapsInfoCmd> {
-        GetCapsInfoCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<GetCapsInfoCmd> {
+        GetCapsInfoCmd::new(packet.controlpacket)
     }
 }
 impl GetCapsInfoCmd {
@@ -8206,16 +8235,16 @@ impl GetCapsInfoCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -8238,29 +8267,26 @@ impl GetCapsInfoCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             corecommand,
             getcapsinfocmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.getcapsinfocmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl GetCapsInfoCmdBuilder {
@@ -8272,18 +8298,17 @@ impl GetCapsInfoCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::CoreCommand(corecommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Command,
             opcode: 3,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        GetCapsInfoCmd::new(ucipacket).unwrap()
+        GetCapsInfoCmd::new(controlpacket).unwrap()
     }
 }
-impl From<GetCapsInfoCmdBuilder> for UciPacket {
-    fn from(builder: GetCapsInfoCmdBuilder) -> UciPacket {
+impl From<GetCapsInfoCmdBuilder> for ControlPacket {
+    fn from(builder: GetCapsInfoCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -8377,7 +8402,7 @@ pub struct GetCapsInfoRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GetCapsInfoRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -8445,8 +8470,8 @@ impl GetCapsInfoRspData {
 }
 impl Packet for GetCapsInfoRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -8463,25 +8488,25 @@ impl From<GetCapsInfoRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<GetCapsInfoRsp> for UciPacket {
-    fn from(packet: GetCapsInfoRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<GetCapsInfoRsp> for ControlPacket {
+    fn from(packet: GetCapsInfoRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetCapsInfoRsp> for UciResponse {
     fn from(packet: GetCapsInfoRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetCapsInfoRsp> for CoreResponse {
     fn from(packet: GetCapsInfoRsp) -> CoreResponse {
-        CoreResponse::new(packet.ucipacket).unwrap()
+        CoreResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for GetCapsInfoRsp {
+impl TryFrom<ControlPacket> for GetCapsInfoRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<GetCapsInfoRsp> {
-        GetCapsInfoRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<GetCapsInfoRsp> {
+        GetCapsInfoRsp::new(packet.controlpacket)
     }
 }
 impl GetCapsInfoRsp {
@@ -8491,16 +8516,16 @@ impl GetCapsInfoRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -8523,23 +8548,20 @@ impl GetCapsInfoRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             coreresponse,
             getcapsinforsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.getcapsinforsp.status
@@ -8551,7 +8573,7 @@ impl GetCapsInfoRsp {
         self.getcapsinforsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl GetCapsInfoRspBuilder {
@@ -8566,18 +8588,17 @@ impl GetCapsInfoRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::CoreResponse(coreresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Response,
             opcode: 3,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        GetCapsInfoRsp::new(ucipacket).unwrap()
+        GetCapsInfoRsp::new(controlpacket).unwrap()
     }
 }
-impl From<GetCapsInfoRspBuilder> for UciPacket {
-    fn from(builder: GetCapsInfoRspBuilder) -> UciPacket {
+impl From<GetCapsInfoRspBuilder> for ControlPacket {
+    fn from(builder: GetCapsInfoRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -8670,7 +8691,7 @@ pub struct SetConfigCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SetConfigCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -8721,8 +8742,8 @@ impl SetConfigCmdData {
 }
 impl Packet for SetConfigCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -8739,25 +8760,25 @@ impl From<SetConfigCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SetConfigCmd> for UciPacket {
-    fn from(packet: SetConfigCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SetConfigCmd> for ControlPacket {
+    fn from(packet: SetConfigCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SetConfigCmd> for UciCommand {
     fn from(packet: SetConfigCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SetConfigCmd> for CoreCommand {
     fn from(packet: SetConfigCmd) -> CoreCommand {
-        CoreCommand::new(packet.ucipacket).unwrap()
+        CoreCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SetConfigCmd {
+impl TryFrom<ControlPacket> for SetConfigCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SetConfigCmd> {
-        SetConfigCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SetConfigCmd> {
+        SetConfigCmd::new(packet.controlpacket)
     }
 }
 impl SetConfigCmd {
@@ -8767,16 +8788,16 @@ impl SetConfigCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -8799,23 +8820,20 @@ impl SetConfigCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             corecommand,
             setconfigcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_tlvs(&self) -> &Vec<DeviceConfigTlv> {
         &self.setconfigcmd.tlvs
@@ -8824,7 +8842,7 @@ impl SetConfigCmd {
         self.setconfigcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SetConfigCmdBuilder {
@@ -8836,18 +8854,17 @@ impl SetConfigCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::CoreCommand(corecommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Command,
             opcode: 4,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SetConfigCmd::new(ucipacket).unwrap()
+        SetConfigCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SetConfigCmdBuilder> for UciPacket {
-    fn from(builder: SetConfigCmdBuilder) -> UciPacket {
+impl From<SetConfigCmdBuilder> for ControlPacket {
+    fn from(builder: SetConfigCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -8935,7 +8952,7 @@ pub struct SetConfigRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SetConfigRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -9014,8 +9031,8 @@ impl SetConfigRspData {
 }
 impl Packet for SetConfigRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -9032,25 +9049,25 @@ impl From<SetConfigRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SetConfigRsp> for UciPacket {
-    fn from(packet: SetConfigRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SetConfigRsp> for ControlPacket {
+    fn from(packet: SetConfigRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SetConfigRsp> for UciResponse {
     fn from(packet: SetConfigRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SetConfigRsp> for CoreResponse {
     fn from(packet: SetConfigRsp) -> CoreResponse {
-        CoreResponse::new(packet.ucipacket).unwrap()
+        CoreResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SetConfigRsp {
+impl TryFrom<ControlPacket> for SetConfigRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SetConfigRsp> {
-        SetConfigRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SetConfigRsp> {
+        SetConfigRsp::new(packet.controlpacket)
     }
 }
 impl SetConfigRsp {
@@ -9060,16 +9077,16 @@ impl SetConfigRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -9092,7 +9109,7 @@ impl SetConfigRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             coreresponse,
             setconfigrsp,
@@ -9101,17 +9118,14 @@ impl SetConfigRsp {
     pub fn get_cfg_status(&self) -> &Vec<DeviceConfigStatus> {
         &self.setconfigrsp.cfg_status
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.setconfigrsp.status
@@ -9120,7 +9134,7 @@ impl SetConfigRsp {
         self.setconfigrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SetConfigRspBuilder {
@@ -9135,18 +9149,17 @@ impl SetConfigRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::CoreResponse(coreresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Response,
             opcode: 4,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SetConfigRsp::new(ucipacket).unwrap()
+        SetConfigRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SetConfigRspBuilder> for UciPacket {
-    fn from(builder: SetConfigRspBuilder) -> UciPacket {
+impl From<SetConfigRspBuilder> for ControlPacket {
+    fn from(builder: SetConfigRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -9174,7 +9187,7 @@ pub struct GetConfigCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GetConfigCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -9232,8 +9245,8 @@ impl GetConfigCmdData {
 }
 impl Packet for GetConfigCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -9250,25 +9263,25 @@ impl From<GetConfigCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<GetConfigCmd> for UciPacket {
-    fn from(packet: GetConfigCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<GetConfigCmd> for ControlPacket {
+    fn from(packet: GetConfigCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetConfigCmd> for UciCommand {
     fn from(packet: GetConfigCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetConfigCmd> for CoreCommand {
     fn from(packet: GetConfigCmd) -> CoreCommand {
-        CoreCommand::new(packet.ucipacket).unwrap()
+        CoreCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for GetConfigCmd {
+impl TryFrom<ControlPacket> for GetConfigCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<GetConfigCmd> {
-        GetConfigCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<GetConfigCmd> {
+        GetConfigCmd::new(packet.controlpacket)
     }
 }
 impl GetConfigCmd {
@@ -9278,16 +9291,16 @@ impl GetConfigCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -9310,7 +9323,7 @@ impl GetConfigCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             corecommand,
             getconfigcmd,
@@ -9319,23 +9332,20 @@ impl GetConfigCmd {
     pub fn get_cfg_id(&self) -> &Vec<u8> {
         &self.getconfigcmd.cfg_id
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.getconfigcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl GetConfigCmdBuilder {
@@ -9349,18 +9359,17 @@ impl GetConfigCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::CoreCommand(corecommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Command,
             opcode: 5,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        GetConfigCmd::new(ucipacket).unwrap()
+        GetConfigCmd::new(controlpacket).unwrap()
     }
 }
-impl From<GetConfigCmdBuilder> for UciPacket {
-    fn from(builder: GetConfigCmdBuilder) -> UciPacket {
+impl From<GetConfigCmdBuilder> for ControlPacket {
+    fn from(builder: GetConfigCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -9389,7 +9398,7 @@ pub struct GetConfigRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GetConfigRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -9457,8 +9466,8 @@ impl GetConfigRspData {
 }
 impl Packet for GetConfigRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -9475,25 +9484,25 @@ impl From<GetConfigRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<GetConfigRsp> for UciPacket {
-    fn from(packet: GetConfigRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<GetConfigRsp> for ControlPacket {
+    fn from(packet: GetConfigRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetConfigRsp> for UciResponse {
     fn from(packet: GetConfigRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GetConfigRsp> for CoreResponse {
     fn from(packet: GetConfigRsp) -> CoreResponse {
-        CoreResponse::new(packet.ucipacket).unwrap()
+        CoreResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for GetConfigRsp {
+impl TryFrom<ControlPacket> for GetConfigRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<GetConfigRsp> {
-        GetConfigRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<GetConfigRsp> {
+        GetConfigRsp::new(packet.controlpacket)
     }
 }
 impl GetConfigRsp {
@@ -9503,16 +9512,16 @@ impl GetConfigRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -9535,23 +9544,20 @@ impl GetConfigRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             coreresponse,
             getconfigrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.getconfigrsp.status
@@ -9563,7 +9569,7 @@ impl GetConfigRsp {
         self.getconfigrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl GetConfigRspBuilder {
@@ -9578,18 +9584,17 @@ impl GetConfigRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::CoreResponse(coreresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Response,
             opcode: 5,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        GetConfigRsp::new(ucipacket).unwrap()
+        GetConfigRsp::new(controlpacket).unwrap()
     }
 }
-impl From<GetConfigRspBuilder> for UciPacket {
-    fn from(builder: GetConfigRspBuilder) -> UciPacket {
+impl From<GetConfigRspBuilder> for ControlPacket {
+    fn from(builder: GetConfigRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -9617,7 +9622,7 @@ pub struct GenericErrorData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GenericError {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -9669,8 +9674,8 @@ impl GenericErrorData {
 }
 impl Packet for GenericError {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -9687,25 +9692,25 @@ impl From<GenericError> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<GenericError> for UciPacket {
-    fn from(packet: GenericError) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<GenericError> for ControlPacket {
+    fn from(packet: GenericError) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GenericError> for UciNotification {
     fn from(packet: GenericError) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<GenericError> for CoreNotification {
     fn from(packet: GenericError) -> CoreNotification {
-        CoreNotification::new(packet.ucipacket).unwrap()
+        CoreNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for GenericError {
+impl TryFrom<ControlPacket> for GenericError {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<GenericError> {
-        GenericError::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<GenericError> {
+        GenericError::new(packet.controlpacket)
     }
 }
 impl GenericError {
@@ -9715,16 +9720,16 @@ impl GenericError {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -9747,23 +9752,20 @@ impl GenericError {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             corenotification,
             genericerror,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.genericerror.status
@@ -9772,7 +9774,7 @@ impl GenericError {
         self.genericerror.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl GenericErrorBuilder {
@@ -9786,18 +9788,17 @@ impl GenericErrorBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::CoreNotification(corenotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Notification,
             opcode: 7,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        GenericError::new(ucipacket).unwrap()
+        GenericError::new(controlpacket).unwrap()
     }
 }
-impl From<GenericErrorBuilder> for UciPacket {
-    fn from(builder: GenericErrorBuilder) -> UciPacket {
+impl From<GenericErrorBuilder> for ControlPacket {
+    fn from(builder: GenericErrorBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -9823,7 +9824,7 @@ pub struct CoreQueryTimeStampCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CoreQueryTimeStampCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -9856,8 +9857,8 @@ impl CoreQueryTimeStampCmdData {
 }
 impl Packet for CoreQueryTimeStampCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -9874,25 +9875,25 @@ impl From<CoreQueryTimeStampCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<CoreQueryTimeStampCmd> for UciPacket {
-    fn from(packet: CoreQueryTimeStampCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<CoreQueryTimeStampCmd> for ControlPacket {
+    fn from(packet: CoreQueryTimeStampCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<CoreQueryTimeStampCmd> for UciCommand {
     fn from(packet: CoreQueryTimeStampCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<CoreQueryTimeStampCmd> for CoreCommand {
     fn from(packet: CoreQueryTimeStampCmd) -> CoreCommand {
-        CoreCommand::new(packet.ucipacket).unwrap()
+        CoreCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for CoreQueryTimeStampCmd {
+impl TryFrom<ControlPacket> for CoreQueryTimeStampCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<CoreQueryTimeStampCmd> {
-        CoreQueryTimeStampCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<CoreQueryTimeStampCmd> {
+        CoreQueryTimeStampCmd::new(packet.controlpacket)
     }
 }
 impl CoreQueryTimeStampCmd {
@@ -9902,16 +9903,16 @@ impl CoreQueryTimeStampCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -9934,29 +9935,26 @@ impl CoreQueryTimeStampCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             corecommand,
             corequerytimestampcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.corequerytimestampcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl CoreQueryTimeStampCmdBuilder {
@@ -9968,18 +9966,17 @@ impl CoreQueryTimeStampCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::CoreCommand(corecommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Command,
             opcode: 8,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        CoreQueryTimeStampCmd::new(ucipacket).unwrap()
+        CoreQueryTimeStampCmd::new(controlpacket).unwrap()
     }
 }
-impl From<CoreQueryTimeStampCmdBuilder> for UciPacket {
-    fn from(builder: CoreQueryTimeStampCmdBuilder) -> UciPacket {
+impl From<CoreQueryTimeStampCmdBuilder> for ControlPacket {
+    fn from(builder: CoreQueryTimeStampCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -10008,7 +10005,7 @@ pub struct CoreQueryTimeStampRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CoreQueryTimeStampRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -10070,8 +10067,8 @@ impl CoreQueryTimeStampRspData {
 }
 impl Packet for CoreQueryTimeStampRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -10088,25 +10085,25 @@ impl From<CoreQueryTimeStampRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<CoreQueryTimeStampRsp> for UciPacket {
-    fn from(packet: CoreQueryTimeStampRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<CoreQueryTimeStampRsp> for ControlPacket {
+    fn from(packet: CoreQueryTimeStampRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<CoreQueryTimeStampRsp> for UciResponse {
     fn from(packet: CoreQueryTimeStampRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<CoreQueryTimeStampRsp> for CoreResponse {
     fn from(packet: CoreQueryTimeStampRsp) -> CoreResponse {
-        CoreResponse::new(packet.ucipacket).unwrap()
+        CoreResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for CoreQueryTimeStampRsp {
+impl TryFrom<ControlPacket> for CoreQueryTimeStampRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<CoreQueryTimeStampRsp> {
-        CoreQueryTimeStampRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<CoreQueryTimeStampRsp> {
+        CoreQueryTimeStampRsp::new(packet.controlpacket)
     }
 }
 impl CoreQueryTimeStampRsp {
@@ -10116,16 +10113,16 @@ impl CoreQueryTimeStampRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -10148,23 +10145,20 @@ impl CoreQueryTimeStampRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             coreresponse,
             corequerytimestamprsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.corequerytimestamprsp.status
@@ -10176,7 +10170,7 @@ impl CoreQueryTimeStampRsp {
         self.corequerytimestamprsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl CoreQueryTimeStampRspBuilder {
@@ -10191,18 +10185,17 @@ impl CoreQueryTimeStampRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::CoreResponse(coreresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Core,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Core,
+            mt: MessageType::Response,
             opcode: 8,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        CoreQueryTimeStampRsp::new(ucipacket).unwrap()
+        CoreQueryTimeStampRsp::new(controlpacket).unwrap()
     }
 }
-impl From<CoreQueryTimeStampRspBuilder> for UciPacket {
-    fn from(builder: CoreQueryTimeStampRspBuilder) -> UciPacket {
+impl From<CoreQueryTimeStampRspBuilder> for ControlPacket {
+    fn from(builder: CoreQueryTimeStampRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -10231,7 +10224,7 @@ pub struct SessionInitCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionInitCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -10297,8 +10290,8 @@ impl SessionInitCmdData {
 }
 impl Packet for SessionInitCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -10315,25 +10308,25 @@ impl From<SessionInitCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionInitCmd> for UciPacket {
-    fn from(packet: SessionInitCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionInitCmd> for ControlPacket {
+    fn from(packet: SessionInitCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInitCmd> for UciCommand {
     fn from(packet: SessionInitCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInitCmd> for SessionConfigCommand {
     fn from(packet: SessionInitCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionInitCmd {
+impl TryFrom<ControlPacket> for SessionInitCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionInitCmd> {
-        SessionInitCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionInitCmd> {
+        SessionInitCmd::new(packet.controlpacket)
     }
 }
 impl SessionInitCmd {
@@ -10343,16 +10336,16 @@ impl SessionInitCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -10375,23 +10368,20 @@ impl SessionInitCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessioninitcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_id(&self) -> u32 {
         self.sessioninitcmd.session_id
@@ -10403,7 +10393,7 @@ impl SessionInitCmd {
         self.sessioninitcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionInitCmdBuilder {
@@ -10418,18 +10408,17 @@ impl SessionInitCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionInitCmd::new(ucipacket).unwrap()
+        SessionInitCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionInitCmdBuilder> for UciPacket {
-    fn from(builder: SessionInitCmdBuilder) -> UciPacket {
+impl From<SessionInitCmdBuilder> for ControlPacket {
+    fn from(builder: SessionInitCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -10458,7 +10447,7 @@ pub struct SessionInitRsp_V2Data {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionInitRsp_V2 {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -10523,8 +10512,8 @@ impl SessionInitRsp_V2Data {
 }
 impl Packet for SessionInitRsp_V2 {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -10541,25 +10530,25 @@ impl From<SessionInitRsp_V2> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionInitRsp_V2> for UciPacket {
-    fn from(packet: SessionInitRsp_V2) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionInitRsp_V2> for ControlPacket {
+    fn from(packet: SessionInitRsp_V2) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInitRsp_V2> for UciResponse {
     fn from(packet: SessionInitRsp_V2) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInitRsp_V2> for SessionConfigResponse {
     fn from(packet: SessionInitRsp_V2) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionInitRsp_V2 {
+impl TryFrom<ControlPacket> for SessionInitRsp_V2 {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionInitRsp_V2> {
-        SessionInitRsp_V2::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionInitRsp_V2> {
+        SessionInitRsp_V2::new(packet.controlpacket)
     }
 }
 impl SessionInitRsp_V2 {
@@ -10569,16 +10558,16 @@ impl SessionInitRsp_V2 {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -10601,23 +10590,20 @@ impl SessionInitRsp_V2 {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessioninitrsp_v2,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_handle(&self) -> u32 {
         self.sessioninitrsp_v2.session_handle
@@ -10629,7 +10615,7 @@ impl SessionInitRsp_V2 {
         self.sessioninitrsp_v2.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionInitRsp_V2Builder {
@@ -10644,18 +10630,17 @@ impl SessionInitRsp_V2Builder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionInitRsp_V2::new(ucipacket).unwrap()
+        SessionInitRsp_V2::new(controlpacket).unwrap()
     }
 }
-impl From<SessionInitRsp_V2Builder> for UciPacket {
-    fn from(builder: SessionInitRsp_V2Builder) -> UciPacket {
+impl From<SessionInitRsp_V2Builder> for ControlPacket {
+    fn from(builder: SessionInitRsp_V2Builder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -10683,7 +10668,7 @@ pub struct SessionInitRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionInitRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -10735,8 +10720,8 @@ impl SessionInitRspData {
 }
 impl Packet for SessionInitRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -10753,25 +10738,25 @@ impl From<SessionInitRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionInitRsp> for UciPacket {
-    fn from(packet: SessionInitRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionInitRsp> for ControlPacket {
+    fn from(packet: SessionInitRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInitRsp> for UciResponse {
     fn from(packet: SessionInitRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInitRsp> for SessionConfigResponse {
     fn from(packet: SessionInitRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionInitRsp {
+impl TryFrom<ControlPacket> for SessionInitRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionInitRsp> {
-        SessionInitRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionInitRsp> {
+        SessionInitRsp::new(packet.controlpacket)
     }
 }
 impl SessionInitRsp {
@@ -10781,16 +10766,16 @@ impl SessionInitRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -10813,23 +10798,20 @@ impl SessionInitRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessioninitrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessioninitrsp.status
@@ -10838,7 +10820,7 @@ impl SessionInitRsp {
         self.sessioninitrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionInitRspBuilder {
@@ -10852,18 +10834,17 @@ impl SessionInitRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionInitRsp::new(ucipacket).unwrap()
+        SessionInitRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionInitRspBuilder> for UciPacket {
-    fn from(builder: SessionInitRspBuilder) -> UciPacket {
+impl From<SessionInitRspBuilder> for ControlPacket {
+    fn from(builder: SessionInitRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -10891,7 +10872,7 @@ pub struct SessionDeinitCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionDeinitCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -10936,8 +10917,8 @@ impl SessionDeinitCmdData {
 }
 impl Packet for SessionDeinitCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -10954,25 +10935,25 @@ impl From<SessionDeinitCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionDeinitCmd> for UciPacket {
-    fn from(packet: SessionDeinitCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionDeinitCmd> for ControlPacket {
+    fn from(packet: SessionDeinitCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionDeinitCmd> for UciCommand {
     fn from(packet: SessionDeinitCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionDeinitCmd> for SessionConfigCommand {
     fn from(packet: SessionDeinitCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionDeinitCmd {
+impl TryFrom<ControlPacket> for SessionDeinitCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionDeinitCmd> {
-        SessionDeinitCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionDeinitCmd> {
+        SessionDeinitCmd::new(packet.controlpacket)
     }
 }
 impl SessionDeinitCmd {
@@ -10982,16 +10963,16 @@ impl SessionDeinitCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -11014,23 +10995,20 @@ impl SessionDeinitCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessiondeinitcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.sessiondeinitcmd.session_token
@@ -11039,7 +11017,7 @@ impl SessionDeinitCmd {
         self.sessiondeinitcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionDeinitCmdBuilder {
@@ -11053,18 +11031,17 @@ impl SessionDeinitCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 1,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionDeinitCmd::new(ucipacket).unwrap()
+        SessionDeinitCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionDeinitCmdBuilder> for UciPacket {
-    fn from(builder: SessionDeinitCmdBuilder) -> UciPacket {
+impl From<SessionDeinitCmdBuilder> for ControlPacket {
+    fn from(builder: SessionDeinitCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -11092,7 +11069,7 @@ pub struct SessionDeinitRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionDeinitRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -11144,8 +11121,8 @@ impl SessionDeinitRspData {
 }
 impl Packet for SessionDeinitRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -11162,25 +11139,25 @@ impl From<SessionDeinitRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionDeinitRsp> for UciPacket {
-    fn from(packet: SessionDeinitRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionDeinitRsp> for ControlPacket {
+    fn from(packet: SessionDeinitRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionDeinitRsp> for UciResponse {
     fn from(packet: SessionDeinitRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionDeinitRsp> for SessionConfigResponse {
     fn from(packet: SessionDeinitRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionDeinitRsp {
+impl TryFrom<ControlPacket> for SessionDeinitRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionDeinitRsp> {
-        SessionDeinitRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionDeinitRsp> {
+        SessionDeinitRsp::new(packet.controlpacket)
     }
 }
 impl SessionDeinitRsp {
@@ -11190,16 +11167,16 @@ impl SessionDeinitRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -11222,23 +11199,20 @@ impl SessionDeinitRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessiondeinitrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessiondeinitrsp.status
@@ -11247,7 +11221,7 @@ impl SessionDeinitRsp {
         self.sessiondeinitrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionDeinitRspBuilder {
@@ -11261,18 +11235,17 @@ impl SessionDeinitRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 1,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionDeinitRsp::new(ucipacket).unwrap()
+        SessionDeinitRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionDeinitRspBuilder> for UciPacket {
-    fn from(builder: SessionDeinitRspBuilder) -> UciPacket {
+impl From<SessionDeinitRspBuilder> for ControlPacket {
+    fn from(builder: SessionDeinitRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -11302,7 +11275,7 @@ pub struct SessionStatusNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionStatusNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -11379,8 +11352,8 @@ impl SessionStatusNtfData {
 }
 impl Packet for SessionStatusNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -11397,25 +11370,25 @@ impl From<SessionStatusNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionStatusNtf> for UciPacket {
-    fn from(packet: SessionStatusNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionStatusNtf> for ControlPacket {
+    fn from(packet: SessionStatusNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStatusNtf> for UciNotification {
     fn from(packet: SessionStatusNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStatusNtf> for SessionConfigNotification {
     fn from(packet: SessionStatusNtf) -> SessionConfigNotification {
-        SessionConfigNotification::new(packet.ucipacket).unwrap()
+        SessionConfigNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionStatusNtf {
+impl TryFrom<ControlPacket> for SessionStatusNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionStatusNtf> {
-        SessionStatusNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionStatusNtf> {
+        SessionStatusNtf::new(packet.controlpacket)
     }
 }
 impl SessionStatusNtf {
@@ -11425,16 +11398,16 @@ impl SessionStatusNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -11457,23 +11430,20 @@ impl SessionStatusNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessionconfignotification,
             sessionstatusntf,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_reason_code(&self) -> u8 {
         self.sessionstatusntf.reason_code
@@ -11488,7 +11458,7 @@ impl SessionStatusNtf {
         self.sessionstatusntf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionStatusNtfBuilder {
@@ -11504,18 +11474,17 @@ impl SessionStatusNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionConfigNotification(sessionconfignotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Notification,
             opcode: 2,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        SessionStatusNtf::new(ucipacket).unwrap()
+        SessionStatusNtf::new(controlpacket).unwrap()
     }
 }
-impl From<SessionStatusNtfBuilder> for UciPacket {
-    fn from(builder: SessionStatusNtfBuilder) -> UciPacket {
+impl From<SessionStatusNtfBuilder> for ControlPacket {
+    fn from(builder: SessionStatusNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -11610,7 +11579,7 @@ pub struct SessionSetAppConfigCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionSetAppConfigCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -11674,8 +11643,8 @@ impl SessionSetAppConfigCmdData {
 }
 impl Packet for SessionSetAppConfigCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -11692,25 +11661,25 @@ impl From<SessionSetAppConfigCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionSetAppConfigCmd> for UciPacket {
-    fn from(packet: SessionSetAppConfigCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionSetAppConfigCmd> for ControlPacket {
+    fn from(packet: SessionSetAppConfigCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetAppConfigCmd> for UciCommand {
     fn from(packet: SessionSetAppConfigCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetAppConfigCmd> for SessionConfigCommand {
     fn from(packet: SessionSetAppConfigCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionSetAppConfigCmd {
+impl TryFrom<ControlPacket> for SessionSetAppConfigCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionSetAppConfigCmd> {
-        SessionSetAppConfigCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionSetAppConfigCmd> {
+        SessionSetAppConfigCmd::new(packet.controlpacket)
     }
 }
 impl SessionSetAppConfigCmd {
@@ -11720,16 +11689,16 @@ impl SessionSetAppConfigCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -11752,23 +11721,20 @@ impl SessionSetAppConfigCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessionsetappconfigcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.sessionsetappconfigcmd.session_token
@@ -11780,7 +11746,7 @@ impl SessionSetAppConfigCmd {
         self.sessionsetappconfigcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionSetAppConfigCmdBuilder {
@@ -11795,18 +11761,17 @@ impl SessionSetAppConfigCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 3,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionSetAppConfigCmd::new(ucipacket).unwrap()
+        SessionSetAppConfigCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionSetAppConfigCmdBuilder> for UciPacket {
-    fn from(builder: SessionSetAppConfigCmdBuilder) -> UciPacket {
+impl From<SessionSetAppConfigCmdBuilder> for ControlPacket {
+    fn from(builder: SessionSetAppConfigCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -11895,7 +11860,7 @@ pub struct SessionSetAppConfigRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionSetAppConfigRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -11974,8 +11939,8 @@ impl SessionSetAppConfigRspData {
 }
 impl Packet for SessionSetAppConfigRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -11992,25 +11957,25 @@ impl From<SessionSetAppConfigRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionSetAppConfigRsp> for UciPacket {
-    fn from(packet: SessionSetAppConfigRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionSetAppConfigRsp> for ControlPacket {
+    fn from(packet: SessionSetAppConfigRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetAppConfigRsp> for UciResponse {
     fn from(packet: SessionSetAppConfigRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetAppConfigRsp> for SessionConfigResponse {
     fn from(packet: SessionSetAppConfigRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionSetAppConfigRsp {
+impl TryFrom<ControlPacket> for SessionSetAppConfigRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionSetAppConfigRsp> {
-        SessionSetAppConfigRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionSetAppConfigRsp> {
+        SessionSetAppConfigRsp::new(packet.controlpacket)
     }
 }
 impl SessionSetAppConfigRsp {
@@ -12020,16 +11985,16 @@ impl SessionSetAppConfigRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -12052,7 +12017,7 @@ impl SessionSetAppConfigRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessionsetappconfigrsp,
@@ -12061,17 +12026,14 @@ impl SessionSetAppConfigRsp {
     pub fn get_cfg_status(&self) -> &Vec<AppConfigStatus> {
         &self.sessionsetappconfigrsp.cfg_status
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessionsetappconfigrsp.status
@@ -12080,7 +12042,7 @@ impl SessionSetAppConfigRsp {
         self.sessionsetappconfigrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionSetAppConfigRspBuilder {
@@ -12095,18 +12057,17 @@ impl SessionSetAppConfigRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 3,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionSetAppConfigRsp::new(ucipacket).unwrap()
+        SessionSetAppConfigRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionSetAppConfigRspBuilder> for UciPacket {
-    fn from(builder: SessionSetAppConfigRspBuilder) -> UciPacket {
+impl From<SessionSetAppConfigRspBuilder> for ControlPacket {
+    fn from(builder: SessionSetAppConfigRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -12135,7 +12096,7 @@ pub struct SessionGetAppConfigCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetAppConfigCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -12206,8 +12167,8 @@ impl SessionGetAppConfigCmdData {
 }
 impl Packet for SessionGetAppConfigCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -12224,25 +12185,25 @@ impl From<SessionGetAppConfigCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetAppConfigCmd> for UciPacket {
-    fn from(packet: SessionGetAppConfigCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetAppConfigCmd> for ControlPacket {
+    fn from(packet: SessionGetAppConfigCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetAppConfigCmd> for UciCommand {
     fn from(packet: SessionGetAppConfigCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetAppConfigCmd> for SessionConfigCommand {
     fn from(packet: SessionGetAppConfigCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetAppConfigCmd {
+impl TryFrom<ControlPacket> for SessionGetAppConfigCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetAppConfigCmd> {
-        SessionGetAppConfigCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetAppConfigCmd> {
+        SessionGetAppConfigCmd::new(packet.controlpacket)
     }
 }
 impl SessionGetAppConfigCmd {
@@ -12252,16 +12213,16 @@ impl SessionGetAppConfigCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -12284,7 +12245,7 @@ impl SessionGetAppConfigCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessiongetappconfigcmd,
@@ -12293,17 +12254,14 @@ impl SessionGetAppConfigCmd {
     pub fn get_app_cfg(&self) -> &Vec<u8> {
         &self.sessiongetappconfigcmd.app_cfg
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.sessiongetappconfigcmd.session_token
@@ -12312,7 +12270,7 @@ impl SessionGetAppConfigCmd {
         self.sessiongetappconfigcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetAppConfigCmdBuilder {
@@ -12327,18 +12285,17 @@ impl SessionGetAppConfigCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 4,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionGetAppConfigCmd::new(ucipacket).unwrap()
+        SessionGetAppConfigCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetAppConfigCmdBuilder> for UciPacket {
-    fn from(builder: SessionGetAppConfigCmdBuilder) -> UciPacket {
+impl From<SessionGetAppConfigCmdBuilder> for ControlPacket {
+    fn from(builder: SessionGetAppConfigCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -12367,7 +12324,7 @@ pub struct SessionGetAppConfigRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetAppConfigRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -12435,8 +12392,8 @@ impl SessionGetAppConfigRspData {
 }
 impl Packet for SessionGetAppConfigRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -12453,25 +12410,25 @@ impl From<SessionGetAppConfigRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetAppConfigRsp> for UciPacket {
-    fn from(packet: SessionGetAppConfigRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetAppConfigRsp> for ControlPacket {
+    fn from(packet: SessionGetAppConfigRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetAppConfigRsp> for UciResponse {
     fn from(packet: SessionGetAppConfigRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetAppConfigRsp> for SessionConfigResponse {
     fn from(packet: SessionGetAppConfigRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetAppConfigRsp {
+impl TryFrom<ControlPacket> for SessionGetAppConfigRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetAppConfigRsp> {
-        SessionGetAppConfigRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetAppConfigRsp> {
+        SessionGetAppConfigRsp::new(packet.controlpacket)
     }
 }
 impl SessionGetAppConfigRsp {
@@ -12481,16 +12438,16 @@ impl SessionGetAppConfigRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -12513,23 +12470,20 @@ impl SessionGetAppConfigRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessiongetappconfigrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessiongetappconfigrsp.status
@@ -12541,7 +12495,7 @@ impl SessionGetAppConfigRsp {
         self.sessiongetappconfigrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetAppConfigRspBuilder {
@@ -12556,18 +12510,17 @@ impl SessionGetAppConfigRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 4,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionGetAppConfigRsp::new(ucipacket).unwrap()
+        SessionGetAppConfigRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetAppConfigRspBuilder> for UciPacket {
-    fn from(builder: SessionGetAppConfigRspBuilder) -> UciPacket {
+impl From<SessionGetAppConfigRspBuilder> for ControlPacket {
+    fn from(builder: SessionGetAppConfigRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -12593,7 +12546,7 @@ pub struct SessionGetCountCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetCountCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -12626,8 +12579,8 @@ impl SessionGetCountCmdData {
 }
 impl Packet for SessionGetCountCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -12644,25 +12597,25 @@ impl From<SessionGetCountCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetCountCmd> for UciPacket {
-    fn from(packet: SessionGetCountCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetCountCmd> for ControlPacket {
+    fn from(packet: SessionGetCountCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetCountCmd> for UciCommand {
     fn from(packet: SessionGetCountCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetCountCmd> for SessionConfigCommand {
     fn from(packet: SessionGetCountCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetCountCmd {
+impl TryFrom<ControlPacket> for SessionGetCountCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetCountCmd> {
-        SessionGetCountCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetCountCmd> {
+        SessionGetCountCmd::new(packet.controlpacket)
     }
 }
 impl SessionGetCountCmd {
@@ -12672,16 +12625,16 @@ impl SessionGetCountCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -12704,29 +12657,26 @@ impl SessionGetCountCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessiongetcountcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.sessiongetcountcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetCountCmdBuilder {
@@ -12738,18 +12688,17 @@ impl SessionGetCountCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 5,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionGetCountCmd::new(ucipacket).unwrap()
+        SessionGetCountCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetCountCmdBuilder> for UciPacket {
-    fn from(builder: SessionGetCountCmdBuilder) -> UciPacket {
+impl From<SessionGetCountCmdBuilder> for ControlPacket {
+    fn from(builder: SessionGetCountCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -12778,7 +12727,7 @@ pub struct SessionGetCountRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetCountRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -12843,8 +12792,8 @@ impl SessionGetCountRspData {
 }
 impl Packet for SessionGetCountRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -12861,25 +12810,25 @@ impl From<SessionGetCountRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetCountRsp> for UciPacket {
-    fn from(packet: SessionGetCountRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetCountRsp> for ControlPacket {
+    fn from(packet: SessionGetCountRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetCountRsp> for UciResponse {
     fn from(packet: SessionGetCountRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetCountRsp> for SessionConfigResponse {
     fn from(packet: SessionGetCountRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetCountRsp {
+impl TryFrom<ControlPacket> for SessionGetCountRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetCountRsp> {
-        SessionGetCountRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetCountRsp> {
+        SessionGetCountRsp::new(packet.controlpacket)
     }
 }
 impl SessionGetCountRsp {
@@ -12889,16 +12838,16 @@ impl SessionGetCountRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -12921,23 +12870,20 @@ impl SessionGetCountRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessiongetcountrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_count(&self) -> u8 {
         self.sessiongetcountrsp.session_count
@@ -12949,7 +12895,7 @@ impl SessionGetCountRsp {
         self.sessiongetcountrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetCountRspBuilder {
@@ -12964,18 +12910,17 @@ impl SessionGetCountRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 5,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionGetCountRsp::new(ucipacket).unwrap()
+        SessionGetCountRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetCountRspBuilder> for UciPacket {
-    fn from(builder: SessionGetCountRspBuilder) -> UciPacket {
+impl From<SessionGetCountRspBuilder> for ControlPacket {
+    fn from(builder: SessionGetCountRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -13003,7 +12948,7 @@ pub struct SessionGetStateCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetStateCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -13048,8 +12993,8 @@ impl SessionGetStateCmdData {
 }
 impl Packet for SessionGetStateCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -13066,25 +13011,25 @@ impl From<SessionGetStateCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetStateCmd> for UciPacket {
-    fn from(packet: SessionGetStateCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetStateCmd> for ControlPacket {
+    fn from(packet: SessionGetStateCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetStateCmd> for UciCommand {
     fn from(packet: SessionGetStateCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetStateCmd> for SessionConfigCommand {
     fn from(packet: SessionGetStateCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetStateCmd {
+impl TryFrom<ControlPacket> for SessionGetStateCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetStateCmd> {
-        SessionGetStateCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetStateCmd> {
+        SessionGetStateCmd::new(packet.controlpacket)
     }
 }
 impl SessionGetStateCmd {
@@ -13094,16 +13039,16 @@ impl SessionGetStateCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -13126,23 +13071,20 @@ impl SessionGetStateCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessiongetstatecmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.sessiongetstatecmd.session_token
@@ -13151,7 +13093,7 @@ impl SessionGetStateCmd {
         self.sessiongetstatecmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetStateCmdBuilder {
@@ -13165,18 +13107,17 @@ impl SessionGetStateCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 6,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionGetStateCmd::new(ucipacket).unwrap()
+        SessionGetStateCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetStateCmdBuilder> for UciPacket {
-    fn from(builder: SessionGetStateCmdBuilder) -> UciPacket {
+impl From<SessionGetStateCmdBuilder> for ControlPacket {
+    fn from(builder: SessionGetStateCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -13205,7 +13146,7 @@ pub struct SessionGetStateRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetStateRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -13278,8 +13219,8 @@ impl SessionGetStateRspData {
 }
 impl Packet for SessionGetStateRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -13296,25 +13237,25 @@ impl From<SessionGetStateRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetStateRsp> for UciPacket {
-    fn from(packet: SessionGetStateRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetStateRsp> for ControlPacket {
+    fn from(packet: SessionGetStateRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetStateRsp> for UciResponse {
     fn from(packet: SessionGetStateRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetStateRsp> for SessionConfigResponse {
     fn from(packet: SessionGetStateRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetStateRsp {
+impl TryFrom<ControlPacket> for SessionGetStateRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetStateRsp> {
-        SessionGetStateRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetStateRsp> {
+        SessionGetStateRsp::new(packet.controlpacket)
     }
 }
 impl SessionGetStateRsp {
@@ -13324,16 +13265,16 @@ impl SessionGetStateRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -13356,23 +13297,20 @@ impl SessionGetStateRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessiongetstatersp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_state(&self) -> SessionState {
         self.sessiongetstatersp.session_state
@@ -13384,7 +13322,7 @@ impl SessionGetStateRsp {
         self.sessiongetstatersp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetStateRspBuilder {
@@ -13399,18 +13337,17 @@ impl SessionGetStateRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 6,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionGetStateRsp::new(ucipacket).unwrap()
+        SessionGetStateRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetStateRspBuilder> for UciPacket {
-    fn from(builder: SessionGetStateRspBuilder) -> UciPacket {
+impl From<SessionGetStateRspBuilder> for ControlPacket {
+    fn from(builder: SessionGetStateRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -13439,7 +13376,7 @@ pub struct SessionUpdateDtTagRangingRoundsCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionUpdateDtTagRangingRoundsCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -13510,8 +13447,8 @@ impl SessionUpdateDtTagRangingRoundsCmdData {
 }
 impl Packet for SessionUpdateDtTagRangingRoundsCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -13528,25 +13465,25 @@ impl From<SessionUpdateDtTagRangingRoundsCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionUpdateDtTagRangingRoundsCmd> for UciPacket {
-    fn from(packet: SessionUpdateDtTagRangingRoundsCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionUpdateDtTagRangingRoundsCmd> for ControlPacket {
+    fn from(packet: SessionUpdateDtTagRangingRoundsCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateDtTagRangingRoundsCmd> for UciCommand {
     fn from(packet: SessionUpdateDtTagRangingRoundsCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateDtTagRangingRoundsCmd> for SessionConfigCommand {
     fn from(packet: SessionUpdateDtTagRangingRoundsCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionUpdateDtTagRangingRoundsCmd {
+impl TryFrom<ControlPacket> for SessionUpdateDtTagRangingRoundsCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionUpdateDtTagRangingRoundsCmd> {
-        SessionUpdateDtTagRangingRoundsCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionUpdateDtTagRangingRoundsCmd> {
+        SessionUpdateDtTagRangingRoundsCmd::new(packet.controlpacket)
     }
 }
 impl SessionUpdateDtTagRangingRoundsCmd {
@@ -13556,16 +13493,16 @@ impl SessionUpdateDtTagRangingRoundsCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -13592,23 +13529,20 @@ impl SessionUpdateDtTagRangingRoundsCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessionupdatedttagrangingroundscmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_ranging_round_indexes(&self) -> &Vec<u8> {
         &self
@@ -13622,7 +13556,7 @@ impl SessionUpdateDtTagRangingRoundsCmd {
         self.sessionupdatedttagrangingroundscmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionUpdateDtTagRangingRoundsCmdBuilder {
@@ -13639,18 +13573,17 @@ impl SessionUpdateDtTagRangingRoundsCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 9,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionUpdateDtTagRangingRoundsCmd::new(ucipacket).unwrap()
+        SessionUpdateDtTagRangingRoundsCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionUpdateDtTagRangingRoundsCmdBuilder> for UciPacket {
-    fn from(builder: SessionUpdateDtTagRangingRoundsCmdBuilder) -> UciPacket {
+impl From<SessionUpdateDtTagRangingRoundsCmdBuilder> for ControlPacket {
+    fn from(builder: SessionUpdateDtTagRangingRoundsCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -13681,7 +13614,7 @@ pub struct SessionUpdateDtTagRangingRoundsRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionUpdateDtTagRangingRoundsRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -13759,8 +13692,8 @@ impl SessionUpdateDtTagRangingRoundsRspData {
 }
 impl Packet for SessionUpdateDtTagRangingRoundsRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -13777,25 +13710,25 @@ impl From<SessionUpdateDtTagRangingRoundsRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionUpdateDtTagRangingRoundsRsp> for UciPacket {
-    fn from(packet: SessionUpdateDtTagRangingRoundsRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionUpdateDtTagRangingRoundsRsp> for ControlPacket {
+    fn from(packet: SessionUpdateDtTagRangingRoundsRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateDtTagRangingRoundsRsp> for UciResponse {
     fn from(packet: SessionUpdateDtTagRangingRoundsRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateDtTagRangingRoundsRsp> for SessionConfigResponse {
     fn from(packet: SessionUpdateDtTagRangingRoundsRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionUpdateDtTagRangingRoundsRsp {
+impl TryFrom<ControlPacket> for SessionUpdateDtTagRangingRoundsRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionUpdateDtTagRangingRoundsRsp> {
-        SessionUpdateDtTagRangingRoundsRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionUpdateDtTagRangingRoundsRsp> {
+        SessionUpdateDtTagRangingRoundsRsp::new(packet.controlpacket)
     }
 }
 impl SessionUpdateDtTagRangingRoundsRsp {
@@ -13805,16 +13738,16 @@ impl SessionUpdateDtTagRangingRoundsRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -13841,23 +13774,20 @@ impl SessionUpdateDtTagRangingRoundsRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessionupdatedttagrangingroundsrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_ranging_round_indexes(&self) -> &Vec<u8> {
         &self
@@ -13871,7 +13801,7 @@ impl SessionUpdateDtTagRangingRoundsRsp {
         self.sessionupdatedttagrangingroundsrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionUpdateDtTagRangingRoundsRspBuilder {
@@ -13888,18 +13818,17 @@ impl SessionUpdateDtTagRangingRoundsRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 9,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionUpdateDtTagRangingRoundsRsp::new(ucipacket).unwrap()
+        SessionUpdateDtTagRangingRoundsRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionUpdateDtTagRangingRoundsRspBuilder> for UciPacket {
-    fn from(builder: SessionUpdateDtTagRangingRoundsRspBuilder) -> UciPacket {
+impl From<SessionUpdateDtTagRangingRoundsRspBuilder> for ControlPacket {
+    fn from(builder: SessionUpdateDtTagRangingRoundsRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -14214,7 +14143,7 @@ pub struct SessionUpdateControllerMulticastListCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionUpdateControllerMulticastListCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -14295,8 +14224,8 @@ impl SessionUpdateControllerMulticastListCmdData {
 }
 impl Packet for SessionUpdateControllerMulticastListCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -14313,25 +14242,25 @@ impl From<SessionUpdateControllerMulticastListCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionUpdateControllerMulticastListCmd> for UciPacket {
-    fn from(packet: SessionUpdateControllerMulticastListCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionUpdateControllerMulticastListCmd> for ControlPacket {
+    fn from(packet: SessionUpdateControllerMulticastListCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateControllerMulticastListCmd> for UciCommand {
     fn from(packet: SessionUpdateControllerMulticastListCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateControllerMulticastListCmd> for SessionConfigCommand {
     fn from(packet: SessionUpdateControllerMulticastListCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionUpdateControllerMulticastListCmd {
+impl TryFrom<ControlPacket> for SessionUpdateControllerMulticastListCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionUpdateControllerMulticastListCmd> {
-        SessionUpdateControllerMulticastListCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionUpdateControllerMulticastListCmd> {
+        SessionUpdateControllerMulticastListCmd::new(packet.controlpacket)
     }
 }
 impl SessionUpdateControllerMulticastListCmd {
@@ -14341,7 +14270,7 @@ impl SessionUpdateControllerMulticastListCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionUpdateControllerMulticastListCmdChild {
@@ -14354,13 +14283,13 @@ impl SessionUpdateControllerMulticastListCmd {
             }
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -14387,7 +14316,7 @@ impl SessionUpdateControllerMulticastListCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessionupdatecontrollermulticastlistcmd,
@@ -14396,17 +14325,14 @@ impl SessionUpdateControllerMulticastListCmd {
     pub fn get_action(&self) -> UpdateMulticastListAction {
         self.sessionupdatecontrollermulticastlistcmd.action
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.sessionupdatecontrollermulticastlistcmd.session_token
@@ -14422,7 +14348,7 @@ impl SessionUpdateControllerMulticastListCmd {
             .write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionUpdateControllerMulticastListCmdBuilder {
@@ -14443,18 +14369,17 @@ impl SessionUpdateControllerMulticastListCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 7,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionUpdateControllerMulticastListCmd::new(ucipacket).unwrap()
+        SessionUpdateControllerMulticastListCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionUpdateControllerMulticastListCmdBuilder> for UciPacket {
-    fn from(builder: SessionUpdateControllerMulticastListCmdBuilder) -> UciPacket {
+impl From<SessionUpdateControllerMulticastListCmdBuilder> for ControlPacket {
+    fn from(builder: SessionUpdateControllerMulticastListCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -14548,7 +14473,7 @@ pub struct SessionSetHybridConfigCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionSetHybridConfigCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -14643,8 +14568,8 @@ impl SessionSetHybridConfigCmdData {
 }
 impl Packet for SessionSetHybridConfigCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -14661,25 +14586,25 @@ impl From<SessionSetHybridConfigCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionSetHybridConfigCmd> for UciPacket {
-    fn from(packet: SessionSetHybridConfigCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionSetHybridConfigCmd> for ControlPacket {
+    fn from(packet: SessionSetHybridConfigCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetHybridConfigCmd> for UciCommand {
     fn from(packet: SessionSetHybridConfigCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetHybridConfigCmd> for SessionConfigCommand {
     fn from(packet: SessionSetHybridConfigCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionSetHybridConfigCmd {
+impl TryFrom<ControlPacket> for SessionSetHybridConfigCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionSetHybridConfigCmd> {
-        SessionSetHybridConfigCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionSetHybridConfigCmd> {
+        SessionSetHybridConfigCmd::new(packet.controlpacket)
     }
 }
 impl SessionSetHybridConfigCmd {
@@ -14689,16 +14614,16 @@ impl SessionSetHybridConfigCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -14721,26 +14646,23 @@ impl SessionSetHybridConfigCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessionsethybridconfigcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_number_of_phases(&self) -> u8 {
         self.sessionsethybridconfigcmd.number_of_phases
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_phase_list(&self) -> &Vec<PhaseList> {
         &self.sessionsethybridconfigcmd.phase_list
@@ -14755,7 +14677,7 @@ impl SessionSetHybridConfigCmd {
         self.sessionsethybridconfigcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionSetHybridConfigCmdBuilder {
@@ -14774,18 +14696,17 @@ impl SessionSetHybridConfigCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 12,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionSetHybridConfigCmd::new(ucipacket).unwrap()
+        SessionSetHybridConfigCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionSetHybridConfigCmdBuilder> for UciPacket {
-    fn from(builder: SessionSetHybridConfigCmdBuilder) -> UciPacket {
+impl From<SessionSetHybridConfigCmdBuilder> for ControlPacket {
+    fn from(builder: SessionSetHybridConfigCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -14813,7 +14734,7 @@ pub struct SessionSetHybridConfigRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionSetHybridConfigRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -14865,8 +14786,8 @@ impl SessionSetHybridConfigRspData {
 }
 impl Packet for SessionSetHybridConfigRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -14883,25 +14804,25 @@ impl From<SessionSetHybridConfigRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionSetHybridConfigRsp> for UciPacket {
-    fn from(packet: SessionSetHybridConfigRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionSetHybridConfigRsp> for ControlPacket {
+    fn from(packet: SessionSetHybridConfigRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetHybridConfigRsp> for UciResponse {
     fn from(packet: SessionSetHybridConfigRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionSetHybridConfigRsp> for SessionConfigResponse {
     fn from(packet: SessionSetHybridConfigRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionSetHybridConfigRsp {
+impl TryFrom<ControlPacket> for SessionSetHybridConfigRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionSetHybridConfigRsp> {
-        SessionSetHybridConfigRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionSetHybridConfigRsp> {
+        SessionSetHybridConfigRsp::new(packet.controlpacket)
     }
 }
 impl SessionSetHybridConfigRsp {
@@ -14911,16 +14832,16 @@ impl SessionSetHybridConfigRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -14943,23 +14864,20 @@ impl SessionSetHybridConfigRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessionsethybridconfigrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessionsethybridconfigrsp.status
@@ -14968,7 +14886,7 @@ impl SessionSetHybridConfigRsp {
         self.sessionsethybridconfigrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionSetHybridConfigRspBuilder {
@@ -14984,18 +14902,17 @@ impl SessionSetHybridConfigRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 12,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionSetHybridConfigRsp::new(ucipacket).unwrap()
+        SessionSetHybridConfigRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionSetHybridConfigRspBuilder> for UciPacket {
-    fn from(builder: SessionSetHybridConfigRspBuilder) -> UciPacket {
+impl From<SessionSetHybridConfigRspBuilder> for ControlPacket {
+    fn from(builder: SessionSetHybridConfigRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -15179,7 +15096,7 @@ pub struct SessionUpdateControllerMulticastListRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionUpdateControllerMulticastListRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -15231,8 +15148,8 @@ impl SessionUpdateControllerMulticastListRspData {
 }
 impl Packet for SessionUpdateControllerMulticastListRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -15249,25 +15166,25 @@ impl From<SessionUpdateControllerMulticastListRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionUpdateControllerMulticastListRsp> for UciPacket {
-    fn from(packet: SessionUpdateControllerMulticastListRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionUpdateControllerMulticastListRsp> for ControlPacket {
+    fn from(packet: SessionUpdateControllerMulticastListRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateControllerMulticastListRsp> for UciResponse {
     fn from(packet: SessionUpdateControllerMulticastListRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateControllerMulticastListRsp> for SessionConfigResponse {
     fn from(packet: SessionUpdateControllerMulticastListRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionUpdateControllerMulticastListRsp {
+impl TryFrom<ControlPacket> for SessionUpdateControllerMulticastListRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionUpdateControllerMulticastListRsp> {
-        SessionUpdateControllerMulticastListRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionUpdateControllerMulticastListRsp> {
+        SessionUpdateControllerMulticastListRsp::new(packet.controlpacket)
     }
 }
 impl SessionUpdateControllerMulticastListRsp {
@@ -15277,16 +15194,16 @@ impl SessionUpdateControllerMulticastListRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -15313,23 +15230,20 @@ impl SessionUpdateControllerMulticastListRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessionupdatecontrollermulticastlistrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessionupdatecontrollermulticastlistrsp.status
@@ -15339,7 +15253,7 @@ impl SessionUpdateControllerMulticastListRsp {
             .write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionUpdateControllerMulticastListRspBuilder {
@@ -15355,18 +15269,17 @@ impl SessionUpdateControllerMulticastListRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 7,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionUpdateControllerMulticastListRsp::new(ucipacket).unwrap()
+        SessionUpdateControllerMulticastListRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionUpdateControllerMulticastListRspBuilder> for UciPacket {
-    fn from(builder: SessionUpdateControllerMulticastListRspBuilder) -> UciPacket {
+impl From<SessionUpdateControllerMulticastListRspBuilder> for ControlPacket {
+    fn from(builder: SessionUpdateControllerMulticastListRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -15472,7 +15385,7 @@ pub struct SessionUpdateControllerMulticastListNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionUpdateControllerMulticastListNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -15558,8 +15471,8 @@ impl SessionUpdateControllerMulticastListNtfData {
 }
 impl Packet for SessionUpdateControllerMulticastListNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -15576,25 +15489,25 @@ impl From<SessionUpdateControllerMulticastListNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionUpdateControllerMulticastListNtf> for UciPacket {
-    fn from(packet: SessionUpdateControllerMulticastListNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionUpdateControllerMulticastListNtf> for ControlPacket {
+    fn from(packet: SessionUpdateControllerMulticastListNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateControllerMulticastListNtf> for UciNotification {
     fn from(packet: SessionUpdateControllerMulticastListNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionUpdateControllerMulticastListNtf> for SessionConfigNotification {
     fn from(packet: SessionUpdateControllerMulticastListNtf) -> SessionConfigNotification {
-        SessionConfigNotification::new(packet.ucipacket).unwrap()
+        SessionConfigNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionUpdateControllerMulticastListNtf {
+impl TryFrom<ControlPacket> for SessionUpdateControllerMulticastListNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionUpdateControllerMulticastListNtf> {
-        SessionUpdateControllerMulticastListNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionUpdateControllerMulticastListNtf> {
+        SessionUpdateControllerMulticastListNtf::new(packet.controlpacket)
     }
 }
 impl SessionUpdateControllerMulticastListNtf {
@@ -15604,16 +15517,16 @@ impl SessionUpdateControllerMulticastListNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -15640,7 +15553,7 @@ impl SessionUpdateControllerMulticastListNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessionconfignotification,
             sessionupdatecontrollermulticastlistntf,
@@ -15651,17 +15564,14 @@ impl SessionUpdateControllerMulticastListNtf {
             .sessionupdatecontrollermulticastlistntf
             .controlee_status
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_remaining_multicast_list_size(&self) -> u8 {
         self.sessionupdatecontrollermulticastlistntf
@@ -15675,7 +15585,7 @@ impl SessionUpdateControllerMulticastListNtf {
             .write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionUpdateControllerMulticastListNtfBuilder {
@@ -15693,18 +15603,17 @@ impl SessionUpdateControllerMulticastListNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionConfigNotification(sessionconfignotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Notification,
             opcode: 7,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        SessionUpdateControllerMulticastListNtf::new(ucipacket).unwrap()
+        SessionUpdateControllerMulticastListNtf::new(controlpacket).unwrap()
     }
 }
-impl From<SessionUpdateControllerMulticastListNtfBuilder> for UciPacket {
-    fn from(builder: SessionUpdateControllerMulticastListNtfBuilder) -> UciPacket {
+impl From<SessionUpdateControllerMulticastListNtfBuilder> for ControlPacket {
+    fn from(builder: SessionUpdateControllerMulticastListNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -15737,7 +15646,7 @@ pub struct DataCreditNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DataCreditNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -15803,8 +15712,8 @@ impl DataCreditNtfData {
 }
 impl Packet for DataCreditNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -15821,25 +15730,25 @@ impl From<DataCreditNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<DataCreditNtf> for UciPacket {
-    fn from(packet: DataCreditNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<DataCreditNtf> for ControlPacket {
+    fn from(packet: DataCreditNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DataCreditNtf> for UciNotification {
     fn from(packet: DataCreditNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DataCreditNtf> for SessionControlNotification {
     fn from(packet: DataCreditNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for DataCreditNtf {
+impl TryFrom<ControlPacket> for DataCreditNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<DataCreditNtf> {
-        DataCreditNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<DataCreditNtf> {
+        DataCreditNtf::new(packet.controlpacket)
     }
 }
 impl DataCreditNtf {
@@ -15849,16 +15758,16 @@ impl DataCreditNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -15881,7 +15790,7 @@ impl DataCreditNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             datacreditntf,
@@ -15890,17 +15799,14 @@ impl DataCreditNtf {
     pub fn get_credit_availability(&self) -> CreditAvailability {
         self.datacreditntf.credit_availability
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.datacreditntf.session_token
@@ -15909,7 +15815,7 @@ impl DataCreditNtf {
         self.datacreditntf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl DataCreditNtfBuilder {
@@ -15924,18 +15830,17 @@ impl DataCreditNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 4,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        DataCreditNtf::new(ucipacket).unwrap()
+        DataCreditNtf::new(controlpacket).unwrap()
     }
 }
-impl From<DataCreditNtfBuilder> for UciPacket {
-    fn from(builder: DataCreditNtfBuilder) -> UciPacket {
+impl From<DataCreditNtfBuilder> for ControlPacket {
+    fn from(builder: DataCreditNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -15966,7 +15871,7 @@ pub struct DataTransferStatusNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DataTransferStatusNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -16053,8 +15958,8 @@ impl DataTransferStatusNtfData {
 }
 impl Packet for DataTransferStatusNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -16071,25 +15976,25 @@ impl From<DataTransferStatusNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<DataTransferStatusNtf> for UciPacket {
-    fn from(packet: DataTransferStatusNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<DataTransferStatusNtf> for ControlPacket {
+    fn from(packet: DataTransferStatusNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DataTransferStatusNtf> for UciNotification {
     fn from(packet: DataTransferStatusNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<DataTransferStatusNtf> for SessionControlNotification {
     fn from(packet: DataTransferStatusNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for DataTransferStatusNtf {
+impl TryFrom<ControlPacket> for DataTransferStatusNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<DataTransferStatusNtf> {
-        DataTransferStatusNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<DataTransferStatusNtf> {
+        DataTransferStatusNtf::new(packet.controlpacket)
     }
 }
 impl DataTransferStatusNtf {
@@ -16099,16 +16004,16 @@ impl DataTransferStatusNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -16133,23 +16038,20 @@ impl DataTransferStatusNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             datatransferstatusntf,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.datatransferstatusntf.session_token
@@ -16167,7 +16069,7 @@ impl DataTransferStatusNtf {
         self.datatransferstatusntf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl DataTransferStatusNtfBuilder {
@@ -16186,18 +16088,17 @@ impl DataTransferStatusNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 5,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        DataTransferStatusNtf::new(ucipacket).unwrap()
+        DataTransferStatusNtf::new(controlpacket).unwrap()
     }
 }
-impl From<DataTransferStatusNtfBuilder> for UciPacket {
-    fn from(builder: DataTransferStatusNtfBuilder) -> UciPacket {
+impl From<DataTransferStatusNtfBuilder> for ControlPacket {
+    fn from(builder: DataTransferStatusNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -16225,7 +16126,7 @@ pub struct SessionQueryMaxDataSizeCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionQueryMaxDataSizeCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -16270,8 +16171,8 @@ impl SessionQueryMaxDataSizeCmdData {
 }
 impl Packet for SessionQueryMaxDataSizeCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -16288,25 +16189,25 @@ impl From<SessionQueryMaxDataSizeCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionQueryMaxDataSizeCmd> for UciPacket {
-    fn from(packet: SessionQueryMaxDataSizeCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionQueryMaxDataSizeCmd> for ControlPacket {
+    fn from(packet: SessionQueryMaxDataSizeCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionQueryMaxDataSizeCmd> for UciCommand {
     fn from(packet: SessionQueryMaxDataSizeCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionQueryMaxDataSizeCmd> for SessionConfigCommand {
     fn from(packet: SessionQueryMaxDataSizeCmd) -> SessionConfigCommand {
-        SessionConfigCommand::new(packet.ucipacket).unwrap()
+        SessionConfigCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionQueryMaxDataSizeCmd {
+impl TryFrom<ControlPacket> for SessionQueryMaxDataSizeCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionQueryMaxDataSizeCmd> {
-        SessionQueryMaxDataSizeCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionQueryMaxDataSizeCmd> {
+        SessionQueryMaxDataSizeCmd::new(packet.controlpacket)
     }
 }
 impl SessionQueryMaxDataSizeCmd {
@@ -16316,16 +16217,16 @@ impl SessionQueryMaxDataSizeCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -16348,23 +16249,20 @@ impl SessionQueryMaxDataSizeCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessionconfigcommand,
             sessionquerymaxdatasizecmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.sessionquerymaxdatasizecmd.session_token
@@ -16373,7 +16271,7 @@ impl SessionQueryMaxDataSizeCmd {
         self.sessionquerymaxdatasizecmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionQueryMaxDataSizeCmdBuilder {
@@ -16389,18 +16287,17 @@ impl SessionQueryMaxDataSizeCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionConfigCommand(sessionconfigcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Command,
             opcode: 11,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionQueryMaxDataSizeCmd::new(ucipacket).unwrap()
+        SessionQueryMaxDataSizeCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionQueryMaxDataSizeCmdBuilder> for UciPacket {
-    fn from(builder: SessionQueryMaxDataSizeCmdBuilder) -> UciPacket {
+impl From<SessionQueryMaxDataSizeCmdBuilder> for ControlPacket {
+    fn from(builder: SessionQueryMaxDataSizeCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -16429,7 +16326,7 @@ pub struct SessionQueryMaxDataSizeRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionQueryMaxDataSizeRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -16487,8 +16384,8 @@ impl SessionQueryMaxDataSizeRspData {
 }
 impl Packet for SessionQueryMaxDataSizeRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -16505,25 +16402,25 @@ impl From<SessionQueryMaxDataSizeRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionQueryMaxDataSizeRsp> for UciPacket {
-    fn from(packet: SessionQueryMaxDataSizeRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionQueryMaxDataSizeRsp> for ControlPacket {
+    fn from(packet: SessionQueryMaxDataSizeRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionQueryMaxDataSizeRsp> for UciResponse {
     fn from(packet: SessionQueryMaxDataSizeRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionQueryMaxDataSizeRsp> for SessionConfigResponse {
     fn from(packet: SessionQueryMaxDataSizeRsp) -> SessionConfigResponse {
-        SessionConfigResponse::new(packet.ucipacket).unwrap()
+        SessionConfigResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionQueryMaxDataSizeRsp {
+impl TryFrom<ControlPacket> for SessionQueryMaxDataSizeRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionQueryMaxDataSizeRsp> {
-        SessionQueryMaxDataSizeRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionQueryMaxDataSizeRsp> {
+        SessionQueryMaxDataSizeRsp::new(packet.controlpacket)
     }
 }
 impl SessionQueryMaxDataSizeRsp {
@@ -16533,16 +16430,16 @@ impl SessionQueryMaxDataSizeRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -16567,26 +16464,23 @@ impl SessionQueryMaxDataSizeRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessionconfigresponse,
             sessionquerymaxdatasizersp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_max_data_size(&self) -> u16 {
         self.sessionquerymaxdatasizersp.max_data_size
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_token(&self) -> u32 {
         self.sessionquerymaxdatasizersp.session_token
@@ -16595,7 +16489,7 @@ impl SessionQueryMaxDataSizeRsp {
         self.sessionquerymaxdatasizersp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionQueryMaxDataSizeRspBuilder {
@@ -16612,18 +16506,17 @@ impl SessionQueryMaxDataSizeRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionConfigResponse(sessionconfigresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionConfig,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionConfig,
+            mt: MessageType::Response,
             opcode: 11,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionQueryMaxDataSizeRsp::new(ucipacket).unwrap()
+        SessionQueryMaxDataSizeRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionQueryMaxDataSizeRspBuilder> for UciPacket {
-    fn from(builder: SessionQueryMaxDataSizeRspBuilder) -> UciPacket {
+impl From<SessionQueryMaxDataSizeRspBuilder> for ControlPacket {
+    fn from(builder: SessionQueryMaxDataSizeRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -16649,7 +16542,7 @@ pub struct SessionStartCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionStartCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -16684,8 +16577,8 @@ impl SessionStartCmdData {
 }
 impl Packet for SessionStartCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -16702,25 +16595,25 @@ impl From<SessionStartCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionStartCmd> for UciPacket {
-    fn from(packet: SessionStartCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionStartCmd> for ControlPacket {
+    fn from(packet: SessionStartCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStartCmd> for UciCommand {
     fn from(packet: SessionStartCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStartCmd> for SessionControlCommand {
     fn from(packet: SessionStartCmd) -> SessionControlCommand {
-        SessionControlCommand::new(packet.ucipacket).unwrap()
+        SessionControlCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionStartCmd {
+impl TryFrom<ControlPacket> for SessionStartCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionStartCmd> {
-        SessionStartCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionStartCmd> {
+        SessionStartCmd::new(packet.controlpacket)
     }
 }
 impl SessionStartCmd {
@@ -16730,16 +16623,16 @@ impl SessionStartCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -16762,23 +16655,20 @@ impl SessionStartCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessioncontrolcommand,
             sessionstartcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_id(&self) -> u32 {
         self.sessioncontrolcommand.session_id
@@ -16787,7 +16677,7 @@ impl SessionStartCmd {
         self.sessionstartcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionStartCmdBuilder {
@@ -16800,18 +16690,17 @@ impl SessionStartCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionControlCommand(sessioncontrolcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Command,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionStartCmd::new(ucipacket).unwrap()
+        SessionStartCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionStartCmdBuilder> for UciPacket {
-    fn from(builder: SessionStartCmdBuilder) -> UciPacket {
+impl From<SessionStartCmdBuilder> for ControlPacket {
+    fn from(builder: SessionStartCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -16839,7 +16728,7 @@ pub struct SessionStartRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionStartRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -16891,8 +16780,8 @@ impl SessionStartRspData {
 }
 impl Packet for SessionStartRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -16909,25 +16798,25 @@ impl From<SessionStartRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionStartRsp> for UciPacket {
-    fn from(packet: SessionStartRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionStartRsp> for ControlPacket {
+    fn from(packet: SessionStartRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStartRsp> for UciResponse {
     fn from(packet: SessionStartRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStartRsp> for SessionControlResponse {
     fn from(packet: SessionStartRsp) -> SessionControlResponse {
-        SessionControlResponse::new(packet.ucipacket).unwrap()
+        SessionControlResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionStartRsp {
+impl TryFrom<ControlPacket> for SessionStartRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionStartRsp> {
-        SessionStartRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionStartRsp> {
+        SessionStartRsp::new(packet.controlpacket)
     }
 }
 impl SessionStartRsp {
@@ -16937,16 +16826,16 @@ impl SessionStartRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -16969,23 +16858,20 @@ impl SessionStartRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessioncontrolresponse,
             sessionstartrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessionstartrsp.status
@@ -16994,7 +16880,7 @@ impl SessionStartRsp {
         self.sessionstartrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionStartRspBuilder {
@@ -17008,18 +16894,17 @@ impl SessionStartRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionControlResponse(sessioncontrolresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Response,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionStartRsp::new(ucipacket).unwrap()
+        SessionStartRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionStartRspBuilder> for UciPacket {
-    fn from(builder: SessionStartRspBuilder) -> UciPacket {
+impl From<SessionStartRspBuilder> for ControlPacket {
+    fn from(builder: SessionStartRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -17829,7 +17714,7 @@ pub struct SessionInfoNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionInfoNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -18029,8 +17914,8 @@ impl SessionInfoNtfData {
 }
 impl Packet for SessionInfoNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -18047,25 +17932,25 @@ impl From<SessionInfoNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionInfoNtf> for UciPacket {
-    fn from(packet: SessionInfoNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionInfoNtf> for ControlPacket {
+    fn from(packet: SessionInfoNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInfoNtf> for UciNotification {
     fn from(packet: SessionInfoNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionInfoNtf> for SessionControlNotification {
     fn from(packet: SessionInfoNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionInfoNtf {
+impl TryFrom<ControlPacket> for SessionInfoNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionInfoNtf> {
-        SessionInfoNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionInfoNtf> {
+        SessionInfoNtf::new(packet.controlpacket)
     }
 }
 impl SessionInfoNtf {
@@ -18075,39 +17960,39 @@ impl SessionInfoNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> SessionInfoNtfChild {
         match &self.sessioninfontf.child {
             SessionInfoNtfDataChild::ShortMacTwoWaySessionInfoNtf(_) => {
                 SessionInfoNtfChild::ShortMacTwoWaySessionInfoNtf(
-                    ShortMacTwoWaySessionInfoNtf::new(self.ucipacket.clone()).unwrap(),
+                    ShortMacTwoWaySessionInfoNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionInfoNtfDataChild::ExtendedMacTwoWaySessionInfoNtf(_) => {
                 SessionInfoNtfChild::ExtendedMacTwoWaySessionInfoNtf(
-                    ExtendedMacTwoWaySessionInfoNtf::new(self.ucipacket.clone()).unwrap(),
+                    ExtendedMacTwoWaySessionInfoNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionInfoNtfDataChild::ShortMacDlTDoASessionInfoNtf(_) => {
                 SessionInfoNtfChild::ShortMacDlTDoASessionInfoNtf(
-                    ShortMacDlTDoASessionInfoNtf::new(self.ucipacket.clone()).unwrap(),
+                    ShortMacDlTDoASessionInfoNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionInfoNtfDataChild::ExtendedMacDlTDoASessionInfoNtf(_) => {
                 SessionInfoNtfChild::ExtendedMacDlTDoASessionInfoNtf(
-                    ExtendedMacDlTDoASessionInfoNtf::new(self.ucipacket.clone()).unwrap(),
+                    ExtendedMacDlTDoASessionInfoNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionInfoNtfDataChild::ShortMacOwrAoaSessionInfoNtf(_) => {
                 SessionInfoNtfChild::ShortMacOwrAoaSessionInfoNtf(
-                    ShortMacOwrAoaSessionInfoNtf::new(self.ucipacket.clone()).unwrap(),
+                    ShortMacOwrAoaSessionInfoNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionInfoNtfDataChild::ExtendedMacOwrAoaSessionInfoNtf(_) => {
                 SessionInfoNtfChild::ExtendedMacOwrAoaSessionInfoNtf(
-                    ExtendedMacOwrAoaSessionInfoNtf::new(self.ucipacket.clone()).unwrap(),
+                    ExtendedMacOwrAoaSessionInfoNtf::new(self.controlpacket.clone()).unwrap(),
                 )
             }
             SessionInfoNtfDataChild::Payload(payload) => {
@@ -18116,13 +18001,13 @@ impl SessionInfoNtf {
             SessionInfoNtfDataChild::None => SessionInfoNtfChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -18145,7 +18030,7 @@ impl SessionInfoNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             sessioninfontf,
@@ -18154,20 +18039,17 @@ impl SessionInfoNtf {
     pub fn get_current_ranging_interval(&self) -> u32 {
         self.sessioninfontf.current_ranging_interval
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_address_indicator(&self) -> MacAddressIndicator {
         self.sessioninfontf.mac_address_indicator
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_ranging_measurement_type(&self) -> RangingMeasurementType {
         self.sessioninfontf.ranging_measurement_type
@@ -18185,7 +18067,7 @@ impl SessionInfoNtf {
         self.sessioninfontf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionInfoNtfBuilder {
@@ -18208,18 +18090,17 @@ impl SessionInfoNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        SessionInfoNtf::new(ucipacket).unwrap()
+        SessionInfoNtf::new(controlpacket).unwrap()
     }
 }
-impl From<SessionInfoNtfBuilder> for UciPacket {
-    fn from(builder: SessionInfoNtfBuilder) -> UciPacket {
+impl From<SessionInfoNtfBuilder> for ControlPacket {
+    fn from(builder: SessionInfoNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -18248,7 +18129,7 @@ pub struct ShortMacTwoWaySessionInfoNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShortMacTwoWaySessionInfoNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -18328,8 +18209,8 @@ impl ShortMacTwoWaySessionInfoNtfData {
 }
 impl Packet for ShortMacTwoWaySessionInfoNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -18346,30 +18227,30 @@ impl From<ShortMacTwoWaySessionInfoNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<ShortMacTwoWaySessionInfoNtf> for UciPacket {
-    fn from(packet: ShortMacTwoWaySessionInfoNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<ShortMacTwoWaySessionInfoNtf> for ControlPacket {
+    fn from(packet: ShortMacTwoWaySessionInfoNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacTwoWaySessionInfoNtf> for UciNotification {
     fn from(packet: ShortMacTwoWaySessionInfoNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacTwoWaySessionInfoNtf> for SessionControlNotification {
     fn from(packet: ShortMacTwoWaySessionInfoNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacTwoWaySessionInfoNtf> for SessionInfoNtf {
     fn from(packet: ShortMacTwoWaySessionInfoNtf) -> SessionInfoNtf {
-        SessionInfoNtf::new(packet.ucipacket).unwrap()
+        SessionInfoNtf::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for ShortMacTwoWaySessionInfoNtf {
+impl TryFrom<ControlPacket> for ShortMacTwoWaySessionInfoNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<ShortMacTwoWaySessionInfoNtf> {
-        ShortMacTwoWaySessionInfoNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<ShortMacTwoWaySessionInfoNtf> {
+        ShortMacTwoWaySessionInfoNtf::new(packet.controlpacket)
     }
 }
 impl ShortMacTwoWaySessionInfoNtf {
@@ -18379,16 +18260,16 @@ impl ShortMacTwoWaySessionInfoNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -18420,7 +18301,7 @@ impl ShortMacTwoWaySessionInfoNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             sessioninfontf,
@@ -18430,20 +18311,17 @@ impl ShortMacTwoWaySessionInfoNtf {
     pub fn get_current_ranging_interval(&self) -> u32 {
         self.sessioninfontf.current_ranging_interval
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_address_indicator(&self) -> MacAddressIndicator {
         self.sessioninfontf.mac_address_indicator
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_ranging_measurement_type(&self) -> RangingMeasurementType {
         self.sessioninfontf.ranging_measurement_type
@@ -18469,7 +18347,7 @@ impl ShortMacTwoWaySessionInfoNtf {
         self.shortmactwowaysessioninfontf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl ShortMacTwoWaySessionInfoNtfBuilder {
@@ -18495,18 +18373,17 @@ impl ShortMacTwoWaySessionInfoNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        ShortMacTwoWaySessionInfoNtf::new(ucipacket).unwrap()
+        ShortMacTwoWaySessionInfoNtf::new(controlpacket).unwrap()
     }
 }
-impl From<ShortMacTwoWaySessionInfoNtfBuilder> for UciPacket {
-    fn from(builder: ShortMacTwoWaySessionInfoNtfBuilder) -> UciPacket {
+impl From<ShortMacTwoWaySessionInfoNtfBuilder> for ControlPacket {
+    fn from(builder: ShortMacTwoWaySessionInfoNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -18540,7 +18417,7 @@ pub struct ExtendedMacTwoWaySessionInfoNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExtendedMacTwoWaySessionInfoNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -18620,8 +18497,8 @@ impl ExtendedMacTwoWaySessionInfoNtfData {
 }
 impl Packet for ExtendedMacTwoWaySessionInfoNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -18638,30 +18515,30 @@ impl From<ExtendedMacTwoWaySessionInfoNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<ExtendedMacTwoWaySessionInfoNtf> for UciPacket {
-    fn from(packet: ExtendedMacTwoWaySessionInfoNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<ExtendedMacTwoWaySessionInfoNtf> for ControlPacket {
+    fn from(packet: ExtendedMacTwoWaySessionInfoNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacTwoWaySessionInfoNtf> for UciNotification {
     fn from(packet: ExtendedMacTwoWaySessionInfoNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacTwoWaySessionInfoNtf> for SessionControlNotification {
     fn from(packet: ExtendedMacTwoWaySessionInfoNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacTwoWaySessionInfoNtf> for SessionInfoNtf {
     fn from(packet: ExtendedMacTwoWaySessionInfoNtf) -> SessionInfoNtf {
-        SessionInfoNtf::new(packet.ucipacket).unwrap()
+        SessionInfoNtf::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for ExtendedMacTwoWaySessionInfoNtf {
+impl TryFrom<ControlPacket> for ExtendedMacTwoWaySessionInfoNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<ExtendedMacTwoWaySessionInfoNtf> {
-        ExtendedMacTwoWaySessionInfoNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<ExtendedMacTwoWaySessionInfoNtf> {
+        ExtendedMacTwoWaySessionInfoNtf::new(packet.controlpacket)
     }
 }
 impl ExtendedMacTwoWaySessionInfoNtf {
@@ -18671,16 +18548,16 @@ impl ExtendedMacTwoWaySessionInfoNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -18712,7 +18589,7 @@ impl ExtendedMacTwoWaySessionInfoNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             sessioninfontf,
@@ -18722,20 +18599,17 @@ impl ExtendedMacTwoWaySessionInfoNtf {
     pub fn get_current_ranging_interval(&self) -> u32 {
         self.sessioninfontf.current_ranging_interval
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_address_indicator(&self) -> MacAddressIndicator {
         self.sessioninfontf.mac_address_indicator
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_ranging_measurement_type(&self) -> RangingMeasurementType {
         self.sessioninfontf.ranging_measurement_type
@@ -18763,7 +18637,7 @@ impl ExtendedMacTwoWaySessionInfoNtf {
         self.extendedmactwowaysessioninfontf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl ExtendedMacTwoWaySessionInfoNtfBuilder {
@@ -18789,18 +18663,17 @@ impl ExtendedMacTwoWaySessionInfoNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        ExtendedMacTwoWaySessionInfoNtf::new(ucipacket).unwrap()
+        ExtendedMacTwoWaySessionInfoNtf::new(controlpacket).unwrap()
     }
 }
-impl From<ExtendedMacTwoWaySessionInfoNtfBuilder> for UciPacket {
-    fn from(builder: ExtendedMacTwoWaySessionInfoNtfBuilder) -> UciPacket {
+impl From<ExtendedMacTwoWaySessionInfoNtfBuilder> for ControlPacket {
+    fn from(builder: ExtendedMacTwoWaySessionInfoNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -18834,7 +18707,7 @@ pub struct ShortMacDlTDoASessionInfoNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShortMacDlTDoASessionInfoNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -18896,8 +18769,8 @@ impl ShortMacDlTDoASessionInfoNtfData {
 }
 impl Packet for ShortMacDlTDoASessionInfoNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -18914,30 +18787,30 @@ impl From<ShortMacDlTDoASessionInfoNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<ShortMacDlTDoASessionInfoNtf> for UciPacket {
-    fn from(packet: ShortMacDlTDoASessionInfoNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<ShortMacDlTDoASessionInfoNtf> for ControlPacket {
+    fn from(packet: ShortMacDlTDoASessionInfoNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacDlTDoASessionInfoNtf> for UciNotification {
     fn from(packet: ShortMacDlTDoASessionInfoNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacDlTDoASessionInfoNtf> for SessionControlNotification {
     fn from(packet: ShortMacDlTDoASessionInfoNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacDlTDoASessionInfoNtf> for SessionInfoNtf {
     fn from(packet: ShortMacDlTDoASessionInfoNtf) -> SessionInfoNtf {
-        SessionInfoNtf::new(packet.ucipacket).unwrap()
+        SessionInfoNtf::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for ShortMacDlTDoASessionInfoNtf {
+impl TryFrom<ControlPacket> for ShortMacDlTDoASessionInfoNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<ShortMacDlTDoASessionInfoNtf> {
-        ShortMacDlTDoASessionInfoNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<ShortMacDlTDoASessionInfoNtf> {
+        ShortMacDlTDoASessionInfoNtf::new(packet.controlpacket)
     }
 }
 impl ShortMacDlTDoASessionInfoNtf {
@@ -18947,16 +18820,16 @@ impl ShortMacDlTDoASessionInfoNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -18988,7 +18861,7 @@ impl ShortMacDlTDoASessionInfoNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             sessioninfontf,
@@ -19001,23 +18874,20 @@ impl ShortMacDlTDoASessionInfoNtf {
     pub fn get_dl_tdoa_measurements(&self) -> &Vec<u8> {
         &self.shortmacdltdoasessioninfontf.dl_tdoa_measurements
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_address_indicator(&self) -> MacAddressIndicator {
         self.sessioninfontf.mac_address_indicator
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_no_of_ranging_measurements(&self) -> u8 {
         self.shortmacdltdoasessioninfontf.no_of_ranging_measurements
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_ranging_measurement_type(&self) -> RangingMeasurementType {
         self.sessioninfontf.ranging_measurement_type
@@ -19035,7 +18905,7 @@ impl ShortMacDlTDoASessionInfoNtf {
         self.shortmacdltdoasessioninfontf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl ShortMacDlTDoASessionInfoNtfBuilder {
@@ -19061,18 +18931,17 @@ impl ShortMacDlTDoASessionInfoNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        ShortMacDlTDoASessionInfoNtf::new(ucipacket).unwrap()
+        ShortMacDlTDoASessionInfoNtf::new(controlpacket).unwrap()
     }
 }
-impl From<ShortMacDlTDoASessionInfoNtfBuilder> for UciPacket {
-    fn from(builder: ShortMacDlTDoASessionInfoNtfBuilder) -> UciPacket {
+impl From<ShortMacDlTDoASessionInfoNtfBuilder> for ControlPacket {
+    fn from(builder: ShortMacDlTDoASessionInfoNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -19106,7 +18975,7 @@ pub struct ExtendedMacDlTDoASessionInfoNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExtendedMacDlTDoASessionInfoNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -19168,8 +19037,8 @@ impl ExtendedMacDlTDoASessionInfoNtfData {
 }
 impl Packet for ExtendedMacDlTDoASessionInfoNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -19186,30 +19055,30 @@ impl From<ExtendedMacDlTDoASessionInfoNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<ExtendedMacDlTDoASessionInfoNtf> for UciPacket {
-    fn from(packet: ExtendedMacDlTDoASessionInfoNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<ExtendedMacDlTDoASessionInfoNtf> for ControlPacket {
+    fn from(packet: ExtendedMacDlTDoASessionInfoNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacDlTDoASessionInfoNtf> for UciNotification {
     fn from(packet: ExtendedMacDlTDoASessionInfoNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacDlTDoASessionInfoNtf> for SessionControlNotification {
     fn from(packet: ExtendedMacDlTDoASessionInfoNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacDlTDoASessionInfoNtf> for SessionInfoNtf {
     fn from(packet: ExtendedMacDlTDoASessionInfoNtf) -> SessionInfoNtf {
-        SessionInfoNtf::new(packet.ucipacket).unwrap()
+        SessionInfoNtf::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for ExtendedMacDlTDoASessionInfoNtf {
+impl TryFrom<ControlPacket> for ExtendedMacDlTDoASessionInfoNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<ExtendedMacDlTDoASessionInfoNtf> {
-        ExtendedMacDlTDoASessionInfoNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<ExtendedMacDlTDoASessionInfoNtf> {
+        ExtendedMacDlTDoASessionInfoNtf::new(packet.controlpacket)
     }
 }
 impl ExtendedMacDlTDoASessionInfoNtf {
@@ -19219,16 +19088,16 @@ impl ExtendedMacDlTDoASessionInfoNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -19260,7 +19129,7 @@ impl ExtendedMacDlTDoASessionInfoNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             sessioninfontf,
@@ -19273,24 +19142,21 @@ impl ExtendedMacDlTDoASessionInfoNtf {
     pub fn get_dl_tdoa_measurements(&self) -> &Vec<u8> {
         &self.extendedmacdltdoasessioninfontf.dl_tdoa_measurements
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_address_indicator(&self) -> MacAddressIndicator {
         self.sessioninfontf.mac_address_indicator
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_no_of_ranging_measurements(&self) -> u8 {
         self.extendedmacdltdoasessioninfontf
             .no_of_ranging_measurements
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_ranging_measurement_type(&self) -> RangingMeasurementType {
         self.sessioninfontf.ranging_measurement_type
@@ -19308,7 +19174,7 @@ impl ExtendedMacDlTDoASessionInfoNtf {
         self.extendedmacdltdoasessioninfontf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl ExtendedMacDlTDoASessionInfoNtfBuilder {
@@ -19334,18 +19200,17 @@ impl ExtendedMacDlTDoASessionInfoNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        ExtendedMacDlTDoASessionInfoNtf::new(ucipacket).unwrap()
+        ExtendedMacDlTDoASessionInfoNtf::new(controlpacket).unwrap()
     }
 }
-impl From<ExtendedMacDlTDoASessionInfoNtfBuilder> for UciPacket {
-    fn from(builder: ExtendedMacDlTDoASessionInfoNtfBuilder) -> UciPacket {
+impl From<ExtendedMacDlTDoASessionInfoNtfBuilder> for ControlPacket {
+    fn from(builder: ExtendedMacDlTDoASessionInfoNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -19379,7 +19244,7 @@ pub struct ShortMacOwrAoaSessionInfoNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShortMacOwrAoaSessionInfoNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -19459,8 +19324,8 @@ impl ShortMacOwrAoaSessionInfoNtfData {
 }
 impl Packet for ShortMacOwrAoaSessionInfoNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -19477,30 +19342,30 @@ impl From<ShortMacOwrAoaSessionInfoNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<ShortMacOwrAoaSessionInfoNtf> for UciPacket {
-    fn from(packet: ShortMacOwrAoaSessionInfoNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<ShortMacOwrAoaSessionInfoNtf> for ControlPacket {
+    fn from(packet: ShortMacOwrAoaSessionInfoNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacOwrAoaSessionInfoNtf> for UciNotification {
     fn from(packet: ShortMacOwrAoaSessionInfoNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacOwrAoaSessionInfoNtf> for SessionControlNotification {
     fn from(packet: ShortMacOwrAoaSessionInfoNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ShortMacOwrAoaSessionInfoNtf> for SessionInfoNtf {
     fn from(packet: ShortMacOwrAoaSessionInfoNtf) -> SessionInfoNtf {
-        SessionInfoNtf::new(packet.ucipacket).unwrap()
+        SessionInfoNtf::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for ShortMacOwrAoaSessionInfoNtf {
+impl TryFrom<ControlPacket> for ShortMacOwrAoaSessionInfoNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<ShortMacOwrAoaSessionInfoNtf> {
-        ShortMacOwrAoaSessionInfoNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<ShortMacOwrAoaSessionInfoNtf> {
+        ShortMacOwrAoaSessionInfoNtf::new(packet.controlpacket)
     }
 }
 impl ShortMacOwrAoaSessionInfoNtf {
@@ -19510,16 +19375,16 @@ impl ShortMacOwrAoaSessionInfoNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -19551,7 +19416,7 @@ impl ShortMacOwrAoaSessionInfoNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             sessioninfontf,
@@ -19561,25 +19426,22 @@ impl ShortMacOwrAoaSessionInfoNtf {
     pub fn get_current_ranging_interval(&self) -> u32 {
         self.sessioninfontf.current_ranging_interval
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_address_indicator(&self) -> MacAddressIndicator {
         self.sessioninfontf.mac_address_indicator
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
+        self.controlpacket.opcode
     }
     pub fn get_owr_aoa_ranging_measurements(&self) -> &Vec<ShortAddressOwrAoaRangingMeasurement> {
         &self
             .shortmacowraoasessioninfontf
             .owr_aoa_ranging_measurements
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
     }
     pub fn get_ranging_measurement_type(&self) -> RangingMeasurementType {
         self.sessioninfontf.ranging_measurement_type
@@ -19600,7 +19462,7 @@ impl ShortMacOwrAoaSessionInfoNtf {
         self.shortmacowraoasessioninfontf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl ShortMacOwrAoaSessionInfoNtfBuilder {
@@ -19626,18 +19488,17 @@ impl ShortMacOwrAoaSessionInfoNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        ShortMacOwrAoaSessionInfoNtf::new(ucipacket).unwrap()
+        ShortMacOwrAoaSessionInfoNtf::new(controlpacket).unwrap()
     }
 }
-impl From<ShortMacOwrAoaSessionInfoNtfBuilder> for UciPacket {
-    fn from(builder: ShortMacOwrAoaSessionInfoNtfBuilder) -> UciPacket {
+impl From<ShortMacOwrAoaSessionInfoNtfBuilder> for ControlPacket {
+    fn from(builder: ShortMacOwrAoaSessionInfoNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -19671,7 +19532,7 @@ pub struct ExtendedMacOwrAoaSessionInfoNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExtendedMacOwrAoaSessionInfoNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -19751,8 +19612,8 @@ impl ExtendedMacOwrAoaSessionInfoNtfData {
 }
 impl Packet for ExtendedMacOwrAoaSessionInfoNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -19769,30 +19630,30 @@ impl From<ExtendedMacOwrAoaSessionInfoNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<ExtendedMacOwrAoaSessionInfoNtf> for UciPacket {
-    fn from(packet: ExtendedMacOwrAoaSessionInfoNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<ExtendedMacOwrAoaSessionInfoNtf> for ControlPacket {
+    fn from(packet: ExtendedMacOwrAoaSessionInfoNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacOwrAoaSessionInfoNtf> for UciNotification {
     fn from(packet: ExtendedMacOwrAoaSessionInfoNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacOwrAoaSessionInfoNtf> for SessionControlNotification {
     fn from(packet: ExtendedMacOwrAoaSessionInfoNtf) -> SessionControlNotification {
-        SessionControlNotification::new(packet.ucipacket).unwrap()
+        SessionControlNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<ExtendedMacOwrAoaSessionInfoNtf> for SessionInfoNtf {
     fn from(packet: ExtendedMacOwrAoaSessionInfoNtf) -> SessionInfoNtf {
-        SessionInfoNtf::new(packet.ucipacket).unwrap()
+        SessionInfoNtf::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for ExtendedMacOwrAoaSessionInfoNtf {
+impl TryFrom<ControlPacket> for ExtendedMacOwrAoaSessionInfoNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<ExtendedMacOwrAoaSessionInfoNtf> {
-        ExtendedMacOwrAoaSessionInfoNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<ExtendedMacOwrAoaSessionInfoNtf> {
+        ExtendedMacOwrAoaSessionInfoNtf::new(packet.controlpacket)
     }
 }
 impl ExtendedMacOwrAoaSessionInfoNtf {
@@ -19802,16 +19663,16 @@ impl ExtendedMacOwrAoaSessionInfoNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -19843,7 +19704,7 @@ impl ExtendedMacOwrAoaSessionInfoNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             sessioncontrolnotification,
             sessioninfontf,
@@ -19853,17 +19714,17 @@ impl ExtendedMacOwrAoaSessionInfoNtf {
     pub fn get_current_ranging_interval(&self) -> u32 {
         self.sessioninfontf.current_ranging_interval
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
     pub fn get_mac_address_indicator(&self) -> MacAddressIndicator {
         self.sessioninfontf.mac_address_indicator
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
+        self.controlpacket.opcode
     }
     pub fn get_owr_aoa_ranging_measurements(
         &self,
@@ -19871,9 +19732,6 @@ impl ExtendedMacOwrAoaSessionInfoNtf {
         &self
             .extendedmacowraoasessioninfontf
             .owr_aoa_ranging_measurements
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
     }
     pub fn get_ranging_measurement_type(&self) -> RangingMeasurementType {
         self.sessioninfontf.ranging_measurement_type
@@ -19894,7 +19752,7 @@ impl ExtendedMacOwrAoaSessionInfoNtf {
         self.extendedmacowraoasessioninfontf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl ExtendedMacOwrAoaSessionInfoNtfBuilder {
@@ -19920,18 +19778,17 @@ impl ExtendedMacOwrAoaSessionInfoNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::SessionControlNotification(sessioncontrolnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Notification,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        ExtendedMacOwrAoaSessionInfoNtf::new(ucipacket).unwrap()
+        ExtendedMacOwrAoaSessionInfoNtf::new(controlpacket).unwrap()
     }
 }
-impl From<ExtendedMacOwrAoaSessionInfoNtfBuilder> for UciPacket {
-    fn from(builder: ExtendedMacOwrAoaSessionInfoNtfBuilder) -> UciPacket {
+impl From<ExtendedMacOwrAoaSessionInfoNtfBuilder> for ControlPacket {
+    fn from(builder: ExtendedMacOwrAoaSessionInfoNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -19962,7 +19819,7 @@ pub struct SessionStopCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionStopCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -19997,8 +19854,8 @@ impl SessionStopCmdData {
 }
 impl Packet for SessionStopCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -20015,25 +19872,25 @@ impl From<SessionStopCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionStopCmd> for UciPacket {
-    fn from(packet: SessionStopCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionStopCmd> for ControlPacket {
+    fn from(packet: SessionStopCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStopCmd> for UciCommand {
     fn from(packet: SessionStopCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStopCmd> for SessionControlCommand {
     fn from(packet: SessionStopCmd) -> SessionControlCommand {
-        SessionControlCommand::new(packet.ucipacket).unwrap()
+        SessionControlCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionStopCmd {
+impl TryFrom<ControlPacket> for SessionStopCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionStopCmd> {
-        SessionStopCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionStopCmd> {
+        SessionStopCmd::new(packet.controlpacket)
     }
 }
 impl SessionStopCmd {
@@ -20043,16 +19900,16 @@ impl SessionStopCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -20075,23 +19932,20 @@ impl SessionStopCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessioncontrolcommand,
             sessionstopcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_id(&self) -> u32 {
         self.sessioncontrolcommand.session_id
@@ -20100,7 +19954,7 @@ impl SessionStopCmd {
         self.sessionstopcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionStopCmdBuilder {
@@ -20113,18 +19967,17 @@ impl SessionStopCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionControlCommand(sessioncontrolcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Command,
             opcode: 1,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionStopCmd::new(ucipacket).unwrap()
+        SessionStopCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionStopCmdBuilder> for UciPacket {
-    fn from(builder: SessionStopCmdBuilder) -> UciPacket {
+impl From<SessionStopCmdBuilder> for ControlPacket {
+    fn from(builder: SessionStopCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -20152,7 +20005,7 @@ pub struct SessionStopRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionStopRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -20204,8 +20057,8 @@ impl SessionStopRspData {
 }
 impl Packet for SessionStopRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -20222,25 +20075,25 @@ impl From<SessionStopRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionStopRsp> for UciPacket {
-    fn from(packet: SessionStopRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionStopRsp> for ControlPacket {
+    fn from(packet: SessionStopRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStopRsp> for UciResponse {
     fn from(packet: SessionStopRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionStopRsp> for SessionControlResponse {
     fn from(packet: SessionStopRsp) -> SessionControlResponse {
-        SessionControlResponse::new(packet.ucipacket).unwrap()
+        SessionControlResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionStopRsp {
+impl TryFrom<ControlPacket> for SessionStopRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionStopRsp> {
-        SessionStopRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionStopRsp> {
+        SessionStopRsp::new(packet.controlpacket)
     }
 }
 impl SessionStopRsp {
@@ -20250,16 +20103,16 @@ impl SessionStopRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -20282,23 +20135,20 @@ impl SessionStopRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessioncontrolresponse,
             sessionstoprsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessionstoprsp.status
@@ -20307,7 +20157,7 @@ impl SessionStopRsp {
         self.sessionstoprsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionStopRspBuilder {
@@ -20321,18 +20171,17 @@ impl SessionStopRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionControlResponse(sessioncontrolresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Response,
             opcode: 1,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionStopRsp::new(ucipacket).unwrap()
+        SessionStopRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionStopRspBuilder> for UciPacket {
-    fn from(builder: SessionStopRspBuilder) -> UciPacket {
+impl From<SessionStopRspBuilder> for ControlPacket {
+    fn from(builder: SessionStopRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -20358,7 +20207,7 @@ pub struct SessionGetRangingCountCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetRangingCountCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -20393,8 +20242,8 @@ impl SessionGetRangingCountCmdData {
 }
 impl Packet for SessionGetRangingCountCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -20411,25 +20260,25 @@ impl From<SessionGetRangingCountCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetRangingCountCmd> for UciPacket {
-    fn from(packet: SessionGetRangingCountCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetRangingCountCmd> for ControlPacket {
+    fn from(packet: SessionGetRangingCountCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetRangingCountCmd> for UciCommand {
     fn from(packet: SessionGetRangingCountCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetRangingCountCmd> for SessionControlCommand {
     fn from(packet: SessionGetRangingCountCmd) -> SessionControlCommand {
-        SessionControlCommand::new(packet.ucipacket).unwrap()
+        SessionControlCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetRangingCountCmd {
+impl TryFrom<ControlPacket> for SessionGetRangingCountCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetRangingCountCmd> {
-        SessionGetRangingCountCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetRangingCountCmd> {
+        SessionGetRangingCountCmd::new(packet.controlpacket)
     }
 }
 impl SessionGetRangingCountCmd {
@@ -20439,16 +20288,16 @@ impl SessionGetRangingCountCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -20471,23 +20320,20 @@ impl SessionGetRangingCountCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             sessioncontrolcommand,
             sessiongetrangingcountcmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_session_id(&self) -> u32 {
         self.sessioncontrolcommand.session_id
@@ -20496,7 +20342,7 @@ impl SessionGetRangingCountCmd {
         self.sessiongetrangingcountcmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetRangingCountCmdBuilder {
@@ -20511,18 +20357,17 @@ impl SessionGetRangingCountCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::SessionControlCommand(sessioncontrolcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Command,
             opcode: 3,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        SessionGetRangingCountCmd::new(ucipacket).unwrap()
+        SessionGetRangingCountCmd::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetRangingCountCmdBuilder> for UciPacket {
-    fn from(builder: SessionGetRangingCountCmdBuilder) -> UciPacket {
+impl From<SessionGetRangingCountCmdBuilder> for ControlPacket {
+    fn from(builder: SessionGetRangingCountCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -20551,7 +20396,7 @@ pub struct SessionGetRangingCountRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SessionGetRangingCountRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -20613,8 +20458,8 @@ impl SessionGetRangingCountRspData {
 }
 impl Packet for SessionGetRangingCountRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -20631,25 +20476,25 @@ impl From<SessionGetRangingCountRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<SessionGetRangingCountRsp> for UciPacket {
-    fn from(packet: SessionGetRangingCountRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<SessionGetRangingCountRsp> for ControlPacket {
+    fn from(packet: SessionGetRangingCountRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetRangingCountRsp> for UciResponse {
     fn from(packet: SessionGetRangingCountRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<SessionGetRangingCountRsp> for SessionControlResponse {
     fn from(packet: SessionGetRangingCountRsp) -> SessionControlResponse {
-        SessionControlResponse::new(packet.ucipacket).unwrap()
+        SessionControlResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for SessionGetRangingCountRsp {
+impl TryFrom<ControlPacket> for SessionGetRangingCountRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<SessionGetRangingCountRsp> {
-        SessionGetRangingCountRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<SessionGetRangingCountRsp> {
+        SessionGetRangingCountRsp::new(packet.controlpacket)
     }
 }
 impl SessionGetRangingCountRsp {
@@ -20659,16 +20504,16 @@ impl SessionGetRangingCountRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -20693,7 +20538,7 @@ impl SessionGetRangingCountRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             sessioncontrolresponse,
             sessiongetrangingcountrsp,
@@ -20702,17 +20547,14 @@ impl SessionGetRangingCountRsp {
     pub fn get_count(&self) -> u32 {
         self.sessiongetrangingcountrsp.count
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.sessiongetrangingcountrsp.status
@@ -20721,7 +20563,7 @@ impl SessionGetRangingCountRsp {
         self.sessiongetrangingcountrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl SessionGetRangingCountRspBuilder {
@@ -20738,18 +20580,17 @@ impl SessionGetRangingCountRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::SessionControlResponse(sessioncontrolresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::SessionControl,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::SessionControl,
+            mt: MessageType::Response,
             opcode: 3,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        SessionGetRangingCountRsp::new(ucipacket).unwrap()
+        SessionGetRangingCountRsp::new(controlpacket).unwrap()
     }
 }
-impl From<SessionGetRangingCountRspBuilder> for UciPacket {
-    fn from(builder: SessionGetRangingCountRspBuilder) -> UciPacket {
+impl From<SessionGetRangingCountRspBuilder> for ControlPacket {
+    fn from(builder: SessionGetRangingCountRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -20775,7 +20616,7 @@ pub struct AndroidGetPowerStatsCmdData {}
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidGetPowerStatsCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -20808,8 +20649,8 @@ impl AndroidGetPowerStatsCmdData {
 }
 impl Packet for AndroidGetPowerStatsCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -20826,25 +20667,25 @@ impl From<AndroidGetPowerStatsCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidGetPowerStatsCmd> for UciPacket {
-    fn from(packet: AndroidGetPowerStatsCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidGetPowerStatsCmd> for ControlPacket {
+    fn from(packet: AndroidGetPowerStatsCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidGetPowerStatsCmd> for UciCommand {
     fn from(packet: AndroidGetPowerStatsCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidGetPowerStatsCmd> for AndroidCommand {
     fn from(packet: AndroidGetPowerStatsCmd) -> AndroidCommand {
-        AndroidCommand::new(packet.ucipacket).unwrap()
+        AndroidCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidGetPowerStatsCmd {
+impl TryFrom<ControlPacket> for AndroidGetPowerStatsCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidGetPowerStatsCmd> {
-        AndroidGetPowerStatsCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidGetPowerStatsCmd> {
+        AndroidGetPowerStatsCmd::new(packet.controlpacket)
     }
 }
 impl AndroidGetPowerStatsCmd {
@@ -20854,16 +20695,16 @@ impl AndroidGetPowerStatsCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -20886,29 +20727,26 @@ impl AndroidGetPowerStatsCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             androidcommand,
             androidgetpowerstatscmd,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.androidgetpowerstatscmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidGetPowerStatsCmdBuilder {
@@ -20920,18 +20758,17 @@ impl AndroidGetPowerStatsCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::AndroidCommand(androidcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Command,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        AndroidGetPowerStatsCmd::new(ucipacket).unwrap()
+        AndroidGetPowerStatsCmd::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidGetPowerStatsCmdBuilder> for UciPacket {
-    fn from(builder: AndroidGetPowerStatsCmdBuilder) -> UciPacket {
+impl From<AndroidGetPowerStatsCmdBuilder> for ControlPacket {
+    fn from(builder: AndroidGetPowerStatsCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -21047,7 +20884,7 @@ pub struct AndroidGetPowerStatsRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidGetPowerStatsRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -21087,8 +20924,8 @@ impl AndroidGetPowerStatsRspData {
 }
 impl Packet for AndroidGetPowerStatsRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -21105,25 +20942,25 @@ impl From<AndroidGetPowerStatsRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidGetPowerStatsRsp> for UciPacket {
-    fn from(packet: AndroidGetPowerStatsRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidGetPowerStatsRsp> for ControlPacket {
+    fn from(packet: AndroidGetPowerStatsRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidGetPowerStatsRsp> for UciResponse {
     fn from(packet: AndroidGetPowerStatsRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidGetPowerStatsRsp> for AndroidResponse {
     fn from(packet: AndroidGetPowerStatsRsp) -> AndroidResponse {
-        AndroidResponse::new(packet.ucipacket).unwrap()
+        AndroidResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidGetPowerStatsRsp {
+impl TryFrom<ControlPacket> for AndroidGetPowerStatsRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidGetPowerStatsRsp> {
-        AndroidGetPowerStatsRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidGetPowerStatsRsp> {
+        AndroidGetPowerStatsRsp::new(packet.controlpacket)
     }
 }
 impl AndroidGetPowerStatsRsp {
@@ -21133,16 +20970,16 @@ impl AndroidGetPowerStatsRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -21165,23 +21002,20 @@ impl AndroidGetPowerStatsRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             androidresponse,
             androidgetpowerstatsrsp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_stats(&self) -> &PowerStats {
         &self.androidgetpowerstatsrsp.stats
@@ -21190,7 +21024,7 @@ impl AndroidGetPowerStatsRsp {
         self.androidgetpowerstatsrsp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidGetPowerStatsRspBuilder {
@@ -21202,18 +21036,17 @@ impl AndroidGetPowerStatsRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::AndroidResponse(androidresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Response,
             opcode: 0,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        AndroidGetPowerStatsRsp::new(ucipacket).unwrap()
+        AndroidGetPowerStatsRsp::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidGetPowerStatsRspBuilder> for UciPacket {
-    fn from(builder: AndroidGetPowerStatsRspBuilder) -> UciPacket {
+impl From<AndroidGetPowerStatsRspBuilder> for ControlPacket {
+    fn from(builder: AndroidGetPowerStatsRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -21241,7 +21074,7 @@ pub struct AndroidSetCountryCodeCmdData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidSetCountryCodeCmd {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -21292,8 +21125,8 @@ impl AndroidSetCountryCodeCmdData {
 }
 impl Packet for AndroidSetCountryCodeCmd {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -21310,25 +21143,25 @@ impl From<AndroidSetCountryCodeCmd> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidSetCountryCodeCmd> for UciPacket {
-    fn from(packet: AndroidSetCountryCodeCmd) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidSetCountryCodeCmd> for ControlPacket {
+    fn from(packet: AndroidSetCountryCodeCmd) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidSetCountryCodeCmd> for UciCommand {
     fn from(packet: AndroidSetCountryCodeCmd) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidSetCountryCodeCmd> for AndroidCommand {
     fn from(packet: AndroidSetCountryCodeCmd) -> AndroidCommand {
-        AndroidCommand::new(packet.ucipacket).unwrap()
+        AndroidCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidSetCountryCodeCmd {
+impl TryFrom<ControlPacket> for AndroidSetCountryCodeCmd {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidSetCountryCodeCmd> {
-        AndroidSetCountryCodeCmd::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidSetCountryCodeCmd> {
+        AndroidSetCountryCodeCmd::new(packet.controlpacket)
     }
 }
 impl AndroidSetCountryCodeCmd {
@@ -21338,16 +21171,16 @@ impl AndroidSetCountryCodeCmd {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -21370,7 +21203,7 @@ impl AndroidSetCountryCodeCmd {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             androidcommand,
             androidsetcountrycodecmd,
@@ -21379,23 +21212,20 @@ impl AndroidSetCountryCodeCmd {
     pub fn get_country_code(&self) -> &[u8; 2] {
         &self.androidsetcountrycodecmd.country_code
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     fn write_to(&self, buffer: &mut BytesMut) {
         self.androidsetcountrycodecmd.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidSetCountryCodeCmdBuilder {
@@ -21409,18 +21239,17 @@ impl AndroidSetCountryCodeCmdBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::AndroidCommand(androidcommand),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Command,
             opcode: 1,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        AndroidSetCountryCodeCmd::new(ucipacket).unwrap()
+        AndroidSetCountryCodeCmd::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidSetCountryCodeCmdBuilder> for UciPacket {
-    fn from(builder: AndroidSetCountryCodeCmdBuilder) -> UciPacket {
+impl From<AndroidSetCountryCodeCmdBuilder> for ControlPacket {
+    fn from(builder: AndroidSetCountryCodeCmdBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -21448,7 +21277,7 @@ pub struct AndroidSetCountryCodeRspData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidSetCountryCodeRsp {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -21500,8 +21329,8 @@ impl AndroidSetCountryCodeRspData {
 }
 impl Packet for AndroidSetCountryCodeRsp {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -21518,25 +21347,25 @@ impl From<AndroidSetCountryCodeRsp> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidSetCountryCodeRsp> for UciPacket {
-    fn from(packet: AndroidSetCountryCodeRsp) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidSetCountryCodeRsp> for ControlPacket {
+    fn from(packet: AndroidSetCountryCodeRsp) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidSetCountryCodeRsp> for UciResponse {
     fn from(packet: AndroidSetCountryCodeRsp) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidSetCountryCodeRsp> for AndroidResponse {
     fn from(packet: AndroidSetCountryCodeRsp) -> AndroidResponse {
-        AndroidResponse::new(packet.ucipacket).unwrap()
+        AndroidResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidSetCountryCodeRsp {
+impl TryFrom<ControlPacket> for AndroidSetCountryCodeRsp {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidSetCountryCodeRsp> {
-        AndroidSetCountryCodeRsp::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidSetCountryCodeRsp> {
+        AndroidSetCountryCodeRsp::new(packet.controlpacket)
     }
 }
 impl AndroidSetCountryCodeRsp {
@@ -21546,16 +21375,16 @@ impl AndroidSetCountryCodeRsp {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -21578,23 +21407,20 @@ impl AndroidSetCountryCodeRsp {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             androidresponse,
             androidsetcountrycodersp,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_status(&self) -> StatusCode {
         self.androidsetcountrycodersp.status
@@ -21603,7 +21429,7 @@ impl AndroidSetCountryCodeRsp {
         self.androidsetcountrycodersp.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidSetCountryCodeRspBuilder {
@@ -21617,18 +21443,17 @@ impl AndroidSetCountryCodeRspBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::AndroidResponse(androidresponse),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Response,
             opcode: 1,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        AndroidSetCountryCodeRsp::new(ucipacket).unwrap()
+        AndroidSetCountryCodeRsp::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidSetCountryCodeRspBuilder> for UciPacket {
-    fn from(builder: AndroidSetCountryCodeRspBuilder) -> UciPacket {
+impl From<AndroidSetCountryCodeRspBuilder> for ControlPacket {
+    fn from(builder: AndroidSetCountryCodeRspBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -22686,7 +22511,7 @@ pub struct AndroidRangeDiagnosticsNtfData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AndroidRangeDiagnosticsNtf {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -22765,8 +22590,8 @@ impl AndroidRangeDiagnosticsNtfData {
 }
 impl Packet for AndroidRangeDiagnosticsNtf {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -22783,25 +22608,25 @@ impl From<AndroidRangeDiagnosticsNtf> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<AndroidRangeDiagnosticsNtf> for UciPacket {
-    fn from(packet: AndroidRangeDiagnosticsNtf) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<AndroidRangeDiagnosticsNtf> for ControlPacket {
+    fn from(packet: AndroidRangeDiagnosticsNtf) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidRangeDiagnosticsNtf> for UciNotification {
     fn from(packet: AndroidRangeDiagnosticsNtf) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
 impl From<AndroidRangeDiagnosticsNtf> for AndroidNotification {
     fn from(packet: AndroidRangeDiagnosticsNtf) -> AndroidNotification {
-        AndroidNotification::new(packet.ucipacket).unwrap()
+        AndroidNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for AndroidRangeDiagnosticsNtf {
+impl TryFrom<ControlPacket> for AndroidRangeDiagnosticsNtf {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<AndroidRangeDiagnosticsNtf> {
-        AndroidRangeDiagnosticsNtf::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<AndroidRangeDiagnosticsNtf> {
+        AndroidRangeDiagnosticsNtf::new(packet.controlpacket)
     }
 }
 impl AndroidRangeDiagnosticsNtf {
@@ -22811,16 +22636,16 @@ impl AndroidRangeDiagnosticsNtf {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -22843,7 +22668,7 @@ impl AndroidRangeDiagnosticsNtf {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             androidnotification,
             androidrangediagnosticsntf,
@@ -22852,17 +22677,14 @@ impl AndroidRangeDiagnosticsNtf {
     pub fn get_frame_reports(&self) -> &Vec<FrameReport> {
         &self.androidrangediagnosticsntf.frame_reports
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_sequence_number(&self) -> u32 {
         self.androidrangediagnosticsntf.sequence_number
@@ -22874,7 +22696,7 @@ impl AndroidRangeDiagnosticsNtf {
         self.androidrangediagnosticsntf.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl AndroidRangeDiagnosticsNtfBuilder {
@@ -22892,18 +22714,17 @@ impl AndroidRangeDiagnosticsNtfBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::AndroidNotification(androidnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorAndroid,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorAndroid,
+            mt: MessageType::Notification,
             opcode: 2,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        AndroidRangeDiagnosticsNtf::new(ucipacket).unwrap()
+        AndroidRangeDiagnosticsNtf::new(controlpacket).unwrap()
     }
 }
-impl From<AndroidRangeDiagnosticsNtfBuilder> for UciPacket {
-    fn from(builder: AndroidRangeDiagnosticsNtfBuilder) -> UciPacket {
+impl From<AndroidRangeDiagnosticsNtfBuilder> for ControlPacket {
+    fn from(builder: AndroidRangeDiagnosticsNtfBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -22951,7 +22772,7 @@ pub struct UciVendor_9_CommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_9_Command {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -22998,8 +22819,8 @@ impl UciVendor_9_CommandData {
 }
 impl Packet for UciVendor_9_Command {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -23016,20 +22837,20 @@ impl From<UciVendor_9_Command> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_9_Command> for UciPacket {
-    fn from(packet: UciVendor_9_Command) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_9_Command> for ControlPacket {
+    fn from(packet: UciVendor_9_Command) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_9_Command> for UciCommand {
     fn from(packet: UciVendor_9_Command) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_9_Command {
+impl TryFrom<ControlPacket> for UciVendor_9_Command {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_9_Command> {
-        UciVendor_9_Command::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_9_Command> {
+        UciVendor_9_Command::new(packet.controlpacket)
     }
 }
 impl UciVendor_9_Command {
@@ -23039,7 +22860,7 @@ impl UciVendor_9_Command {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_9_CommandChild {
@@ -23050,13 +22871,13 @@ impl UciVendor_9_Command {
             UciVendor_9_CommandDataChild::None => UciVendor_9_CommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -23070,22 +22891,19 @@ impl UciVendor_9_Command {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             ucivendor_9_command,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_9_command.child {
@@ -23097,7 +22915,7 @@ impl UciVendor_9_Command {
         self.ucivendor_9_command.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_9_CommandBuilder {
@@ -23111,18 +22929,17 @@ impl UciVendor_9_CommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::UciVendor_9_Command(ucivendor_9_command),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReserved9,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReserved9,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        UciVendor_9_Command::new(ucipacket).unwrap()
+        UciVendor_9_Command::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_9_CommandBuilder> for UciPacket {
-    fn from(builder: UciVendor_9_CommandBuilder) -> UciPacket {
+impl From<UciVendor_9_CommandBuilder> for ControlPacket {
+    fn from(builder: UciVendor_9_CommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -23165,7 +22982,7 @@ pub struct UciVendor_A_CommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_A_Command {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -23212,8 +23029,8 @@ impl UciVendor_A_CommandData {
 }
 impl Packet for UciVendor_A_Command {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -23230,20 +23047,20 @@ impl From<UciVendor_A_Command> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_A_Command> for UciPacket {
-    fn from(packet: UciVendor_A_Command) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_A_Command> for ControlPacket {
+    fn from(packet: UciVendor_A_Command) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_A_Command> for UciCommand {
     fn from(packet: UciVendor_A_Command) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_A_Command {
+impl TryFrom<ControlPacket> for UciVendor_A_Command {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_A_Command> {
-        UciVendor_A_Command::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_A_Command> {
+        UciVendor_A_Command::new(packet.controlpacket)
     }
 }
 impl UciVendor_A_Command {
@@ -23253,7 +23070,7 @@ impl UciVendor_A_Command {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_A_CommandChild {
@@ -23264,13 +23081,13 @@ impl UciVendor_A_Command {
             UciVendor_A_CommandDataChild::None => UciVendor_A_CommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -23284,22 +23101,19 @@ impl UciVendor_A_Command {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             ucivendor_a_command,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_a_command.child {
@@ -23311,7 +23125,7 @@ impl UciVendor_A_Command {
         self.ucivendor_a_command.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_A_CommandBuilder {
@@ -23325,18 +23139,17 @@ impl UciVendor_A_CommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::UciVendor_A_Command(ucivendor_a_command),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedA,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedA,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        UciVendor_A_Command::new(ucipacket).unwrap()
+        UciVendor_A_Command::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_A_CommandBuilder> for UciPacket {
-    fn from(builder: UciVendor_A_CommandBuilder) -> UciPacket {
+impl From<UciVendor_A_CommandBuilder> for ControlPacket {
+    fn from(builder: UciVendor_A_CommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -23379,7 +23192,7 @@ pub struct UciVendor_B_CommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_B_Command {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -23426,8 +23239,8 @@ impl UciVendor_B_CommandData {
 }
 impl Packet for UciVendor_B_Command {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -23444,20 +23257,20 @@ impl From<UciVendor_B_Command> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_B_Command> for UciPacket {
-    fn from(packet: UciVendor_B_Command) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_B_Command> for ControlPacket {
+    fn from(packet: UciVendor_B_Command) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_B_Command> for UciCommand {
     fn from(packet: UciVendor_B_Command) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_B_Command {
+impl TryFrom<ControlPacket> for UciVendor_B_Command {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_B_Command> {
-        UciVendor_B_Command::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_B_Command> {
+        UciVendor_B_Command::new(packet.controlpacket)
     }
 }
 impl UciVendor_B_Command {
@@ -23467,7 +23280,7 @@ impl UciVendor_B_Command {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_B_CommandChild {
@@ -23478,13 +23291,13 @@ impl UciVendor_B_Command {
             UciVendor_B_CommandDataChild::None => UciVendor_B_CommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -23498,22 +23311,19 @@ impl UciVendor_B_Command {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             ucivendor_b_command,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_b_command.child {
@@ -23525,7 +23335,7 @@ impl UciVendor_B_Command {
         self.ucivendor_b_command.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_B_CommandBuilder {
@@ -23539,18 +23349,17 @@ impl UciVendor_B_CommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::UciVendor_B_Command(ucivendor_b_command),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedB,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedB,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        UciVendor_B_Command::new(ucipacket).unwrap()
+        UciVendor_B_Command::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_B_CommandBuilder> for UciPacket {
-    fn from(builder: UciVendor_B_CommandBuilder) -> UciPacket {
+impl From<UciVendor_B_CommandBuilder> for ControlPacket {
+    fn from(builder: UciVendor_B_CommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -23593,7 +23402,7 @@ pub struct UciVendor_E_CommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_E_Command {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -23640,8 +23449,8 @@ impl UciVendor_E_CommandData {
 }
 impl Packet for UciVendor_E_Command {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -23658,20 +23467,20 @@ impl From<UciVendor_E_Command> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_E_Command> for UciPacket {
-    fn from(packet: UciVendor_E_Command) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_E_Command> for ControlPacket {
+    fn from(packet: UciVendor_E_Command) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_E_Command> for UciCommand {
     fn from(packet: UciVendor_E_Command) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_E_Command {
+impl TryFrom<ControlPacket> for UciVendor_E_Command {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_E_Command> {
-        UciVendor_E_Command::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_E_Command> {
+        UciVendor_E_Command::new(packet.controlpacket)
     }
 }
 impl UciVendor_E_Command {
@@ -23681,7 +23490,7 @@ impl UciVendor_E_Command {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_E_CommandChild {
@@ -23692,13 +23501,13 @@ impl UciVendor_E_Command {
             UciVendor_E_CommandDataChild::None => UciVendor_E_CommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -23712,22 +23521,19 @@ impl UciVendor_E_Command {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             ucivendor_e_command,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_e_command.child {
@@ -23739,7 +23545,7 @@ impl UciVendor_E_Command {
         self.ucivendor_e_command.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_E_CommandBuilder {
@@ -23753,18 +23559,17 @@ impl UciVendor_E_CommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::UciVendor_E_Command(ucivendor_e_command),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedE,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedE,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        UciVendor_E_Command::new(ucipacket).unwrap()
+        UciVendor_E_Command::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_E_CommandBuilder> for UciPacket {
-    fn from(builder: UciVendor_E_CommandBuilder) -> UciPacket {
+impl From<UciVendor_E_CommandBuilder> for ControlPacket {
+    fn from(builder: UciVendor_E_CommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -23807,7 +23612,7 @@ pub struct UciVendor_F_CommandData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_F_Command {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucicommand: UciCommandData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -23854,8 +23659,8 @@ impl UciVendor_F_CommandData {
 }
 impl Packet for UciVendor_F_Command {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -23872,20 +23677,20 @@ impl From<UciVendor_F_Command> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_F_Command> for UciPacket {
-    fn from(packet: UciVendor_F_Command) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_F_Command> for ControlPacket {
+    fn from(packet: UciVendor_F_Command) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_F_Command> for UciCommand {
     fn from(packet: UciVendor_F_Command) -> UciCommand {
-        UciCommand::new(packet.ucipacket).unwrap()
+        UciCommand::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_F_Command {
+impl TryFrom<ControlPacket> for UciVendor_F_Command {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_F_Command> {
-        UciVendor_F_Command::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_F_Command> {
+        UciVendor_F_Command::new(packet.controlpacket)
     }
 }
 impl UciVendor_F_Command {
@@ -23895,7 +23700,7 @@ impl UciVendor_F_Command {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_F_CommandChild {
@@ -23906,13 +23711,13 @@ impl UciVendor_F_Command {
             UciVendor_F_CommandDataChild::None => UciVendor_F_CommandChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucicommand = match &ucipacket.child {
-            UciPacketDataChild::UciCommand(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucicommand = match &controlpacket.child {
+            ControlPacketDataChild::UciCommand(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciCommand),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciCommand),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -23926,22 +23731,19 @@ impl UciVendor_F_Command {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucicommand,
             ucivendor_f_command,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_f_command.child {
@@ -23953,7 +23755,7 @@ impl UciVendor_F_Command {
         self.ucivendor_f_command.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_F_CommandBuilder {
@@ -23967,18 +23769,17 @@ impl UciVendor_F_CommandBuilder {
         let ucicommand = UciCommandData {
             child: UciCommandDataChild::UciVendor_F_Command(ucivendor_f_command),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedF,
-            message_type: MessageType::Command,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedF,
+            mt: MessageType::Command,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciCommand(ucicommand),
+            child: ControlPacketDataChild::UciCommand(ucicommand),
         };
-        UciVendor_F_Command::new(ucipacket).unwrap()
+        UciVendor_F_Command::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_F_CommandBuilder> for UciPacket {
-    fn from(builder: UciVendor_F_CommandBuilder) -> UciPacket {
+impl From<UciVendor_F_CommandBuilder> for ControlPacket {
+    fn from(builder: UciVendor_F_CommandBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -24021,7 +23822,7 @@ pub struct UciVendor_9_ResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_9_Response {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -24068,8 +23869,8 @@ impl UciVendor_9_ResponseData {
 }
 impl Packet for UciVendor_9_Response {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -24086,20 +23887,20 @@ impl From<UciVendor_9_Response> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_9_Response> for UciPacket {
-    fn from(packet: UciVendor_9_Response) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_9_Response> for ControlPacket {
+    fn from(packet: UciVendor_9_Response) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_9_Response> for UciResponse {
     fn from(packet: UciVendor_9_Response) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_9_Response {
+impl TryFrom<ControlPacket> for UciVendor_9_Response {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_9_Response> {
-        UciVendor_9_Response::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_9_Response> {
+        UciVendor_9_Response::new(packet.controlpacket)
     }
 }
 impl UciVendor_9_Response {
@@ -24109,7 +23910,7 @@ impl UciVendor_9_Response {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_9_ResponseChild {
@@ -24120,13 +23921,13 @@ impl UciVendor_9_Response {
             UciVendor_9_ResponseDataChild::None => UciVendor_9_ResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -24140,22 +23941,19 @@ impl UciVendor_9_Response {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             ucivendor_9_response,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_9_response.child {
@@ -24167,7 +23965,7 @@ impl UciVendor_9_Response {
         self.ucivendor_9_response.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_9_ResponseBuilder {
@@ -24181,18 +23979,17 @@ impl UciVendor_9_ResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::UciVendor_9_Response(ucivendor_9_response),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReserved9,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReserved9,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        UciVendor_9_Response::new(ucipacket).unwrap()
+        UciVendor_9_Response::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_9_ResponseBuilder> for UciPacket {
-    fn from(builder: UciVendor_9_ResponseBuilder) -> UciPacket {
+impl From<UciVendor_9_ResponseBuilder> for ControlPacket {
+    fn from(builder: UciVendor_9_ResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -24235,7 +24032,7 @@ pub struct UciVendor_A_ResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_A_Response {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -24282,8 +24079,8 @@ impl UciVendor_A_ResponseData {
 }
 impl Packet for UciVendor_A_Response {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -24300,20 +24097,20 @@ impl From<UciVendor_A_Response> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_A_Response> for UciPacket {
-    fn from(packet: UciVendor_A_Response) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_A_Response> for ControlPacket {
+    fn from(packet: UciVendor_A_Response) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_A_Response> for UciResponse {
     fn from(packet: UciVendor_A_Response) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_A_Response {
+impl TryFrom<ControlPacket> for UciVendor_A_Response {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_A_Response> {
-        UciVendor_A_Response::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_A_Response> {
+        UciVendor_A_Response::new(packet.controlpacket)
     }
 }
 impl UciVendor_A_Response {
@@ -24323,7 +24120,7 @@ impl UciVendor_A_Response {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_A_ResponseChild {
@@ -24334,13 +24131,13 @@ impl UciVendor_A_Response {
             UciVendor_A_ResponseDataChild::None => UciVendor_A_ResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -24354,22 +24151,19 @@ impl UciVendor_A_Response {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             ucivendor_a_response,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_a_response.child {
@@ -24381,7 +24175,7 @@ impl UciVendor_A_Response {
         self.ucivendor_a_response.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_A_ResponseBuilder {
@@ -24395,18 +24189,17 @@ impl UciVendor_A_ResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::UciVendor_A_Response(ucivendor_a_response),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedA,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedA,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        UciVendor_A_Response::new(ucipacket).unwrap()
+        UciVendor_A_Response::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_A_ResponseBuilder> for UciPacket {
-    fn from(builder: UciVendor_A_ResponseBuilder) -> UciPacket {
+impl From<UciVendor_A_ResponseBuilder> for ControlPacket {
+    fn from(builder: UciVendor_A_ResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -24449,7 +24242,7 @@ pub struct UciVendor_B_ResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_B_Response {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -24496,8 +24289,8 @@ impl UciVendor_B_ResponseData {
 }
 impl Packet for UciVendor_B_Response {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -24514,20 +24307,20 @@ impl From<UciVendor_B_Response> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_B_Response> for UciPacket {
-    fn from(packet: UciVendor_B_Response) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_B_Response> for ControlPacket {
+    fn from(packet: UciVendor_B_Response) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_B_Response> for UciResponse {
     fn from(packet: UciVendor_B_Response) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_B_Response {
+impl TryFrom<ControlPacket> for UciVendor_B_Response {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_B_Response> {
-        UciVendor_B_Response::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_B_Response> {
+        UciVendor_B_Response::new(packet.controlpacket)
     }
 }
 impl UciVendor_B_Response {
@@ -24537,7 +24330,7 @@ impl UciVendor_B_Response {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_B_ResponseChild {
@@ -24548,13 +24341,13 @@ impl UciVendor_B_Response {
             UciVendor_B_ResponseDataChild::None => UciVendor_B_ResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -24568,22 +24361,19 @@ impl UciVendor_B_Response {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             ucivendor_b_response,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_b_response.child {
@@ -24595,7 +24385,7 @@ impl UciVendor_B_Response {
         self.ucivendor_b_response.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_B_ResponseBuilder {
@@ -24609,18 +24399,17 @@ impl UciVendor_B_ResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::UciVendor_B_Response(ucivendor_b_response),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedB,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedB,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        UciVendor_B_Response::new(ucipacket).unwrap()
+        UciVendor_B_Response::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_B_ResponseBuilder> for UciPacket {
-    fn from(builder: UciVendor_B_ResponseBuilder) -> UciPacket {
+impl From<UciVendor_B_ResponseBuilder> for ControlPacket {
+    fn from(builder: UciVendor_B_ResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -24663,7 +24452,7 @@ pub struct UciVendor_E_ResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_E_Response {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -24710,8 +24499,8 @@ impl UciVendor_E_ResponseData {
 }
 impl Packet for UciVendor_E_Response {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -24728,20 +24517,20 @@ impl From<UciVendor_E_Response> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_E_Response> for UciPacket {
-    fn from(packet: UciVendor_E_Response) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_E_Response> for ControlPacket {
+    fn from(packet: UciVendor_E_Response) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_E_Response> for UciResponse {
     fn from(packet: UciVendor_E_Response) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_E_Response {
+impl TryFrom<ControlPacket> for UciVendor_E_Response {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_E_Response> {
-        UciVendor_E_Response::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_E_Response> {
+        UciVendor_E_Response::new(packet.controlpacket)
     }
 }
 impl UciVendor_E_Response {
@@ -24751,7 +24540,7 @@ impl UciVendor_E_Response {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_E_ResponseChild {
@@ -24762,13 +24551,13 @@ impl UciVendor_E_Response {
             UciVendor_E_ResponseDataChild::None => UciVendor_E_ResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -24782,22 +24571,19 @@ impl UciVendor_E_Response {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             ucivendor_e_response,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_e_response.child {
@@ -24809,7 +24595,7 @@ impl UciVendor_E_Response {
         self.ucivendor_e_response.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_E_ResponseBuilder {
@@ -24823,18 +24609,17 @@ impl UciVendor_E_ResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::UciVendor_E_Response(ucivendor_e_response),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedE,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedE,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        UciVendor_E_Response::new(ucipacket).unwrap()
+        UciVendor_E_Response::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_E_ResponseBuilder> for UciPacket {
-    fn from(builder: UciVendor_E_ResponseBuilder) -> UciPacket {
+impl From<UciVendor_E_ResponseBuilder> for ControlPacket {
+    fn from(builder: UciVendor_E_ResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -24877,7 +24662,7 @@ pub struct UciVendor_F_ResponseData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_F_Response {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     uciresponse: UciResponseData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -24924,8 +24709,8 @@ impl UciVendor_F_ResponseData {
 }
 impl Packet for UciVendor_F_Response {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -24942,20 +24727,20 @@ impl From<UciVendor_F_Response> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_F_Response> for UciPacket {
-    fn from(packet: UciVendor_F_Response) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_F_Response> for ControlPacket {
+    fn from(packet: UciVendor_F_Response) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_F_Response> for UciResponse {
     fn from(packet: UciVendor_F_Response) -> UciResponse {
-        UciResponse::new(packet.ucipacket).unwrap()
+        UciResponse::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_F_Response {
+impl TryFrom<ControlPacket> for UciVendor_F_Response {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_F_Response> {
-        UciVendor_F_Response::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_F_Response> {
+        UciVendor_F_Response::new(packet.controlpacket)
     }
 }
 impl UciVendor_F_Response {
@@ -24965,7 +24750,7 @@ impl UciVendor_F_Response {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_F_ResponseChild {
@@ -24976,13 +24761,13 @@ impl UciVendor_F_Response {
             UciVendor_F_ResponseDataChild::None => UciVendor_F_ResponseChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let uciresponse = match &ucipacket.child {
-            UciPacketDataChild::UciResponse(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let uciresponse = match &controlpacket.child {
+            ControlPacketDataChild::UciResponse(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciResponse),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciResponse),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -24996,22 +24781,19 @@ impl UciVendor_F_Response {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             uciresponse,
             ucivendor_f_response,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_f_response.child {
@@ -25023,7 +24805,7 @@ impl UciVendor_F_Response {
         self.ucivendor_f_response.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_F_ResponseBuilder {
@@ -25037,18 +24819,17 @@ impl UciVendor_F_ResponseBuilder {
         let uciresponse = UciResponseData {
             child: UciResponseDataChild::UciVendor_F_Response(ucivendor_f_response),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedF,
-            message_type: MessageType::Response,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedF,
+            mt: MessageType::Response,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciResponse(uciresponse),
+            child: ControlPacketDataChild::UciResponse(uciresponse),
         };
-        UciVendor_F_Response::new(ucipacket).unwrap()
+        UciVendor_F_Response::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_F_ResponseBuilder> for UciPacket {
-    fn from(builder: UciVendor_F_ResponseBuilder) -> UciPacket {
+impl From<UciVendor_F_ResponseBuilder> for ControlPacket {
+    fn from(builder: UciVendor_F_ResponseBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -25091,7 +24872,7 @@ pub struct UciVendor_9_NotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_9_Notification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -25138,8 +24919,8 @@ impl UciVendor_9_NotificationData {
 }
 impl Packet for UciVendor_9_Notification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -25156,20 +24937,20 @@ impl From<UciVendor_9_Notification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_9_Notification> for UciPacket {
-    fn from(packet: UciVendor_9_Notification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_9_Notification> for ControlPacket {
+    fn from(packet: UciVendor_9_Notification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_9_Notification> for UciNotification {
     fn from(packet: UciVendor_9_Notification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_9_Notification {
+impl TryFrom<ControlPacket> for UciVendor_9_Notification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_9_Notification> {
-        UciVendor_9_Notification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_9_Notification> {
+        UciVendor_9_Notification::new(packet.controlpacket)
     }
 }
 impl UciVendor_9_Notification {
@@ -25179,7 +24960,7 @@ impl UciVendor_9_Notification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_9_NotificationChild {
@@ -25190,13 +24971,13 @@ impl UciVendor_9_Notification {
             UciVendor_9_NotificationDataChild::None => UciVendor_9_NotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -25210,22 +24991,19 @@ impl UciVendor_9_Notification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             ucivendor_9_notification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_9_notification.child {
@@ -25237,7 +25015,7 @@ impl UciVendor_9_Notification {
         self.ucivendor_9_notification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_9_NotificationBuilder {
@@ -25251,18 +25029,17 @@ impl UciVendor_9_NotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::UciVendor_9_Notification(ucivendor_9_notification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReserved9,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReserved9,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        UciVendor_9_Notification::new(ucipacket).unwrap()
+        UciVendor_9_Notification::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_9_NotificationBuilder> for UciPacket {
-    fn from(builder: UciVendor_9_NotificationBuilder) -> UciPacket {
+impl From<UciVendor_9_NotificationBuilder> for ControlPacket {
+    fn from(builder: UciVendor_9_NotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -25305,7 +25082,7 @@ pub struct UciVendor_A_NotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_A_Notification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -25352,8 +25129,8 @@ impl UciVendor_A_NotificationData {
 }
 impl Packet for UciVendor_A_Notification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -25370,20 +25147,20 @@ impl From<UciVendor_A_Notification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_A_Notification> for UciPacket {
-    fn from(packet: UciVendor_A_Notification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_A_Notification> for ControlPacket {
+    fn from(packet: UciVendor_A_Notification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_A_Notification> for UciNotification {
     fn from(packet: UciVendor_A_Notification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_A_Notification {
+impl TryFrom<ControlPacket> for UciVendor_A_Notification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_A_Notification> {
-        UciVendor_A_Notification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_A_Notification> {
+        UciVendor_A_Notification::new(packet.controlpacket)
     }
 }
 impl UciVendor_A_Notification {
@@ -25393,7 +25170,7 @@ impl UciVendor_A_Notification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_A_NotificationChild {
@@ -25404,13 +25181,13 @@ impl UciVendor_A_Notification {
             UciVendor_A_NotificationDataChild::None => UciVendor_A_NotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -25424,22 +25201,19 @@ impl UciVendor_A_Notification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             ucivendor_a_notification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_a_notification.child {
@@ -25451,7 +25225,7 @@ impl UciVendor_A_Notification {
         self.ucivendor_a_notification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_A_NotificationBuilder {
@@ -25465,18 +25239,17 @@ impl UciVendor_A_NotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::UciVendor_A_Notification(ucivendor_a_notification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedA,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedA,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        UciVendor_A_Notification::new(ucipacket).unwrap()
+        UciVendor_A_Notification::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_A_NotificationBuilder> for UciPacket {
-    fn from(builder: UciVendor_A_NotificationBuilder) -> UciPacket {
+impl From<UciVendor_A_NotificationBuilder> for ControlPacket {
+    fn from(builder: UciVendor_A_NotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -25519,7 +25292,7 @@ pub struct UciVendor_B_NotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_B_Notification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -25566,8 +25339,8 @@ impl UciVendor_B_NotificationData {
 }
 impl Packet for UciVendor_B_Notification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -25584,20 +25357,20 @@ impl From<UciVendor_B_Notification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_B_Notification> for UciPacket {
-    fn from(packet: UciVendor_B_Notification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_B_Notification> for ControlPacket {
+    fn from(packet: UciVendor_B_Notification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_B_Notification> for UciNotification {
     fn from(packet: UciVendor_B_Notification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_B_Notification {
+impl TryFrom<ControlPacket> for UciVendor_B_Notification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_B_Notification> {
-        UciVendor_B_Notification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_B_Notification> {
+        UciVendor_B_Notification::new(packet.controlpacket)
     }
 }
 impl UciVendor_B_Notification {
@@ -25607,7 +25380,7 @@ impl UciVendor_B_Notification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_B_NotificationChild {
@@ -25618,13 +25391,13 @@ impl UciVendor_B_Notification {
             UciVendor_B_NotificationDataChild::None => UciVendor_B_NotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -25638,22 +25411,19 @@ impl UciVendor_B_Notification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             ucivendor_b_notification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_b_notification.child {
@@ -25665,7 +25435,7 @@ impl UciVendor_B_Notification {
         self.ucivendor_b_notification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_B_NotificationBuilder {
@@ -25679,18 +25449,17 @@ impl UciVendor_B_NotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::UciVendor_B_Notification(ucivendor_b_notification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedB,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedB,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        UciVendor_B_Notification::new(ucipacket).unwrap()
+        UciVendor_B_Notification::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_B_NotificationBuilder> for UciPacket {
-    fn from(builder: UciVendor_B_NotificationBuilder) -> UciPacket {
+impl From<UciVendor_B_NotificationBuilder> for ControlPacket {
+    fn from(builder: UciVendor_B_NotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -25733,7 +25502,7 @@ pub struct UciVendor_E_NotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_E_Notification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -25780,8 +25549,8 @@ impl UciVendor_E_NotificationData {
 }
 impl Packet for UciVendor_E_Notification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -25798,20 +25567,20 @@ impl From<UciVendor_E_Notification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_E_Notification> for UciPacket {
-    fn from(packet: UciVendor_E_Notification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_E_Notification> for ControlPacket {
+    fn from(packet: UciVendor_E_Notification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_E_Notification> for UciNotification {
     fn from(packet: UciVendor_E_Notification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_E_Notification {
+impl TryFrom<ControlPacket> for UciVendor_E_Notification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_E_Notification> {
-        UciVendor_E_Notification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_E_Notification> {
+        UciVendor_E_Notification::new(packet.controlpacket)
     }
 }
 impl UciVendor_E_Notification {
@@ -25821,7 +25590,7 @@ impl UciVendor_E_Notification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_E_NotificationChild {
@@ -25832,13 +25601,13 @@ impl UciVendor_E_Notification {
             UciVendor_E_NotificationDataChild::None => UciVendor_E_NotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -25852,22 +25621,19 @@ impl UciVendor_E_Notification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             ucivendor_e_notification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_e_notification.child {
@@ -25879,7 +25645,7 @@ impl UciVendor_E_Notification {
         self.ucivendor_e_notification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_E_NotificationBuilder {
@@ -25893,18 +25659,17 @@ impl UciVendor_E_NotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::UciVendor_E_Notification(ucivendor_e_notification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedE,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedE,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        UciVendor_E_Notification::new(ucipacket).unwrap()
+        UciVendor_E_Notification::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_E_NotificationBuilder> for UciPacket {
-    fn from(builder: UciVendor_E_NotificationBuilder) -> UciPacket {
+impl From<UciVendor_E_NotificationBuilder> for ControlPacket {
+    fn from(builder: UciVendor_E_NotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -25947,7 +25712,7 @@ pub struct UciVendor_F_NotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UciVendor_F_Notification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -25994,8 +25759,8 @@ impl UciVendor_F_NotificationData {
 }
 impl Packet for UciVendor_F_Notification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -26012,20 +25777,20 @@ impl From<UciVendor_F_Notification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<UciVendor_F_Notification> for UciPacket {
-    fn from(packet: UciVendor_F_Notification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<UciVendor_F_Notification> for ControlPacket {
+    fn from(packet: UciVendor_F_Notification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<UciVendor_F_Notification> for UciNotification {
     fn from(packet: UciVendor_F_Notification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for UciVendor_F_Notification {
+impl TryFrom<ControlPacket> for UciVendor_F_Notification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<UciVendor_F_Notification> {
-        UciVendor_F_Notification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<UciVendor_F_Notification> {
+        UciVendor_F_Notification::new(packet.controlpacket)
     }
 }
 impl UciVendor_F_Notification {
@@ -26035,7 +25800,7 @@ impl UciVendor_F_Notification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> UciVendor_F_NotificationChild {
@@ -26046,13 +25811,13 @@ impl UciVendor_F_Notification {
             UciVendor_F_NotificationDataChild::None => UciVendor_F_NotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -26066,22 +25831,19 @@ impl UciVendor_F_Notification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             ucivendor_f_notification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.ucivendor_f_notification.child {
@@ -26093,7 +25855,7 @@ impl UciVendor_F_Notification {
         self.ucivendor_f_notification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl UciVendor_F_NotificationBuilder {
@@ -26107,18 +25869,17 @@ impl UciVendor_F_NotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::UciVendor_F_Notification(ucivendor_f_notification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::VendorReservedF,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::VendorReservedF,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        UciVendor_F_Notification::new(ucipacket).unwrap()
+        UciVendor_F_Notification::new(controlpacket).unwrap()
     }
 }
-impl From<UciVendor_F_NotificationBuilder> for UciPacket {
-    fn from(builder: UciVendor_F_NotificationBuilder) -> UciPacket {
+impl From<UciVendor_F_NotificationBuilder> for ControlPacket {
+    fn from(builder: UciVendor_F_NotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
@@ -26161,7 +25922,7 @@ pub struct TestNotificationData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TestNotification {
     #[cfg_attr(feature = "serde", serde(flatten))]
-    ucipacket: UciPacketData,
+    controlpacket: ControlPacketData,
     #[cfg_attr(feature = "serde", serde(flatten))]
     ucinotification: UciNotificationData,
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -26208,8 +25969,8 @@ impl TestNotificationData {
 }
 impl Packet for TestNotification {
     fn to_bytes(self) -> Bytes {
-        let mut buffer = BytesMut::with_capacity(self.ucipacket.get_size());
-        self.ucipacket.write_to(&mut buffer);
+        let mut buffer = BytesMut::with_capacity(self.controlpacket.get_size());
+        self.controlpacket.write_to(&mut buffer);
         buffer.freeze()
     }
     fn to_vec(self) -> Vec<u8> {
@@ -26226,20 +25987,20 @@ impl From<TestNotification> for Vec<u8> {
         packet.to_vec()
     }
 }
-impl From<TestNotification> for UciPacket {
-    fn from(packet: TestNotification) -> UciPacket {
-        UciPacket::new(packet.ucipacket).unwrap()
+impl From<TestNotification> for ControlPacket {
+    fn from(packet: TestNotification) -> ControlPacket {
+        ControlPacket::new(packet.controlpacket).unwrap()
     }
 }
 impl From<TestNotification> for UciNotification {
     fn from(packet: TestNotification) -> UciNotification {
-        UciNotification::new(packet.ucipacket).unwrap()
+        UciNotification::new(packet.controlpacket).unwrap()
     }
 }
-impl TryFrom<UciPacket> for TestNotification {
+impl TryFrom<ControlPacket> for TestNotification {
     type Error = Error;
-    fn try_from(packet: UciPacket) -> Result<TestNotification> {
-        TestNotification::new(packet.ucipacket)
+    fn try_from(packet: ControlPacket) -> Result<TestNotification> {
+        TestNotification::new(packet.controlpacket)
     }
 }
 impl TestNotification {
@@ -26249,7 +26010,7 @@ impl TestNotification {
         Ok(packet)
     }
     fn parse_inner(mut bytes: &mut Cell<&[u8]>) -> Result<Self> {
-        let data = UciPacketData::parse_inner(&mut bytes)?;
+        let data = ControlPacketData::parse_inner(&mut bytes)?;
         Self::new(data)
     }
     pub fn specialize(&self) -> TestNotificationChild {
@@ -26260,13 +26021,13 @@ impl TestNotification {
             TestNotificationDataChild::None => TestNotificationChild::None,
         }
     }
-    fn new(ucipacket: UciPacketData) -> Result<Self> {
-        let ucinotification = match &ucipacket.child {
-            UciPacketDataChild::UciNotification(value) => value.clone(),
+    fn new(controlpacket: ControlPacketData) -> Result<Self> {
+        let ucinotification = match &controlpacket.child {
+            ControlPacketDataChild::UciNotification(value) => value.clone(),
             _ => {
                 return Err(Error::InvalidChildError {
-                    expected: stringify!(UciPacketDataChild::UciNotification),
-                    actual: format!("{:?}", &ucipacket.child),
+                    expected: stringify!(ControlPacketDataChild::UciNotification),
+                    actual: format!("{:?}", &controlpacket.child),
                 });
             }
         };
@@ -26280,22 +26041,19 @@ impl TestNotification {
             }
         };
         Ok(Self {
-            ucipacket,
+            controlpacket,
             ucinotification,
             testnotification,
         })
     }
-    pub fn get_group_id(&self) -> GroupId {
-        self.ucipacket.group_id
+    pub fn get_gid(&self) -> GroupId {
+        self.controlpacket.gid
     }
-    pub fn get_message_type(&self) -> MessageType {
-        self.ucipacket.message_type
+    pub fn get_mt(&self) -> MessageType {
+        self.controlpacket.mt
     }
     pub fn get_opcode(&self) -> u8 {
-        self.ucipacket.opcode
-    }
-    pub fn get_packet_boundary_flag(&self) -> PacketBoundaryFlag {
-        self.ucipacket.packet_boundary_flag
+        self.controlpacket.opcode
     }
     pub fn get_payload(&self) -> &[u8] {
         match &self.testnotification.child {
@@ -26307,7 +26065,7 @@ impl TestNotification {
         self.testnotification.write_to(buffer)
     }
     pub fn get_size(&self) -> usize {
-        self.ucipacket.get_size()
+        self.controlpacket.get_size()
     }
 }
 impl TestNotificationBuilder {
@@ -26321,18 +26079,17 @@ impl TestNotificationBuilder {
         let ucinotification = UciNotificationData {
             child: UciNotificationDataChild::TestNotification(testnotification),
         };
-        let ucipacket = UciPacketData {
-            group_id: GroupId::Test,
-            message_type: MessageType::Notification,
+        let controlpacket = ControlPacketData {
+            gid: GroupId::Test,
+            mt: MessageType::Notification,
             opcode: self.opcode,
-            packet_boundary_flag: PacketBoundaryFlag::Complete,
-            child: UciPacketDataChild::UciNotification(ucinotification),
+            child: ControlPacketDataChild::UciNotification(ucinotification),
         };
-        TestNotification::new(ucipacket).unwrap()
+        TestNotification::new(controlpacket).unwrap()
     }
 }
-impl From<TestNotificationBuilder> for UciPacket {
-    fn from(builder: TestNotificationBuilder) -> UciPacket {
+impl From<TestNotificationBuilder> for ControlPacket {
+    fn from(builder: TestNotificationBuilder) -> ControlPacket {
         builder.build().into()
     }
 }
