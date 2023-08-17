@@ -770,10 +770,6 @@ impl Session {
                                 } else {
                                     dst_addresses.push(MacAddress::Short(controlee.short_address));
                                 };
-                            } else {
-                                status = StatusCode::UciStatusAddressAlreadyPresent;
-                                update_status =
-                                    MulticastUpdateStatusCode::StatusErrorAddressAlreadyPresent;
                             }
                             controlee_status.push(ControleeStatus {
                                 mac_address: controlee.short_address,
