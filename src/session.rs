@@ -756,18 +756,13 @@ impl Session {
             let mut status = StatusCode::UciStatusOk;
 
             match action {
-                UpdateMulticastListAction::Add
-                    if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES =>
-                {
-                    status = StatusCode::UciStatusMulticastListFull
-                }
                 UpdateMulticastListAction::Add => {
                     new_controlees.iter().for_each(|controlee| {
                         let mut update_status =
                             MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                         if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
                             if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
-                                status = StatusCode::UciStatusFailed;
+                                status = StatusCode::UciStatusMulticastListFull;
                                 update_status =
                                     MulticastUpdateStatusCode::StatusErrorMulticastListFull;
                             } else {
