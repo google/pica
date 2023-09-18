@@ -740,80 +740,75 @@ impl Session {
             || (self.app_config.multi_node_mode != MultiNodeMode::OneToMany
                 && self.app_config.multi_node_mode != MultiNodeMode::ManyToMany)
         {
-            SessionUpdateControllerMulticastListRspBuilder {
+            return SessionUpdateControllerMulticastListRspBuilder {
                 status: StatusCode::UciStatusRejected,
             }
-            .build()
-        } else {
-            let action = UpdateMulticastListAction::from_u8(cmd.get_action().into()).unwrap();
-            let mut dst_addresses = self.app_config.dst_mac_addresses.clone();
-            let packet =
-                SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload()).unwrap();
-            let new_controlees = packet.controlees;
-            let mut controlee_status = Vec::new();
-
-            let session_id = self.id;
-            let mut status = StatusCode::UciStatusOk;
-
-            match action {
-                UpdateMulticastListAction::Add => {
-                    new_controlees.iter().for_each(|controlee| {
-                        let mut update_status =
-                            MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                        if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
-                            if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
-                                status = StatusCode::UciStatusMulticastListFull;
-                                update_status =
-                                    MulticastUpdateStatusCode::StatusErrorMulticastListFull;
-                            } else {
-                                dst_addresses.push(MacAddress::Short(controlee.short_address));
-                            };
-                        }
-                        controlee_status.push(ControleeStatus {
-                            mac_address: controlee.short_address,
-                            subsession_id: controlee.subsession_id,
-                            status: update_status,
-                        });
-                    });
-                }
-                UpdateMulticastListAction::Delete => {
-                    new_controlees.iter().for_each(|controlee| {
-                        let mut update_status =
-                            MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                        if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
-                            status = StatusCode::UciStatusAddressNotFound;
-                            update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
-                        } else {
-                            dst_addresses.retain(|value| {
-                                *value != MacAddress::Short(controlee.short_address)
-                            });
-                        }
-                        controlee_status.push(ControleeStatus {
-                            mac_address: controlee.short_address,
-                            subsession_id: controlee.subsession_id,
-                            status: update_status,
-                        });
-                    });
-                }
-            }
-            self.app_config.number_of_controlees = dst_addresses.len();
-            self.app_config.dst_mac_addresses = dst_addresses.clone();
-            let tx = self.tx.clone();
-            tokio::spawn(async move {
-                tx.send(
-                    SessionUpdateControllerMulticastListNtfBuilder {
-                        controlee_status,
-                        remaining_multicast_list_size: dst_addresses.len() as u8,
-                        session_token: session_id,
-                    }
-                    .build()
-                    .into(),
-                )
-                .await
-                .unwrap()
-            });
-            SessionUpdateControllerMulticastListRspBuilder { status }.build()
+            .build();
         }
+        let action = UpdateMulticastListAction::from_u8(cmd.get_action().into()).unwrap();
+        let mut dst_addresses = self.app_config.dst_mac_addresses.clone();
+        let packet =
+            SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload()).unwrap();
+        let new_controlees = packet.controlees;
+        let mut controlee_status = Vec::new();
+
+        let session_id = self.id;
+        let mut status = StatusCode::UciStatusOk;
+
+        match action {
+            UpdateMulticastListAction::Add => {
+                new_controlees.iter().for_each(|controlee| {
+                    let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
+                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
+                        if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
+                            status = StatusCode::UciStatusMulticastListFull;
+                            update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
+                        } else {
+                            dst_addresses.push(MacAddress::Short(controlee.short_address));
+                        };
+                    }
+                    controlee_status.push(ControleeStatus {
+                        mac_address: controlee.short_address,
+                        subsession_id: controlee.subsession_id,
+                        status: update_status,
+                    });
+                });
+            }
+            UpdateMulticastListAction::Delete => {
+                new_controlees.iter().for_each(|controlee| {
+                    let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
+                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
+                        status = StatusCode::UciStatusAddressNotFound;
+                        update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
+                    } else {
+                        dst_addresses
+                            .retain(|value| *value != MacAddress::Short(controlee.short_address));
+                    }
+                    controlee_status.push(ControleeStatus {
+                        mac_address: controlee.short_address,
+                        subsession_id: controlee.subsession_id,
+                        status: update_status,
+                    });
+                });
+            }
+        }
+        self.app_config.number_of_controlees = dst_addresses.len();
+        self.app_config.dst_mac_addresses = dst_addresses.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            tx.send(
+                SessionUpdateControllerMulticastListNtfBuilder {
+                    controlee_status,
+                    remaining_multicast_list_size: dst_addresses.len() as u8,
+                    session_token: session_id,
+                }
+                .build()
+                .into(),
+            )
+            .await
+            .unwrap()
+        });
+        SessionUpdateControllerMulticastListRspBuilder { status }.build()
     }
 
     fn command_range_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
