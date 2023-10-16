@@ -16,8 +16,7 @@
 //! - [MAC] FiRa Consortium UWB MAC Technical Requirements
 //! - [UCI] FiRa Consortium UWB Command Interface Generic Technical specification
 
-use crate::uci_packets::AppConfigTlvType;
-use crate::uci_packets::*;
+use crate::packets::uci::*;
 use crate::{MacAddress, PicaCommand};
 use std::collections::HashMap;
 use std::time::Duration;
