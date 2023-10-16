@@ -14,16 +14,16 @@
 
 use std::env;
 use std::fs::File;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 fn main() {
-    generate_module(&PathBuf::from("src/uci_packets.pdl").canonicalize().unwrap());
+    generate_module(&Path::new("src/uci_packets.pdl").canonicalize().unwrap());
 }
 
-fn generate_module(in_file: &PathBuf) {
+fn generate_module(in_file: &Path) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let out_file = File::create(
+    let mut out_file = File::create(
         out_dir
             .join(in_file.file_name().unwrap())
             .with_extension("rs"),
@@ -31,19 +31,16 @@ fn generate_module(in_file: &PathBuf) {
     .unwrap();
 
     println!("cargo:rerun-if-changed={}", in_file.display());
-    let output = Command::new("pdlc")
-        .arg("--output-format")
-        .arg("rust")
-        .arg(in_file)
-        .stdout(Stdio::from(out_file))
-        .output()
-        .unwrap();
 
-    println!(
-        "Status: {}, stderr: {}",
-        output.status,
-        String::from_utf8_lossy(output.stderr.as_slice())
-    );
-
-    assert!(output.status.success());
+    let mut sources = pdl_compiler::ast::SourceDatabase::new();
+    let parsed_file = pdl_compiler::parser::parse_file(
+        &mut sources,
+        in_file.to_str().expect("Filename is not UTF-8"),
+    )
+    .expect("PDL parse failed");
+    let analyzed_file = pdl_compiler::analyzer::analyze(&parsed_file).expect("PDL analysis failed");
+    let rust_source = pdl_compiler::backends::rust::generate(&sources, &analyzed_file);
+    out_file
+        .write_all(rust_source.as_bytes())
+        .expect("Could not write to output file");
 }

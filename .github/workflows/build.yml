@@ -24,8 +24,6 @@ jobs:
         toolchain: 1.67.1
         override: true
         components: rustfmt, clippy
-    - name: Install dependencies
-      run: cargo install pdl-compiler
     - name: Build
       run: cargo build
     - name: Test

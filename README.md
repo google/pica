@@ -114,9 +114,3 @@ $> --> pica_create_anchor 00:01 # Create another one
 
 Pica also implements HTTP commands, the documentation is available at `http://0.0.0.0:3000/openapi`.
 The set of HTTP commands let the user interact with Pica amd modify its scene.
-
-# Dependencies
-
-```
-cargo install pdl-compiler
-```
