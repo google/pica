@@ -27,7 +27,7 @@ jobs:
     - name: Build
       run: cargo build
     - name: Test
-      run: cargo test -- --skip uci_packets
+      run: cargo test
     - name: Fmt
       run: cargo fmt --check --quiet
     - name: Clippy

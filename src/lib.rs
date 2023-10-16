@@ -28,9 +28,10 @@ mod pcapng;
 mod position;
 pub use position::Position;
 
-mod uci_packets;
-use uci_packets::StatusCode as UciStatusCode;
-use uci_packets::*;
+mod packets;
+
+use packets::uci::StatusCode as UciStatusCode;
+use packets::uci::*;
 
 mod device;
 use device::{Device, MAX_DEVICE};

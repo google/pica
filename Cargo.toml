@@ -23,6 +23,9 @@ path = "src/bin/server/mod.rs"
 default = ["web"]
 web = ["hyper", "tokio/rt-multi-thread"]
 
+[build-dependencies]
+pdl-compiler = "0.1.6"
+
 [dependencies]
 tokio = { version = "1.25.0", features = [ "fs", "io-util", "macros", "net", "rt" ] }
 tokio-stream = { version = "0.1.8", features = ["sync"] }

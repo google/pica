@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::packets::uci::*;
 use crate::position::Position;
-use crate::uci_packets::*;
 use crate::MacAddress;
 use crate::PicaCommand;
 

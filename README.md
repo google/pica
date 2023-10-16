@@ -114,34 +114,3 @@ $> --> pica_create_anchor 00:01 # Create another one
 
 Pica also implements HTTP commands, the documentation is available at `http://0.0.0.0:3000/openapi`.
 The set of HTTP commands let the user interact with Pica amd modify its scene.
-
-# Regenerate uci_packets.rs
-If you haven't use bluetooth_packetgen before, it is a tool from Android. You can build it and use it
-and build it that way:
-```bash
-# Build bluetooth_packetgen
-cd $AOSP_DIR
-source build/envsetup.sh
-lunch <target>  # Use target 1 if in doubt
-m bluetooth_packetgen
-export PATH=$PATH:${AOSP_DIR}/out/host/linux-x86/bin/
-
-# Generate the source
-cd $PICA_DIR
-bluetooth_packetgen \
-    --rust \
-    --include=src/ \
-    --out=src/ \
-    src/uci_packets.pdl
-```
-
-Then edit the uci_packet.rs to add clippy guards
-
-```
-#![allow(clippy::all)]
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(unused)]
-#![allow(missing_docs)]
-```
