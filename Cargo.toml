@@ -15,6 +15,10 @@ authors = [
   "Henri Chataing <henrichataing@google.com>",
 ]
 default-run = "pica-server"
+exclude = [
+  "res/*",
+  "scripts/*"
+]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
