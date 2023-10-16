@@ -6,7 +6,7 @@ description = "Pica is a virtual UWB Controller implementing the FiRa UCI specif
 repository = "https://github.com/google/pica"
 license = "Apache-2.0"
 readme = "README.md"
-keywords = ["pica", "uwb", "fira", "test", "ccc", "virtual", "controller"]
+keywords = ["uwb", "virtual", "emulator", "controller"]
 categories = ["emulators", "virtualization"]
 authors = [
   "Adrien Larbanet",
