@@ -43,9 +43,9 @@ tokio = { version = "1.25.0", features = [ "fs", "io-util", "macros", "net", "rt
 tokio-stream = { version = "0.1.8", features = ["sync"] }
 bytes = "1"
 anyhow = "1.0.56"
-num-derive = "*"
-num-traits = "*"
-thiserror = "*"
+num-derive = "0.4.1"
+num-traits = "0.2.17"
+thiserror = "1.0.49"
 glam = "0.23.0"
 hyper = { version = "0.14", features = ["server", "stream", "http1", "tcp"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
