@@ -1,3 +1,6 @@
+[![Crate](https://img.shields.io/crates/v/pica?style=flat-square)](https://crates.io/crates/pica)
+[![Build workflow](https://img.shields.io/github/actions/workflow/status/google/pica/build.yml?style=flat-square)](https://github.com/google/pica/actions/workflows/build.yml?query=branch%3Amain)
+
 # Pica
 
 Pica is a virtual UWB Controller implementing the FiRa UCI specification.
