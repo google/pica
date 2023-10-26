@@ -53,6 +53,11 @@ def encode_tlv(typ: int, value: bytes):
     return bytes([typ, len(value)]) + value if len(value) > 0 else bytes([])
 
 
+def parse_mac_address(mac_address: str) -> bytes:
+    bs = mac_address.split(':')
+    return bytes(int(b, 16) for b in bs)
+
+
 class TLV:
     def __init__(self):
         self.count = 0
@@ -198,20 +203,28 @@ class Device:
             dst_mac_addresses: str = '',
             **kargs):
         """set APP Configuration Parameters for the requested UWB session."""
+        dst_mac_addresses = [parse_mac_address(a) for a in dst_mac_addresses.split(',') if a]
+        if any(len(a) > 2 for a in dst_mac_addresses):
+            mac_address_mode = 0x2
+            mac_address_len = 8
+        else:
+            mac_address_mode = 0x0
+            mac_address_len = 2
+
         encoded_dst_mac_addresses = bytes()
-        dst_mac_addresses_count = 0
-        for mac_address in dst_mac_addresses.split(','):
-            if len(mac_address) > 0:
-                dst_mac_addresses_count += 1
-                encoded_dst_mac_addresses += int(
-                    mac_address).to_bytes(8, byteorder='little')
+        for mac_address in dst_mac_addresses:
+            encoded_dst_mac_addresses += mac_address
+            encoded_dst_mac_addresses += b'\0' * (mac_address_len - len(mac_address))
 
         configs = TLV()
-        configs.append(0x26, bytes([0x2]))  # MAC Address Mode #2
-        configs.append(0x5, bytes([dst_mac_addresses_count]))
-        configs.append(0x9, int(ranging_interval).to_bytes(
-            4, byteorder='little'))
-        configs.append(0x7, encoded_dst_mac_addresses)
+        configs.append(uci_packets.AppConfigTlvType.MAC_ADDRESS_MODE,
+                       bytes([mac_address_mode]))
+        configs.append(uci_packets.AppConfigTlvType.RANGING_DURATION,
+                       int(ranging_interval).to_bytes(4, byteorder='little'))
+        configs.append(uci_packets.AppConfigTlvType.NO_OF_CONTROLEE,
+                       bytes([len(dst_mac_addresses)]))
+        configs.append(uci_packets.AppConfigTlvType.DST_MAC_ADDRESS,
+                       encoded_dst_mac_addresses)
 
         self._send_command(1, 3,
                            encode_session_id(session_id) +
@@ -267,50 +280,68 @@ class Device:
         """Get the number of times ranging has been attempted during the ranging session.."""
         self._send_command(2, 3, encode_session_id(session_id))
 
+    async def _read_exact(self, expected_len: int) -> bytes:
+        """ Read an exact number of bytes from the socket.
+        Raises an exception if the socket gets disconnected."""
+        received = bytes()
+        while len(received) < expected_len:
+            chunk = await self.reader.read(expected_len - len(received))
+            received += chunk
+        return received
+
+    async def _read_packet(self) -> bytes:
+        """ Read a single UCI packet from the socket.
+        The packet is automatically re-assembled if segmented on
+        the UCI transport."""
+
+        complete_packet_bytes = bytes()
+
+        # Note on reassembly:
+        # For each segment of a Control Message, the
+        # header of the Control Packet SHALL contain the same MT, GID and OID
+        # values. It is correct to keep only the last header of the
+        # segmented packet.
+        while True:
+            # Read the common packet header.
+            header_bytes = await self._read_exact(4)
+            header = uci_packets.PacketHeader.parse_all(header_bytes)
+
+            # Read the packet payload.
+            payload_bytes = await self._read_exact(header.payload_length)
+            complete_packet_bytes += payload_bytes
+
+            # Check the Packet Boundary Flag.
+            match header.pbf:
+                case uci_packets.PacketBoundaryFlag.COMPLETE:
+                    return header_bytes + complete_packet_bytes
+                case uci_packets.PacketBoundaryFlag.NOT_COMPLETE:
+                    pass
+
     async def read_responses_and_notifications(self):
         def chunks(l, n):
             for i in range(0, len(l), n):
                 yield l[i:i + n]
 
-        packet = bytes()
-        buffer = bytes()
-        expect = 4
-        have_header = False
-
         while True:
-            chunk = await self.reader.read(expect)
+            packet = await self._read_packet()
 
-            # Disconnected from Pica
-            if len(chunk) == 0:
-                break
+            # Format and print raw response data
+            txt = '\n  '.join([
+                ' '.join(['{:02x}'.format(b) for b in shard]) for
+                shard in chunks(packet, 16)])
 
-            # Waiting for more bytes
-            buffer += chunk
-            if len(buffer) < expect:
-                continue
+            command_buffer = readline.get_line_buffer()
+            print('\r', end='')
+            print(f'Received UCI packet [{len(packet)}]:')
+            print(f'  {txt}')
 
-            packet += buffer
-            buffer = bytes()
-            if not have_header:
-                have_header = True
-                expect = packet[3]
-            else:
-                # Format and print raw response data
-                txt = '\n  '.join([
-                    ' '.join(['{:02x}'.format(b) for b in shard]) for
-                    shard in chunks(packet, 16)])
-
-                command_buffer = readline.get_line_buffer()
-                print('\r', end='')
-                print(f'Received UCI packet [{len(packet)}]:')
-                print(f'  {txt}')
-                uci_packet = uci_packets.UciPacket.parse_all(packet)
+            try:
+                uci_packet = uci_packets.ControlPacket.parse_all(packet)
                 uci_packet.show()
-                print(f'--> {command_buffer}', end='', flush=True)
+            except Exception as exn:
+                pass
 
-                packet = bytes()
-                have_header = False
-                expect = 4
+            print(f'--> {command_buffer}', end='', flush=True)
 
 
 async def ainput(prompt: str = ''):
