@@ -42,7 +42,7 @@ pub enum DeviceType {
     Controller = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceRole {
     /// [MAC] 5.1.3 Device initiating a ranging exchange with a ranging initiation message
     Initiator,
@@ -533,6 +533,61 @@ impl AppConfig {
         self.raw.get(&id).cloned()
     }
 
+    pub fn can_start_ranging_with_peer(&self, peer_config: Self) -> bool {
+        self.device_role != peer_config.device_role
+            && self.device_type != peer_config.device_type
+            && self.mac_address_mode == peer_config.mac_address_mode
+            && self.ranging_interval == peer_config.ranging_interval
+            && self.slot_duration == peer_config.slot_duration
+            && self.channel_number == peer_config.channel_number
+            && peer_config
+                .dst_mac_addresses
+                .contains(&self.device_mac_address)
+            && self
+                .dst_mac_addresses
+                .contains(&peer_config.device_mac_address)
+            && self.multi_node_mode == peer_config.multi_node_mode
+            && self.ranging_round_usage == peer_config.ranging_round_usage
+            && self.sts_config == peer_config.sts_config
+            && self.mac_fcs_type == peer_config.mac_fcs_type
+            && self.ranging_round_control == peer_config.ranging_round_control
+            && self.aoa_result_req == peer_config.aoa_result_req
+            && self.rng_data_ntf == peer_config.rng_data_ntf
+            && self.rng_data_ntf_proximity_near == peer_config.rng_data_ntf_proximity_near
+            && self.rng_data_ntf_proximity_far == peer_config.rng_data_ntf_proximity_far
+            && self.r_frame_config == peer_config.r_frame_config
+            && self.rssi_reporting == peer_config.rssi_reporting
+            && self.preamble_code_index == peer_config.preamble_code_index
+            && self.sfd_id == peer_config.sfd_id
+            && self.psdu_data_rate == peer_config.psdu_data_rate
+            && self.preamble_duration == peer_config.preamble_duration
+            && self.ranging_time_struct == peer_config.ranging_time_struct
+            && self.slots_per_rr == peer_config.slots_per_rr
+            && self.tx_adaptive_payload_power == peer_config.tx_adaptive_payload_power
+            && self.prf_mode == peer_config.prf_mode
+            && self.schedule_mode == peer_config.schedule_mode
+            && self.key_rotation == peer_config.key_rotation
+            && self.key_rotation_rate == peer_config.key_rotation_rate
+            && self.session_priority == peer_config.session_priority
+            && self.number_of_sts_segments == peer_config.number_of_sts_segments
+            && self.max_rr_retry == peer_config.max_rr_retry
+            && self.hopping_mode == peer_config.hopping_mode
+            && self.block_stride_length == peer_config.block_stride_length
+            && self.result_report_config == peer_config.result_report_config
+            && self.in_band_termination_attempt_count
+                == peer_config.in_band_termination_attempt_count
+            && self.bprf_phr_data_rate == peer_config.bprf_phr_data_rate
+            && self.max_number_of_measurements == peer_config.max_number_of_measurements
+            && self.sts_length == peer_config.sts_length
+            && self.uwb_initiation_time == peer_config.uwb_initiation_time
+            && self.vendor_id == peer_config.vendor_id
+            && self.static_sts_iv == peer_config.static_sts_iv
+    }
+
+    pub fn get_device_mac_address(&self) -> MacAddress {
+        self.device_mac_address
+    }
+
     fn extend(&mut self, configs: &[AppConfigTlv]) -> Vec<AppConfigStatus> {
         if !app_config_has_mandatory_parameters(configs) {
             // TODO: What shall we do in this situation?
@@ -562,7 +617,7 @@ pub struct Session {
 
     session_type: SessionType,
     pub sequence_number: u32,
-    app_config: AppConfig,
+    pub app_config: AppConfig,
     ranging_task: Option<JoinHandle<()>>,
     tx: mpsc::Sender<ControlPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
@@ -620,6 +675,10 @@ impl Session {
 
     pub fn is_ranging_data_ntf_enabled(&self) -> RangeDataNtfConfig {
         self.app_config.rng_data_ntf
+    }
+
+    pub fn get_session_state(&self) -> SessionState {
+        self.state
     }
 
     pub fn init(&mut self) {
