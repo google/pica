@@ -76,7 +76,6 @@ impl Connection {
             self.socket
                 .read_exact(&mut complete_packet[0..HEADER_SIZE])
                 .await?;
-            println!("read complete_packet: {:?}", complete_packet);
             let header = PacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
 
             // Read the packet payload.
@@ -301,6 +300,36 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
     }
 }
 
+fn add_measurement(
+    mac_address: &MacAddress,
+    measurements: &mut Vec<ShortAddressTwoWayRangingMeasurement>,
+    local: (u16, i16, i8),
+    remote: (u16, i16, i8),
+) {
+    // TODO: support extended address
+    match mac_address {
+        MacAddress::Short(address) => {
+            measurements.push(ShortAddressTwoWayRangingMeasurement {
+                mac_address: u16::from_le_bytes(*address),
+                status: UciStatusCode::UciStatusOk,
+                nlos: 0, // in Line Of Sight
+                distance: local.0,
+                aoa_azimuth: local.1 as u16,
+                aoa_azimuth_fom: 100, // Yup, pretty sure about this
+                aoa_elevation: local.2 as u16,
+                aoa_elevation_fom: 100, // Yup, pretty sure about this
+                aoa_destination_azimuth: remote.1 as u16,
+                aoa_destination_azimuth_fom: 100,
+                aoa_destination_elevation: remote.2 as u16,
+                aoa_destination_elevation_fom: 100,
+                slot_index: 0,
+                rssi: u8::MAX,
+            })
+        }
+        MacAddress::Extend(_) => unimplemented!(),
+    }
+}
+
 impl Pica {
     pub fn new(event_tx: broadcast::Sender<PicaEvent>, pcapng_dir: Option<PathBuf>) -> Self {
         let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
@@ -453,37 +482,6 @@ impl Pica {
         }
     }
 
-    fn add_measurement(
-        &self,
-        mac_address: &MacAddress,
-        measurements: &mut Vec<ShortAddressTwoWayRangingMeasurement>,
-        local: (u16, i16, i8),
-        remote: (u16, i16, i8),
-    ) {
-        // TODO: support extended address
-        match mac_address {
-            MacAddress::Short(address) => {
-                measurements.push(ShortAddressTwoWayRangingMeasurement {
-                    mac_address: u16::from_le_bytes(*address),
-                    status: UciStatusCode::UciStatusOk,
-                    nlos: 0, // in Line Of Sight
-                    distance: local.0,
-                    aoa_azimuth: local.1 as u16,
-                    aoa_azimuth_fom: 100, // Yup, pretty sure about this
-                    aoa_elevation: local.2 as u16,
-                    aoa_elevation_fom: 100, // Yup, pretty sure about this
-                    aoa_destination_azimuth: remote.1 as u16,
-                    aoa_destination_azimuth_fom: 100,
-                    aoa_destination_elevation: remote.2 as u16,
-                    aoa_destination_elevation_fom: 100,
-                    slot_index: 0,
-                    rssi: u8::MAX,
-                })
-            }
-            MacAddress::Extend(_) => unimplemented!(),
-        }
-    }
-
     async fn ranging(&mut self, device_handle: usize, session_id: u32) {
         println!("[{}] Ranging event", device_handle);
         println!("  session_id={}", session_id);
@@ -505,7 +503,7 @@ impl Pica {
                         .compute_range_azimuth_elevation(&device.position);
 
                     assert!(local.0 == remote.0);
-                    self.add_measurement(mac_address, &mut measurements, local, remote);
+                    add_measurement(mac_address, &mut measurements, local, remote);
                 }
                 if let Some(peer_device) =
                     self.get_device_by_mac(*mac_address, session.app_config.clone(), session_id)
@@ -518,7 +516,7 @@ impl Pica {
                         .compute_range_azimuth_elevation(&device.position);
 
                     assert!(local.0 == remote.0);
-                    self.add_measurement(mac_address, &mut measurements, local, remote);
+                    add_measurement(mac_address, &mut measurements, local, remote);
                 }
             });
         if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
