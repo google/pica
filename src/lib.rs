@@ -76,6 +76,7 @@ impl Connection {
             self.socket
                 .read_exact(&mut complete_packet[0..HEADER_SIZE])
                 .await?;
+            println!("read complete_packet: {:?}", complete_packet);
             let header = PacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
 
             // Read the packet payload.
@@ -355,7 +356,7 @@ impl Pica {
         self.devices.values().find(|device| {
             if let Some(session) = device.get_session(session_id) {
                 session.app_config.get_device_mac_address() == mac_address
-                    && local_app_config.can_start_ranging_with_peer(session.app_config.clone())
+                    && local_app_config.can_start_ranging_with_peer(&session.app_config.clone())
                     && session.get_session_state() == SessionState::SessionStateActive
             } else {
                 false
