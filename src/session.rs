@@ -243,7 +243,7 @@ pub struct AppConfig {
     device_type: DeviceType,
     device_role: DeviceRole,
     mac_address_mode: MacAddressMode,
-    device_mac_address: MacAddress,
+    pub device_mac_address: MacAddress,
     number_of_controlees: usize,
     dst_mac_addresses: Vec<MacAddress>,
     ranging_interval: time::Duration,
@@ -587,10 +587,6 @@ impl AppConfig {
             && self
                 .dst_mac_addresses
                 .contains(&peer_config.device_mac_address)
-    }
-
-    pub fn get_device_mac_address(&self) -> MacAddress {
-        self.device_mac_address
     }
 
     fn extend(&mut self, configs: &[AppConfigTlv]) -> Vec<AppConfigStatus> {

@@ -381,7 +381,7 @@ impl Pica {
     ) -> Option<&Device> {
         self.devices.values().find(|device| {
             if let Some(session) = device.get_session(session_id) {
-                session.app_config.get_device_mac_address() == *mac_address
+                session.app_config.device_mac_address == *mac_address
                     && local_app_config.can_start_ranging_with_peer(&session.app_config)
                     && session.session_state() == SessionState::SessionStateActive
             } else {
