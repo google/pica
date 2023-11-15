@@ -379,13 +379,13 @@ impl Pica {
     fn get_device_by_mac(
         &self,
         mac_address: MacAddress,
-        local_app_config: AppConfig,
+        local_app_config: &AppConfig,
         session_id: u32,
     ) -> Option<&Device> {
         self.devices.values().find(|device| {
             if let Some(session) = device.get_session(session_id) {
                 session.app_config.get_device_mac_address() == mac_address
-                    && local_app_config.can_start_ranging_with_peer(&session.app_config.clone())
+                    && local_app_config.can_start_ranging_with_peer(&session.app_config)
                     && session.get_session_state() == SessionState::SessionStateActive
             } else {
                 false
@@ -506,7 +506,7 @@ impl Pica {
                     add_measurement(mac_address, &mut measurements, local, remote);
                 }
                 if let Some(peer_device) =
-                    self.get_device_by_mac(*mac_address, session.app_config.clone(), session_id)
+                    self.get_device_by_mac(*mac_address, &session.app_config, session_id)
                 {
                     let local: (u16, i16, i8) = device
                         .position
