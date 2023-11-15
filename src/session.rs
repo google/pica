@@ -41,7 +41,7 @@ pub enum DeviceType {
     Controller = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceRole {
     /// [MAC] 5.1.3 Device initiating a ranging exchange with a ranging initiation message
     Initiator,
@@ -242,7 +242,7 @@ pub struct AppConfig {
     device_type: DeviceType,
     device_role: DeviceRole,
     mac_address_mode: MacAddressMode,
-    device_mac_address: MacAddress,
+    pub device_mac_address: MacAddress,
     number_of_controlees: usize,
     dst_mac_addresses: Vec<MacAddress>,
     ranging_interval: time::Duration,
@@ -334,6 +334,50 @@ impl Default for AppConfig {
             vendor_id: None,
             static_sts_iv: None,
         }
+    }
+}
+
+impl PartialEq for AppConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.mac_address_mode == other.mac_address_mode
+            && self.ranging_interval == other.ranging_interval
+            && self.slot_duration == other.slot_duration
+            && self.channel_number == other.channel_number
+            && self.multi_node_mode == other.multi_node_mode
+            && self.ranging_round_usage == other.ranging_round_usage
+            && self.sts_config == other.sts_config
+            && self.mac_fcs_type == other.mac_fcs_type
+            && self.ranging_round_control == other.ranging_round_control
+            && self.aoa_result_req == other.aoa_result_req
+            && self.rng_data_ntf == other.rng_data_ntf
+            && self.rng_data_ntf_proximity_near == other.rng_data_ntf_proximity_near
+            && self.rng_data_ntf_proximity_far == other.rng_data_ntf_proximity_far
+            && self.r_frame_config == other.r_frame_config
+            && self.rssi_reporting == other.rssi_reporting
+            && self.preamble_code_index == other.preamble_code_index
+            && self.sfd_id == other.sfd_id
+            && self.psdu_data_rate == other.psdu_data_rate
+            && self.preamble_duration == other.preamble_duration
+            && self.ranging_time_struct == other.ranging_time_struct
+            && self.slots_per_rr == other.slots_per_rr
+            && self.tx_adaptive_payload_power == other.tx_adaptive_payload_power
+            && self.prf_mode == other.prf_mode
+            && self.schedule_mode == other.schedule_mode
+            && self.key_rotation == other.key_rotation
+            && self.key_rotation_rate == other.key_rotation_rate
+            && self.session_priority == other.session_priority
+            && self.number_of_sts_segments == other.number_of_sts_segments
+            && self.max_rr_retry == other.max_rr_retry
+            && self.hopping_mode == other.hopping_mode
+            && self.block_stride_length == other.block_stride_length
+            && self.result_report_config == other.result_report_config
+            && self.in_band_termination_attempt_count == other.in_band_termination_attempt_count
+            && self.bprf_phr_data_rate == other.bprf_phr_data_rate
+            && self.max_number_of_measurements == other.max_number_of_measurements
+            && self.sts_length == other.sts_length
+            && self.uwb_initiation_time == other.uwb_initiation_time
+            && self.vendor_id == other.vendor_id
+            && self.static_sts_iv == other.static_sts_iv
     }
 }
 
@@ -532,6 +576,18 @@ impl AppConfig {
         self.raw.get(&id).cloned()
     }
 
+    pub fn can_start_ranging_with_peer(&self, peer_config: &Self) -> bool {
+        self == peer_config
+            && self.device_role != peer_config.device_role
+            && self.device_type != peer_config.device_type
+            && peer_config
+                .dst_mac_addresses
+                .contains(&self.device_mac_address)
+            && self
+                .dst_mac_addresses
+                .contains(&peer_config.device_mac_address)
+    }
+
     fn extend(&mut self, configs: &[AppConfigTlv]) -> Vec<AppConfigStatus> {
         if !app_config_has_mandatory_parameters(configs) {
             // TODO: What shall we do in this situation?
@@ -561,7 +617,7 @@ pub struct Session {
 
     session_type: SessionType,
     pub sequence_number: u32,
-    app_config: AppConfig,
+    pub app_config: AppConfig,
     ranging_task: Option<JoinHandle<()>>,
     tx: mpsc::Sender<ControlPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
@@ -619,6 +675,10 @@ impl Session {
 
     pub fn is_ranging_data_ntf_enabled(&self) -> RangeDataNtfConfig {
         self.app_config.rng_data_ntf
+    }
+
+    pub fn session_state(&self) -> SessionState {
+        self.state
     }
 
     pub fn init(&mut self) {
