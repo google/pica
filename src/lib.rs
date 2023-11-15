@@ -300,33 +300,30 @@ fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
     }
 }
 
-fn add_measurement(
+fn make_measurement(
     mac_address: &MacAddress,
-    measurements: &mut Vec<ShortAddressTwoWayRangingMeasurement>,
     local: (u16, i16, i8),
     remote: (u16, i16, i8),
-) {
-    // TODO: support extended address
-    match mac_address {
-        MacAddress::Short(address) => {
-            measurements.push(ShortAddressTwoWayRangingMeasurement {
-                mac_address: u16::from_le_bytes(*address),
-                status: UciStatusCode::UciStatusOk,
-                nlos: 0, // in Line Of Sight
-                distance: local.0,
-                aoa_azimuth: local.1 as u16,
-                aoa_azimuth_fom: 100, // Yup, pretty sure about this
-                aoa_elevation: local.2 as u16,
-                aoa_elevation_fom: 100, // Yup, pretty sure about this
-                aoa_destination_azimuth: remote.1 as u16,
-                aoa_destination_azimuth_fom: 100,
-                aoa_destination_elevation: remote.2 as u16,
-                aoa_destination_elevation_fom: 100,
-                slot_index: 0,
-                rssi: u8::MAX,
-            })
+) -> ShortAddressTwoWayRangingMeasurement {
+    if let MacAddress::Short(address) = mac_address {
+        ShortAddressTwoWayRangingMeasurement {
+            mac_address: u16::from_le_bytes(*address),
+            status: UciStatusCode::UciStatusOk,
+            nlos: 0, // in Line Of Sight
+            distance: local.0,
+            aoa_azimuth: local.1 as u16,
+            aoa_azimuth_fom: 100, // Yup, pretty sure about this
+            aoa_elevation: local.2 as u16,
+            aoa_elevation_fom: 100, // Yup, pretty sure about this
+            aoa_destination_azimuth: remote.1 as u16,
+            aoa_destination_azimuth_fom: 100,
+            aoa_destination_elevation: remote.2 as u16,
+            aoa_destination_elevation_fom: 100,
+            slot_index: 0,
+            rssi: u8::MAX,
         }
-        MacAddress::Extend(_) => unimplemented!(),
+    } else {
+        panic!("Extended address is not supported.")
     }
 }
 
@@ -378,15 +375,15 @@ impl Pica {
 
     fn get_device_by_mac(
         &self,
-        mac_address: MacAddress,
+        mac_address: &MacAddress,
         local_app_config: &AppConfig,
         session_id: u32,
     ) -> Option<&Device> {
         self.devices.values().find(|device| {
             if let Some(session) = device.get_session(session_id) {
-                session.app_config.get_device_mac_address() == mac_address
+                session.app_config.get_device_mac_address() == *mac_address
                     && local_app_config.can_start_ranging_with_peer(&session.app_config)
-                    && session.get_session_state() == SessionState::SessionStateActive
+                    && session.session_state() == SessionState::SessionStateActive
             } else {
                 false
             }
@@ -503,10 +500,10 @@ impl Pica {
                         .compute_range_azimuth_elevation(&device.position);
 
                     assert!(local.0 == remote.0);
-                    add_measurement(mac_address, &mut measurements, local, remote);
+                    measurements.push(make_measurement(mac_address, local, remote));
                 }
                 if let Some(peer_device) =
-                    self.get_device_by_mac(*mac_address, &session.app_config, session_id)
+                    self.get_device_by_mac(mac_address, &session.app_config, session_id)
                 {
                     let local: (u16, i16, i8) = device
                         .position
@@ -516,7 +513,7 @@ impl Pica {
                         .compute_range_azimuth_elevation(&device.position);
 
                     assert!(local.0 == remote.0);
-                    add_measurement(mac_address, &mut measurements, local, remote);
+                    measurements.push(make_measurement(mac_address, local, remote));
                 }
             });
         if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {

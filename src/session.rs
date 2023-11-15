@@ -682,7 +682,7 @@ impl Session {
         self.app_config.rng_data_ntf
     }
 
-    pub fn get_session_state(&self) -> SessionState {
+    pub fn session_state(&self) -> SessionState {
         self.state
     }
 
