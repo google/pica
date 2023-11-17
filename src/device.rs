@@ -81,7 +81,7 @@ pub struct Device {
     config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
 
-    n_active_sessions: usize,
+    pub n_active_sessions: usize,
 }
 
 impl Device {
@@ -108,7 +108,7 @@ impl Device {
         }
     }
 
-    fn set_state(&mut self, device_state: DeviceState) {
+    pub fn set_state(&mut self, device_state: DeviceState) {
         // No transition: ignore
         if device_state == self.state {
             return;

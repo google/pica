@@ -33,7 +33,7 @@ pub const DEFAULT_SLOT_DURATION: u16 = 2400; // RTSU unit
 /// cf. [UCI] 8.3 Table 29
 pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
 
-#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq, Debug)]
 pub enum DeviceType {
     /// [MAC] 5.1.2 Device utilizing the ranging features set through Control Messages
     Controlee = 0x00,
@@ -41,7 +41,7 @@ pub enum DeviceType {
     Controller = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq, Debug)]
 pub enum DeviceRole {
     /// [MAC] 5.1.3 Device initiating a ranging exchange with a ranging initiation message
     Initiator,
@@ -50,7 +50,7 @@ pub enum DeviceRole {
 }
 
 /// cf. [UCI] 8.4 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum MacAddressMode {
     /// MAC address is 2 bytes and 2 bytes to be used in MAC header
@@ -62,7 +62,7 @@ pub enum MacAddressMode {
 }
 
 /// cf. [UCI] 8.3 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum ChannelNumber {
     ChannelNumber5 = 0x05,
@@ -78,7 +78,7 @@ pub enum ChannelNumber {
 const DEFAULT_CHANNEL_NUMBER: ChannelNumber = ChannelNumber::ChannelNumber9;
 
 /// cf. [UCI] 8.3 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum MultiNodeMode {
     /// Single device to single device
@@ -88,14 +88,14 @@ enum MultiNodeMode {
 }
 
 /// cf. [UCI] 7.7
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum UpdateMulticastListAction {
     Add = 0x00,
     Delete = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum RangingRoundUsage {
     UlTdoa = 0x00,
@@ -108,7 +108,7 @@ enum RangingRoundUsage {
     DataTransferMode = 0x09,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum StsConfig {
     Static = 0x00,
@@ -118,14 +118,14 @@ enum StsConfig {
     ProvisionedForControleeIndividualKey = 0x04,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum MacFcsType {
     MacFcsTypeCrc16 = 0x00,
     MacFcsTypeCrc32 = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum AoaResultReq {
     NoAoaResult = 0x00,
@@ -135,7 +135,7 @@ enum AoaResultReq {
     ReqAoaResultsInterleaved = 0x04,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum RframeConfig {
     Sp0 = 0x00,
@@ -143,7 +143,7 @@ enum RframeConfig {
     Sp3 = 0x03,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum PsduDataRate {
     Rate6M81 = 0x00,
@@ -152,28 +152,28 @@ enum PsduDataRate {
     Rate31M2 = 0x03,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum PreambleDuration {
     PreambleDurationT32Symbols = 0x00,
     PreambleDurationT64Symbols = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum RangingTimeStruct {
     IntervalBasedScheduling = 0x00,
     BlockBasedScheduling = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum PrfMode {
     PrfModeBprf = 0x00,
     PrfModeHprf = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum SchedulingMode {
     ContentionBased = 0x00,
@@ -181,14 +181,14 @@ enum SchedulingMode {
     HybridScheduled = 0x02,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum HoppingMode {
     Disable = 0x00,
     FiraEnable = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum StsLength {
     StsLength32 = 0x00,
@@ -196,14 +196,14 @@ enum StsLength {
     StsLength128 = 0x02,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum BprfPhrDataRate {
     BprfPhrDataRate850K = 0x00,
     BprfPhrDataRate6M81 = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum SfdIdValue {
     SfdIdValue0 = 0x00,
@@ -213,7 +213,7 @@ enum SfdIdValue {
     SfdIdValue4 = 0x04,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 enum StsSegmentCountValue {
     StsSegmentCountValue0 = 0x00,
@@ -221,7 +221,7 @@ enum StsSegmentCountValue {
     StsSegmentCountValue2 = 0x02,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
 #[repr(u8)]
 pub enum RangeDataNtfConfig {
     Disable = 0x00,
@@ -234,7 +234,7 @@ pub enum RangeDataNtfConfig {
     EnableProximityAoaEdgeTrig = 0x07,
 }
 /// cf. [UCI] 8.3 Table 29
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AppConfig {
     /// Copy of the valid App Configuration parameters provided by host
     raw: HashMap<AppConfigTlvType, Vec<u8>>,
@@ -368,10 +368,7 @@ impl PartialEq for AppConfig {
             && self.session_priority == other.session_priority
             && self.number_of_sts_segments == other.number_of_sts_segments
             && self.max_rr_retry == other.max_rr_retry
-            && self.hopping_mode == other.hopping_mode
-            && self.block_stride_length == other.block_stride_length
             && self.result_report_config == other.result_report_config
-            && self.in_band_termination_attempt_count == other.in_band_termination_attempt_count
             && self.bprf_phr_data_rate == other.bprf_phr_data_rate
             && self.max_number_of_measurements == other.max_number_of_measurements
             && self.sts_length == other.sts_length
@@ -644,7 +641,7 @@ impl Session {
         }
     }
 
-    fn set_state(&mut self, session_state: SessionState) {
+    pub fn set_state(&mut self, session_state: SessionState, reason_code: ReasonCode) {
         // No transition: ignore
         if session_state == self.state {
             return;
@@ -659,7 +656,7 @@ impl Session {
                 SessionStatusNtfBuilder {
                     session_token: session_id,
                     session_state,
-                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands.into(),
+                    reason_code: reason_code.into(),
                 }
                 .build()
                 .into(),
@@ -682,7 +679,10 @@ impl Session {
     }
 
     pub fn init(&mut self) {
-        self.set_state(SessionState::SessionStateInit);
+        self.set_state(
+            SessionState::SessionStateInit,
+            ReasonCode::StateChangeWithSessionManagementCommands,
+        );
     }
 
     fn command_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> SessionSetAppConfigRsp {
@@ -719,7 +719,10 @@ impl Session {
             if invalid_parameters.is_empty() {
                 self.app_config = app_config;
                 if self.state == SessionState::SessionStateInit {
-                    self.set_state(SessionState::SessionStateIdle);
+                    self.set_state(
+                        SessionState::SessionStateIdle,
+                        ReasonCode::StateChangeWithSessionManagementCommands,
+                    );
                 }
                 (StatusCode::UciStatusOk, invalid_parameters)
             } else {
@@ -834,17 +837,30 @@ impl Session {
                 });
             }
             UpdateMulticastListAction::Delete => {
-                new_controlees.iter().for_each(|controlee| {
+                new_controlees.iter().for_each(|controlee: &Controlee| {
+                    let pica_tx = self.pica_tx.clone();
+                    let app_config = self.app_config.clone();
+                    let address = controlee.short_address;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
+                    if !dst_addresses.contains(&MacAddress::Short(address)) {
                         status = StatusCode::UciStatusAddressNotFound;
                         update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
                     } else {
-                        dst_addresses
-                            .retain(|value| *value != MacAddress::Short(controlee.short_address));
+                        dst_addresses.retain(|value| *value != MacAddress::Short(address));
+
+                        tokio::spawn(async move {
+                            pica_tx
+                                .send(PicaCommand::StopRanging(
+                                    MacAddress::Short(address),
+                                    session_id,
+                                    app_config,
+                                ))
+                                .await
+                                .unwrap()
+                        });
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: controlee.short_address,
+                        mac_address: address,
                         subsession_id: controlee.subsession_id,
                         status: update_status,
                     });
@@ -892,13 +908,16 @@ impl Session {
                         .unwrap();
                 }
             }));
-            self.set_state(SessionState::SessionStateActive);
+            self.set_state(
+                SessionState::SessionStateActive,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            );
             StatusCode::UciStatusOk
         };
         SessionStartRspBuilder { status }.build()
     }
 
-    fn stop_ranging_task(&mut self) {
+    pub fn stop_ranging_task(&mut self) {
         if let Some(handle) = &self.ranging_task {
             handle.abort();
             self.ranging_task = None;
@@ -912,7 +931,10 @@ impl Session {
             StatusCode::UciStatusSessionActive
         } else {
             self.stop_ranging_task();
-            self.set_state(SessionState::SessionStateIdle);
+            self.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            );
             StatusCode::UciStatusOk
         };
         SessionStopRspBuilder { status }.build()
@@ -973,6 +995,9 @@ impl Drop for Session {
         // the default behaviour when dropping a task handle is to detach
         // the task, which is undesirable.
         self.stop_ranging_task();
-        self.set_state(SessionState::SessionStateDeinit);
+        self.set_state(
+            SessionState::SessionStateDeinit,
+            ReasonCode::StateChangeWithSessionManagementCommands,
+        );
     }
 }
