@@ -26,7 +26,9 @@ import requests
 import struct
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import uci_packets
+
+from pica import Host
+from pica.packets import uci
 
 def encode_position(x: int, y: int, z: int, yaw: int, pitch: int, roll: int) -> bytes:
     return (struct.pack('<h', x)
@@ -77,8 +79,7 @@ class TLV:
 
 class Device:
     def __init__(self, reader, writer, http_address):
-        self.reader = reader
-        self.writer = writer
+        self.host = Host(reader, writer, bytes([0, 1]))
         self.http_address = http_address
 
     def pica_get_state(
@@ -155,7 +156,7 @@ class Device:
         """Sends a UCI command without fragmentation"""
         command = bytes([0x20 | group_id, opcode_id,
                         0, len(payload)]) + payload
-        self.writer.write(command)
+        self.host.writer.write(command)
 
     def raw(self,
             group_id: str = "0",
@@ -217,13 +218,13 @@ class Device:
             encoded_dst_mac_addresses += b'\0' * (mac_address_len - len(mac_address))
 
         configs = TLV()
-        configs.append(uci_packets.AppConfigTlvType.MAC_ADDRESS_MODE,
+        configs.append(uci.AppConfigTlvType.MAC_ADDRESS_MODE,
                        bytes([mac_address_mode]))
-        configs.append(uci_packets.AppConfigTlvType.RANGING_DURATION,
+        configs.append(uci.AppConfigTlvType.RANGING_DURATION,
                        int(ranging_interval).to_bytes(4, byteorder='little'))
-        configs.append(uci_packets.AppConfigTlvType.NO_OF_CONTROLEE,
+        configs.append(uci.AppConfigTlvType.NO_OF_CONTROLEE,
                        bytes([len(dst_mac_addresses)]))
-        configs.append(uci_packets.AppConfigTlvType.DST_MAC_ADDRESS,
+        configs.append(uci.AppConfigTlvType.DST_MAC_ADDRESS,
                        encoded_dst_mac_addresses)
 
         self._send_command(1, 3,
@@ -280,50 +281,13 @@ class Device:
         """Get the number of times ranging has been attempted during the ranging session.."""
         self._send_command(2, 3, encode_session_id(session_id))
 
-    async def _read_exact(self, expected_len: int) -> bytes:
-        """ Read an exact number of bytes from the socket.
-        Raises an exception if the socket gets disconnected."""
-        received = bytes()
-        while len(received) < expected_len:
-            chunk = await self.reader.read(expected_len - len(received))
-            received += chunk
-        return received
-
-    async def _read_packet(self) -> bytes:
-        """ Read a single UCI packet from the socket.
-        The packet is automatically re-assembled if segmented on
-        the UCI transport."""
-
-        complete_packet_bytes = bytes()
-
-        # Note on reassembly:
-        # For each segment of a Control Message, the
-        # header of the Control Packet SHALL contain the same MT, GID and OID
-        # values. It is correct to keep only the last header of the
-        # segmented packet.
-        while True:
-            # Read the common packet header.
-            header_bytes = await self._read_exact(4)
-            header = uci_packets.PacketHeader.parse_all(header_bytes)
-
-            # Read the packet payload.
-            payload_bytes = await self._read_exact(header.payload_length)
-            complete_packet_bytes += payload_bytes
-
-            # Check the Packet Boundary Flag.
-            match header.pbf:
-                case uci_packets.PacketBoundaryFlag.COMPLETE:
-                    return header_bytes + complete_packet_bytes
-                case uci_packets.PacketBoundaryFlag.NOT_COMPLETE:
-                    pass
-
     async def read_responses_and_notifications(self):
         def chunks(l, n):
             for i in range(0, len(l), n):
                 yield l[i:i + n]
 
         while True:
-            packet = await self._read_packet()
+            packet = await self.host._recv_control()
 
             # Format and print raw response data
             txt = '\n  '.join([
@@ -336,7 +300,7 @@ class Device:
             print(f'  {txt}')
 
             try:
-                uci_packet = uci_packets.ControlPacket.parse_all(packet)
+                uci_packet = uci.ControlPacket.parse_all(packet)
                 uci_packet.show()
             except Exception as exn:
                 pass

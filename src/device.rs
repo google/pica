@@ -19,8 +19,10 @@ use crate::PicaCommand;
 
 use std::collections::HashMap;
 use std::iter::Extend;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::time;
 
 use super::session::{Session, MAX_SESSION};
 
@@ -118,6 +120,7 @@ impl Device {
         self.state = device_state;
         let tx = self.tx.clone();
         tokio::spawn(async move {
+            time::sleep(Duration::from_millis(5)).await;
             tx.send(DeviceStatusNtfBuilder { device_state }.build().into())
                 .await
                 .unwrap()

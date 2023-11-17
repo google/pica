@@ -655,6 +655,7 @@ impl Session {
         let tx = self.tx.clone();
         let session_id = self.id;
         tokio::spawn(async move {
+            time::sleep(Duration::from_millis(1)).await;
             tx.send(
                 SessionStatusNtfBuilder {
                     session_token: session_id,
