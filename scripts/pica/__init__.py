@@ -75,7 +75,7 @@ class Host:
     async def _recv_control(self) -> bytes:
         return await self.control_queue.get()
 
-    async def send_control(self, packet: uci.ControlPacket):
+    def send_control(self, packet: uci.ControlPacket):
         # TODO packet fragmentation.
         packet = bytearray(packet.serialize())
         packet[3] = len(packet) - 4

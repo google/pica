@@ -23,13 +23,13 @@ async def controller(host: Host, peer: Host):
     await host.expect_control(
         uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
 
-    await host.send_control(
+    host.send_control(
         uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
 
     await host.expect_control(
         uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
 
-    await host.send_control(
+    host.send_control(
         uci.SessionInitCmd(
             session_id=0,
             session_type=uci.SessionType.FIRA_RANGING_SESSION))
@@ -48,7 +48,7 @@ async def controller(host: Host, peer: Host):
     ranging_duration = int(1000).to_bytes(4, byteorder='little')
     device_role_initiator = bytes([0])
     device_type_controller = bytes([1])
-    await host.send_control(
+    host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=0,
             tlvs=[
@@ -86,7 +86,7 @@ async def controller(host: Host, peer: Host):
             session_state=uci.SessionState.SESSION_STATE_IDLE,
             reason_code=0))
 
-    await host.send_control(
+    host.send_control(
         uci.SessionStartCmd(
             session_id=0))
 
@@ -110,7 +110,7 @@ async def controller(host: Host, peer: Host):
             timeout=2.0)
         event.show()
 
-    await host.send_control(
+    host.send_control(
         uci.SessionStopCmd(
             session_id=0))
 
@@ -128,18 +128,26 @@ async def controller(host: Host, peer: Host):
         uci.DeviceStatusNtf(
             device_state=uci.DeviceState.DEVICE_STATE_READY))
 
+    host.send_control(
+        uci.SessionDeinitCmd(
+            session_token=0))
+
+    await host.expect_control(
+        uci.SessionDeinitRsp(
+            status=uci.StatusCode.UCI_STATUS_OK))
+
 
 async def controlee(host: Host, peer: Host):
     await host.expect_control(
         uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
 
-    await host.send_control(
+    host.send_control(
         uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
 
     await host.expect_control(
         uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
 
-    await host.send_control(
+    host.send_control(
         uci.SessionInitCmd(
             session_id=0,
             session_type=uci.SessionType.FIRA_RANGING_SESSION))
@@ -158,7 +166,7 @@ async def controlee(host: Host, peer: Host):
     ranging_duration = int(1000).to_bytes(4, byteorder='little')
     device_role_responder = bytes([1])
     device_type_controlee = bytes([0])
-    await host.send_control(
+    host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=0,
             tlvs=[
@@ -196,7 +204,7 @@ async def controlee(host: Host, peer: Host):
             session_state=uci.SessionState.SESSION_STATE_IDLE,
             reason_code=0))
 
-    await host.send_control(
+    host.send_control(
         uci.SessionStartCmd(
             session_id=0))
 
@@ -220,7 +228,7 @@ async def controlee(host: Host, peer: Host):
             timeout=2.0)
         event.show()
 
-    await host.send_control(
+    host.send_control(
         uci.SessionStopCmd(
             session_id=0))
 
@@ -237,6 +245,14 @@ async def controlee(host: Host, peer: Host):
     await host.expect_control(
         uci.DeviceStatusNtf(
             device_state=uci.DeviceState.DEVICE_STATE_READY))
+
+    host.send_control(
+        uci.SessionDeinitCmd(
+            session_token=0))
+
+    await host.expect_control(
+        uci.SessionDeinitRsp(
+            status=uci.StatusCode.UCI_STATUS_OK))
 
 
 async def run(address: str, uci_port: int, http_port: int):
