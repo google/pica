@@ -33,7 +33,7 @@ pub const DEFAULT_SLOT_DURATION: u16 = 2400; // RTSU unit
 /// cf. [UCI] 8.3 Table 29
 pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
 
-#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceType {
     /// [MAC] 5.1.2 Device utilizing the ranging features set through Control Messages
     Controlee = 0x00,
@@ -41,7 +41,7 @@ pub enum DeviceType {
     Controller = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceRole {
     /// [MAC] 5.1.3 Device initiating a ranging exchange with a ranging initiation message
     Initiator,
@@ -50,7 +50,7 @@ pub enum DeviceRole {
 }
 
 /// cf. [UCI] 8.4 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MacAddressMode {
     /// MAC address is 2 bytes and 2 bytes to be used in MAC header
@@ -62,7 +62,7 @@ pub enum MacAddressMode {
 }
 
 /// cf. [UCI] 8.3 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ChannelNumber {
     ChannelNumber5 = 0x05,
@@ -78,7 +78,7 @@ pub enum ChannelNumber {
 const DEFAULT_CHANNEL_NUMBER: ChannelNumber = ChannelNumber::ChannelNumber9;
 
 /// cf. [UCI] 8.3 Table 29
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum MultiNodeMode {
     /// Single device to single device
@@ -88,14 +88,14 @@ enum MultiNodeMode {
 }
 
 /// cf. [UCI] 7.7
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum UpdateMulticastListAction {
     Add = 0x00,
     Delete = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum RangingRoundUsage {
     UlTdoa = 0x00,
@@ -108,7 +108,7 @@ enum RangingRoundUsage {
     DataTransferMode = 0x09,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum StsConfig {
     Static = 0x00,
@@ -118,14 +118,14 @@ enum StsConfig {
     ProvisionedForControleeIndividualKey = 0x04,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum MacFcsType {
     MacFcsTypeCrc16 = 0x00,
     MacFcsTypeCrc32 = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum AoaResultReq {
     NoAoaResult = 0x00,
@@ -135,7 +135,7 @@ enum AoaResultReq {
     ReqAoaResultsInterleaved = 0x04,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum RframeConfig {
     Sp0 = 0x00,
@@ -143,7 +143,7 @@ enum RframeConfig {
     Sp3 = 0x03,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum PsduDataRate {
     Rate6M81 = 0x00,
@@ -152,28 +152,28 @@ enum PsduDataRate {
     Rate31M2 = 0x03,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum PreambleDuration {
     PreambleDurationT32Symbols = 0x00,
     PreambleDurationT64Symbols = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum RangingTimeStruct {
     IntervalBasedScheduling = 0x00,
     BlockBasedScheduling = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum PrfMode {
     PrfModeBprf = 0x00,
     PrfModeHprf = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum SchedulingMode {
     ContentionBased = 0x00,
@@ -181,14 +181,14 @@ enum SchedulingMode {
     HybridScheduled = 0x02,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum HoppingMode {
     Disable = 0x00,
     FiraEnable = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum StsLength {
     StsLength32 = 0x00,
@@ -196,14 +196,14 @@ enum StsLength {
     StsLength128 = 0x02,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum BprfPhrDataRate {
     BprfPhrDataRate850K = 0x00,
     BprfPhrDataRate6M81 = 0x01,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum SfdIdValue {
     SfdIdValue0 = 0x00,
@@ -213,7 +213,7 @@ enum SfdIdValue {
     SfdIdValue4 = 0x04,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 enum StsSegmentCountValue {
     StsSegmentCountValue0 = 0x00,
@@ -221,7 +221,7 @@ enum StsSegmentCountValue {
     StsSegmentCountValue2 = 0x02,
 }
 
-#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq, Debug)]
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
 #[repr(u8)]
 pub enum RangeDataNtfConfig {
     Disable = 0x00,
@@ -234,7 +234,7 @@ pub enum RangeDataNtfConfig {
     EnableProximityAoaEdgeTrig = 0x07,
 }
 /// cf. [UCI] 8.3 Table 29
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppConfig {
     /// Copy of the valid App Configuration parameters provided by host
     raw: HashMap<AppConfigTlvType, Vec<u8>>,
@@ -839,25 +839,31 @@ impl Session {
             UpdateMulticastListAction::Delete => {
                 new_controlees.iter().for_each(|controlee: &Controlee| {
                     let pica_tx = self.pica_tx.clone();
-                    let app_config = self.app_config.clone();
                     let address = controlee.short_address;
+                    let attempt_count = self.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                     if !dst_addresses.contains(&MacAddress::Short(address)) {
                         status = StatusCode::UciStatusAddressNotFound;
                         update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
                     } else {
                         dst_addresses.retain(|value| *value != MacAddress::Short(address));
-
-                        tokio::spawn(async move {
-                            pica_tx
-                                .send(PicaCommand::StopRanging(
-                                    MacAddress::Short(address),
-                                    session_id,
-                                    app_config,
-                                ))
-                                .await
-                                .unwrap()
-                        });
+                        // If IN_BAND_TERMINATION_ATTEMPT_COUNT is not equal to 0x00, then the
+                        // UWBS shall transmit the RCM with the “Stop Ranging” bit set to ‘1’
+                        // for IN_BAND_TERMINATION_ATTEMPT_COUNT times to the corresponding
+                        // Controlee.
+                        if attempt_count != 0 {
+                            tokio::spawn(async move {
+                                for _ in 0..attempt_count {
+                                    pica_tx
+                                        .send(PicaCommand::StopRanging(
+                                            MacAddress::Short(address),
+                                            session_id,
+                                        ))
+                                        .await
+                                        .unwrap()
+                                }
+                            });
+                        }
                     }
                     controlee_status.push(ControleeStatus {
                         mac_address: address,
@@ -869,6 +875,15 @@ impl Session {
         }
         self.app_config.number_of_controlees = dst_addresses.len();
         self.app_config.dst_mac_addresses = dst_addresses.clone();
+        // If the multicast list becomes empty, the UWBS shall move the session to
+        // SESSION_STATE_IDLE by sending the SESSION_STATUS_NTF with Reason Code
+        // set to ERROR_INVALID_NUM_OF_CONTROLEES.
+        if self.app_config.dst_mac_addresses.is_empty() {
+            self.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::ErrorInvalidNumOfControlees,
+            )
+        }
         let tx = self.tx.clone();
         tokio::spawn(async move {
             tx.send(
