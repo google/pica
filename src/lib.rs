@@ -614,21 +614,18 @@ impl Pica {
     // Handle the in-band StopRanging command sent from controller to the controlee with
     // corresponding mac_address and session_id.
     async fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
-        match self.get_device_mut_by_mac_and_session_id(mac_address, session_id) {
-            Some(device) => {
-                // If such device with target session is found, stop the ranging session.
-                let session = device.get_session_mut(session_id).unwrap();
-                session.stop_ranging_task();
-                session.set_state(
-                    SessionState::SessionStateIdle,
-                    ReasonCode::SessionStoppedDueToInbandSignal,
-                );
-                device.n_active_sessions -= 1;
-                if device.n_active_sessions == 0 {
-                    device.set_state(DeviceState::DeviceStateReady);
-                }
+        if let Some(device) = self.get_device_mut_by_mac_and_session_id(mac_address, session_id) {
+            // If such device with target session is found, stop the ranging session.
+            let session = device.get_session_mut(session_id).unwrap();
+            session.stop_ranging_task();
+            session.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::SessionStoppedDueToInbandSignal,
+            );
+            device.n_active_sessions -= 1;
+            if device.n_active_sessions == 0 {
+                device.set_state(DeviceState::DeviceStateReady);
             }
-            None => {}
         }
     }
 
