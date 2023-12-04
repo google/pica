@@ -368,10 +368,7 @@ impl PartialEq for AppConfig {
             && self.session_priority == other.session_priority
             && self.number_of_sts_segments == other.number_of_sts_segments
             && self.max_rr_retry == other.max_rr_retry
-            && self.hopping_mode == other.hopping_mode
-            && self.block_stride_length == other.block_stride_length
             && self.result_report_config == other.result_report_config
-            && self.in_band_termination_attempt_count == other.in_band_termination_attempt_count
             && self.bprf_phr_data_rate == other.bprf_phr_data_rate
             && self.max_number_of_measurements == other.max_number_of_measurements
             && self.sts_length == other.sts_length
@@ -644,7 +641,7 @@ impl Session {
         }
     }
 
-    fn set_state(&mut self, session_state: SessionState) {
+    pub fn set_state(&mut self, session_state: SessionState, reason_code: ReasonCode) {
         // No transition: ignore
         if session_state == self.state {
             return;
@@ -660,7 +657,7 @@ impl Session {
                 SessionStatusNtfBuilder {
                     session_token: session_id,
                     session_state,
-                    reason_code: ReasonCode::StateChangeWithSessionManagementCommands.into(),
+                    reason_code: reason_code.into(),
                 }
                 .build()
                 .into(),
@@ -683,7 +680,10 @@ impl Session {
     }
 
     pub fn init(&mut self) {
-        self.set_state(SessionState::SessionStateInit);
+        self.set_state(
+            SessionState::SessionStateInit,
+            ReasonCode::StateChangeWithSessionManagementCommands,
+        );
     }
 
     fn command_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> SessionSetAppConfigRsp {
@@ -720,7 +720,10 @@ impl Session {
             if invalid_parameters.is_empty() {
                 self.app_config = app_config;
                 if self.state == SessionState::SessionStateInit {
-                    self.set_state(SessionState::SessionStateIdle);
+                    self.set_state(
+                        SessionState::SessionStateIdle,
+                        ReasonCode::StateChangeWithSessionManagementCommands,
+                    );
                 }
                 (StatusCode::UciStatusOk, invalid_parameters)
             } else {
@@ -835,17 +838,36 @@ impl Session {
                 });
             }
             UpdateMulticastListAction::Delete => {
-                new_controlees.iter().for_each(|controlee| {
+                new_controlees.iter().for_each(|controlee: &Controlee| {
+                    let pica_tx = self.pica_tx.clone();
+                    let address = controlee.short_address;
+                    let attempt_count = self.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
+                    if !dst_addresses.contains(&MacAddress::Short(address)) {
                         status = StatusCode::UciStatusAddressNotFound;
                         update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
                     } else {
-                        dst_addresses
-                            .retain(|value| *value != MacAddress::Short(controlee.short_address));
+                        dst_addresses.retain(|value| *value != MacAddress::Short(address));
+                        // If IN_BAND_TERMINATION_ATTEMPT_COUNT is not equal to 0x00, then the
+                        // UWBS shall transmit the RCM with the “Stop Ranging” bit set to ‘1’
+                        // for IN_BAND_TERMINATION_ATTEMPT_COUNT times to the corresponding
+                        // Controlee.
+                        if attempt_count != 0 {
+                            tokio::spawn(async move {
+                                for _ in 0..attempt_count {
+                                    pica_tx
+                                        .send(PicaCommand::StopRanging(
+                                            MacAddress::Short(address),
+                                            session_id,
+                                        ))
+                                        .await
+                                        .unwrap()
+                                }
+                            });
+                        }
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: controlee.short_address,
+                        mac_address: address,
                         subsession_id: controlee.subsession_id,
                         status: update_status,
                     });
@@ -854,6 +876,15 @@ impl Session {
         }
         self.app_config.number_of_controlees = dst_addresses.len();
         self.app_config.dst_mac_addresses = dst_addresses.clone();
+        // If the multicast list becomes empty, the UWBS shall move the session to
+        // SESSION_STATE_IDLE by sending the SESSION_STATUS_NTF with Reason Code
+        // set to ERROR_INVALID_NUM_OF_CONTROLEES.
+        if self.app_config.dst_mac_addresses.is_empty() {
+            self.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::ErrorInvalidNumOfControlees,
+            )
+        }
         let tx = self.tx.clone();
         tokio::spawn(async move {
             tx.send(
@@ -893,13 +924,16 @@ impl Session {
                         .unwrap();
                 }
             }));
-            self.set_state(SessionState::SessionStateActive);
+            self.set_state(
+                SessionState::SessionStateActive,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            );
             StatusCode::UciStatusOk
         };
         SessionStartRspBuilder { status }.build()
     }
 
-    fn stop_ranging_task(&mut self) {
+    pub fn stop_ranging_task(&mut self) {
         if let Some(handle) = &self.ranging_task {
             handle.abort();
             self.ranging_task = None;
@@ -913,7 +947,10 @@ impl Session {
             StatusCode::UciStatusSessionActive
         } else {
             self.stop_ranging_task();
-            self.set_state(SessionState::SessionStateIdle);
+            self.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            );
             StatusCode::UciStatusOk
         };
         SessionStopRspBuilder { status }.build()
@@ -974,6 +1011,9 @@ impl Drop for Session {
         // the default behaviour when dropping a task handle is to detach
         // the task, which is undesirable.
         self.stop_ranging_task();
-        self.set_state(SessionState::SessionStateDeinit);
+        self.set_state(
+            SessionState::SessionStateDeinit,
+            ReasonCode::StateChangeWithSessionManagementCommands,
+        );
     }
 }

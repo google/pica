@@ -160,6 +160,8 @@ pub enum PicaCommand {
     Disconnect(usize),
     // Execute ranging command for selected device and session.
     Ranging(usize, u32),
+    // Send an in-band request to stop ranging to a peer controlee identified by address and session id.
+    StopRanging(MacAddress, u32),
     // Execute UCI command received for selected device.
     Command(usize, UciCommand),
     // Init Uci Device
@@ -180,6 +182,7 @@ impl Display for PicaCommand {
             PicaCommand::Connect(_) => "Connect",
             PicaCommand::Disconnect(_) => "Disconnect",
             PicaCommand::Ranging(_, _) => "Ranging",
+            PicaCommand::StopRanging(_, _) => "StopRanging",
             PicaCommand::Command(_, _) => "Command",
             PicaCommand::InitUciDevice(_, _, _) => "InitUciDevice",
             PicaCommand::SetPosition(_, _, _) => "SetPosition",
@@ -391,6 +394,21 @@ impl Pica {
         })
     }
 
+    fn get_device_mut_by_mac_and_session_id(
+        &mut self,
+        mac_address: &MacAddress,
+        session_id: u32,
+    ) -> Option<&mut Device> {
+        self.devices.values_mut().find(|device| {
+            if let Some(session) = device.get_session(session_id) {
+                session.app_config.device_mac_address == *mac_address
+                    && session.session_state() == SessionState::SessionStateActive
+            } else {
+                false
+            }
+        })
+    }
+
     fn send_event(&self, event: PicaEvent) {
         // An error here means that we have
         // no receivers, so ignore it
@@ -571,6 +589,9 @@ impl Pica {
                 Some(Ranging(device_handle, session_id)) => {
                     self.ranging(device_handle, session_id).await;
                 }
+                Some(StopRanging(mac_address, session_id)) => {
+                    self.stop_controlee_ranging(&mac_address, session_id).await;
+                }
                 Some(Command(device_handle, cmd)) => self.command(device_handle, cmd).await,
                 Some(SetPosition(mac_address, position, pica_cmd_rsp_tx)) => {
                     self.set_position(mac_address, position, pica_cmd_rsp_tx)
@@ -587,6 +608,24 @@ impl Pica {
                 }
                 None => (),
             };
+        }
+    }
+
+    // Handle the in-band StopRanging command sent from controller to the controlee with
+    // corresponding mac_address and session_id.
+    async fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
+        if let Some(device) = self.get_device_mut_by_mac_and_session_id(mac_address, session_id) {
+            // If such device with target session is found, stop the ranging session.
+            let session = device.get_session_mut(session_id).unwrap();
+            session.stop_ranging_task();
+            session.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::SessionStoppedDueToInbandSignal,
+            );
+            device.n_active_sessions -= 1;
+            if device.n_active_sessions == 0 {
+                device.set_state(DeviceState::DeviceStateReady);
+            }
         }
     }
 
