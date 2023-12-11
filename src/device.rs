@@ -149,10 +149,8 @@ impl Device {
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
         };
-        let country_code = self.country_code;
         *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
         self.init();
-        self.country_code = country_code;
 
         DeviceResetRspBuilder { status }.build()
     }
