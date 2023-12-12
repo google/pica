@@ -149,8 +149,8 @@ impl Device {
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
         };
-
         *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
+        self.init();
 
         DeviceResetRspBuilder { status }.build()
     }
@@ -298,12 +298,19 @@ impl Device {
         println!("[{}] Session deinit", self.handle);
         println!("  session_id=0x{:x}", session_id);
 
-        let status = if self.sessions.remove(&session_id).is_some() {
-            StatusCode::UciStatusOk
-        } else {
-            StatusCode::UciStatusSessionNotExist
+        let status = match self.sessions.get_mut(&session_id) {
+            Some(session) => {
+                if session.state == SessionState::SessionStateActive {
+                    self.n_active_sessions -= 1;
+                    if self.n_active_sessions == 0 {
+                        self.set_state(DeviceState::DeviceStateReady);
+                    }
+                }
+                self.sessions.remove(&session_id);
+                StatusCode::UciStatusOk
+            }
+            None => StatusCode::UciStatusSessionNotExist,
         };
-
         SessionDeinitRspBuilder { status }.build()
     }
 
