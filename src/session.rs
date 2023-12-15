@@ -693,7 +693,12 @@ impl Session {
             self.device_handle, self.id
         );
         assert_eq!(self.id, cmd.get_session_token());
-        assert_eq!(self.session_type, SessionType::FiraRangingSession);
+        assert!(
+            self.session_type.eq(&SessionType::FiraRangingSession)
+                || self
+                    .session_type
+                    .eq(&SessionType::FiraRangingAndInBandDataSession)
+        );
 
         if self.state == SessionState::SessionStateActive {
             const IMMUTABLE_PARAMETERS: &[AppConfigTlvType] = &[AppConfigTlvType::AoaResultReq];
@@ -1002,6 +1007,37 @@ impl Session {
             }
             _ => panic!("Unsupported ranging command"),
         }
+    }
+
+    pub fn data_message_snd(&mut self, data: DataMessageSnd) -> SessionControlNotification {
+        let session_token = data.get_session_handle();
+        let uci_sequence_number = data.get_data_sequence_number() as u8;
+
+        if self.session_type != SessionType::FiraRangingAndInBandDataSession {
+            return DataTransferStatusNtfBuilder {
+                session_token,
+                status: DataTransferNtfStatusCode::UciDataTransferStatusSessionTypeNotSupported,
+                tx_count: 1, // TODO: support for retries?
+                uci_sequence_number,
+            }
+            .build()
+            .into();
+        }
+
+        assert_eq!(self.id, session_token);
+
+        // TODO: perform actual data transfer across devices
+        println!(
+            "Data packet received, payload bytes: {:?}",
+            data.get_application_data()
+        );
+
+        DataCreditNtfBuilder {
+            credit_availability: CreditAvailability::CreditAvailable,
+            session_token,
+        }
+        .build()
+        .into()
     }
 }
 

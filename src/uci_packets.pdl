@@ -187,6 +187,7 @@ enum DataTransferNtfStatusCode : 8 {
     UCI_DATA_TRANSFER_STATUS_ERROR_REJECTED = 0x04,
     UCI_DATA_TRANSFER_STATUS_SESSION_TYPE_NOT_SUPPORTED = 0x05,
     UCI_DATA_TRANSFER_STATUS_ERROR_DATA_TRANSFER_IS_ONGOING = 0x06,
+    UCI_DATA_TRANSFER_STATUS_INVALID_FORMAT = 0x07,
 }
 
 enum ResetConfig : 8 {
@@ -462,15 +463,29 @@ enum MessageType: 3 {
     RESERVED_FOR_TESTING_2 = 0x05,
 }
 
-// Generic format for UCI packet headers.
-// No data packets are defined, the header fields are taken from the
-// Control packets.
+// Used to parse message type
 packet PacketHeader {
+  _reserved_ : 4,
+  pbf : PacketBoundaryFlag,
+  mt : MessageType,
+}
+
+// Used to parse control packet length
+packet ControlPacketHeader {
   _reserved_ : 4,
   pbf : PacketBoundaryFlag,
   mt : MessageType,
   _reserved_ : 16,
   payload_length : 8,
+}
+
+// Used to parse data packet length
+packet DataPacketHeader {
+  _reserved_ : 4,
+  pbf : PacketBoundaryFlag,
+  mt : MessageType,
+  _reserved_ : 8,
+  payload_length : 16,
 }
 
 // Unframed UCI control packet. The framing information is masked
@@ -484,6 +499,32 @@ packet ControlPacket {
     _reserved_: 2,
     _reserved_: 16,
     _payload_,
+}
+
+packet DataPacket {
+  dpf : DataPacketFormat,
+  pbf : PacketBoundaryFlag,
+  mt: MessageType,
+  _reserved_ : 8,
+  _reserved_ : 16,
+  _payload_,
+}
+
+packet DataMessageSnd : DataPacket (dpf = DATA_SND, mt = DATA) {
+    session_handle: 32,
+    destination_address: 64,
+    data_sequence_number: 16,
+    _size_(application_data): 16,
+    application_data: 8[]
+}
+
+packet DataMessageRcv : DataPacket (dpf = DATA_RCV, mt = DATA) {
+    session_handle: 32,
+    status : StatusCode, 
+    source_address: 64,
+    data_sequence_number: 16,
+    _size_(application_data): 16,
+    application_data: 8[]
 }
 
 // TODO(b/202760099): Handle fragmentation of packets if the size exceed max allowed.

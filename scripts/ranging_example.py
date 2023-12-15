@@ -29,6 +29,9 @@ async def controller(host: Host, peer: Host):
     await host.expect_control(
         uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
 
+    await host.expect_control(
+        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
+
     host.send_control(
         uci.SessionInitCmd(
             session_id=0,
@@ -146,6 +149,9 @@ async def controlee(host: Host, peer: Host):
 
     await host.expect_control(
         uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    
+    await host.expect_control(
+        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
 
     host.send_control(
         uci.SessionInitCmd(

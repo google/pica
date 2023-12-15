@@ -226,6 +226,7 @@ class DataTransferNtfStatusCode(enum.IntEnum):
     UCI_DATA_TRANSFER_STATUS_ERROR_REJECTED = 0x4
     UCI_DATA_TRANSFER_STATUS_SESSION_TYPE_NOT_SUPPORTED = 0x5
     UCI_DATA_TRANSFER_STATUS_ERROR_DATA_TRANSFER_IS_ONGOING = 0x6
+    UCI_DATA_TRANSFER_STATUS_INVALID_FORMAT = 0x7
 
 class ResetConfig(enum.IntEnum):
     UWBS_RESET = 0x0
@@ -451,13 +452,44 @@ class MessageType(enum.IntEnum):
 class PacketHeader(Packet):
     pbf: PacketBoundaryFlag = field(kw_only=True, default=PacketBoundaryFlag.COMPLETE)
     mt: MessageType = field(kw_only=True, default=MessageType.DATA)
-    payload_length: int = field(kw_only=True, default=0)
 
     def __post_init__(self):
         pass
 
     @staticmethod
     def parse(span: bytes) -> Tuple['PacketHeader', bytes]:
+        fields = {'payload': None}
+        if len(span) < 1:
+            raise Exception('Invalid packet size')
+        fields['pbf'] = PacketBoundaryFlag((span[0] >> 4) & 0x1)
+        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        span = span[1:]
+        return PacketHeader(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        _value = (
+            (self.pbf << 4) |
+            (self.mt << 5)
+        )
+        _span.append(_value)
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return 1
+
+@dataclass
+class ControlPacketHeader(Packet):
+    pbf: PacketBoundaryFlag = field(kw_only=True, default=PacketBoundaryFlag.COMPLETE)
+    mt: MessageType = field(kw_only=True, default=MessageType.DATA)
+    payload_length: int = field(kw_only=True, default=0)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['ControlPacketHeader', bytes]:
         fields = {'payload': None}
         if len(span) < 4:
             raise Exception('Invalid packet size')
@@ -466,7 +498,7 @@ class PacketHeader(Packet):
         value_ = int.from_bytes(span[1:3], byteorder='little')
         fields['payload_length'] = span[3]
         span = span[4:]
-        return PacketHeader(**fields), span
+        return ControlPacketHeader(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
         _span = bytearray()
@@ -477,9 +509,48 @@ class PacketHeader(Packet):
         _span.append(_value)
         _span.extend([0] * 2)
         if self.payload_length > 255:
-            print(f"Invalid value for field PacketHeader::payload_length: {self.payload_length} > 255; the value will be truncated")
+            print(f"Invalid value for field ControlPacketHeader::payload_length: {self.payload_length} > 255; the value will be truncated")
             self.payload_length &= 255
         _span.append((self.payload_length << 0))
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return 4
+
+@dataclass
+class DataPacketHeader(Packet):
+    pbf: PacketBoundaryFlag = field(kw_only=True, default=PacketBoundaryFlag.COMPLETE)
+    mt: MessageType = field(kw_only=True, default=MessageType.DATA)
+    payload_length: int = field(kw_only=True, default=0)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['DataPacketHeader', bytes]:
+        fields = {'payload': None}
+        if len(span) < 4:
+            raise Exception('Invalid packet size')
+        fields['pbf'] = PacketBoundaryFlag((span[0] >> 4) & 0x1)
+        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        value_ = int.from_bytes(span[2:4], byteorder='little')
+        fields['payload_length'] = value_
+        span = span[4:]
+        return DataPacketHeader(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        _value = (
+            (self.pbf << 4) |
+            (self.mt << 5)
+        )
+        _span.append(_value)
+        _span.extend([0] * 1)
+        if self.payload_length > 65535:
+            print(f"Invalid value for field DataPacketHeader::payload_length: {self.payload_length} > 65535; the value will be truncated")
+            self.payload_length &= 65535
+        _span.extend(int.to_bytes((self.payload_length << 0), length=2, byteorder='little'))
         return bytes(_span)
 
     @property
@@ -726,8 +797,168 @@ class ControlPacket(Packet):
         return len(self.payload) + 4
 
 @dataclass
-class UciCommand(ControlPacket):
+class DataPacket(Packet):
+    dpf: DataPacketFormat = field(kw_only=True, default=DataPacketFormat.DATA_SND)
+    pbf: PacketBoundaryFlag = field(kw_only=True, default=PacketBoundaryFlag.COMPLETE)
+    mt: MessageType = field(kw_only=True, default=MessageType.DATA)
 
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['DataPacket', bytes]:
+        fields = {'payload': None}
+        if len(span) < 4:
+            raise Exception('Invalid packet size')
+        fields['dpf'] = DataPacketFormat((span[0] >> 0) & 0xf)
+        fields['pbf'] = PacketBoundaryFlag((span[0] >> 4) & 0x1)
+        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        value_ = int.from_bytes(span[2:4], byteorder='little')
+        span = span[4:]
+        payload = span
+        span = bytes([])
+        fields['payload'] = payload
+        try:
+            return DataMessageSnd.parse(fields.copy(), payload)
+        except Exception as exn:
+            pass
+        try:
+            return DataMessageRcv.parse(fields.copy(), payload)
+        except Exception as exn:
+            pass
+        return DataPacket(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        _value = (
+            (self.dpf << 0) |
+            (self.pbf << 4) |
+            (self.mt << 5)
+        )
+        _span.append(_value)
+        _span.extend([0] * 1)
+        _span.extend([0] * 2)
+        _span.extend(payload or self.payload or [])
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return len(self.payload) + 4
+
+@dataclass
+class DataMessageSnd(DataPacket):
+    session_handle: int = field(kw_only=True, default=0)
+    destination_address: int = field(kw_only=True, default=0)
+    data_sequence_number: int = field(kw_only=True, default=0)
+    application_data: bytearray = field(kw_only=True, default_factory=bytearray)
+
+    def __post_init__(self):
+        self.dpf = DataPacketFormat.DATA_SND
+        self.mt = MessageType.DATA
+
+    @staticmethod
+    def parse(fields: dict, span: bytes) -> Tuple['DataMessageSnd', bytes]:
+        if fields['dpf'] != DataPacketFormat.DATA_SND or fields['mt'] != MessageType.DATA:
+            raise Exception("Invalid constraint field values")
+        if len(span) < 16:
+            raise Exception('Invalid packet size')
+        value_ = int.from_bytes(span[0:4], byteorder='little')
+        fields['session_handle'] = value_
+        value_ = int.from_bytes(span[4:12], byteorder='little')
+        fields['destination_address'] = value_
+        value_ = int.from_bytes(span[12:14], byteorder='little')
+        fields['data_sequence_number'] = value_
+        value_ = int.from_bytes(span[14:16], byteorder='little')
+        application_data_size = value_
+        span = span[16:]
+        if len(span) < application_data_size:
+            raise Exception('Invalid packet size')
+        fields['application_data'] = list(span[:application_data_size])
+        span = span[application_data_size:]
+        return DataMessageSnd(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        if self.session_handle > 4294967295:
+            print(f"Invalid value for field DataMessageSnd::session_handle: {self.session_handle} > 4294967295; the value will be truncated")
+            self.session_handle &= 4294967295
+        _span.extend(int.to_bytes((self.session_handle << 0), length=4, byteorder='little'))
+        if self.destination_address > 18446744073709551615:
+            print(f"Invalid value for field DataMessageSnd::destination_address: {self.destination_address} > 18446744073709551615; the value will be truncated")
+            self.destination_address &= 18446744073709551615
+        _span.extend(int.to_bytes((self.destination_address << 0), length=8, byteorder='little'))
+        if self.data_sequence_number > 65535:
+            print(f"Invalid value for field DataMessageSnd::data_sequence_number: {self.data_sequence_number} > 65535; the value will be truncated")
+            self.data_sequence_number &= 65535
+        _span.extend(int.to_bytes((self.data_sequence_number << 0), length=2, byteorder='little'))
+        _span.extend(int.to_bytes(((len(self.application_data) * 1) << 0), length=2, byteorder='little'))
+        _span.extend(self.application_data)
+        return DataPacket.serialize(self, payload = bytes(_span))
+
+    @property
+    def size(self) -> int:
+        return len(self.application_data) * 1 + 16
+
+@dataclass
+class DataMessageRcv(DataPacket):
+    session_handle: int = field(kw_only=True, default=0)
+    status: StatusCode = field(kw_only=True, default=StatusCode.UCI_STATUS_OK)
+    source_address: int = field(kw_only=True, default=0)
+    data_sequence_number: int = field(kw_only=True, default=0)
+    application_data: bytearray = field(kw_only=True, default_factory=bytearray)
+
+    def __post_init__(self):
+        self.dpf = DataPacketFormat.DATA_RCV
+        self.mt = MessageType.DATA
+
+    @staticmethod
+    def parse(fields: dict, span: bytes) -> Tuple['DataMessageRcv', bytes]:
+        if fields['dpf'] != DataPacketFormat.DATA_RCV or fields['mt'] != MessageType.DATA:
+            raise Exception("Invalid constraint field values")
+        if len(span) < 17:
+            raise Exception('Invalid packet size')
+        value_ = int.from_bytes(span[0:4], byteorder='little')
+        fields['session_handle'] = value_
+        fields['status'] = StatusCode(span[4])
+        value_ = int.from_bytes(span[5:13], byteorder='little')
+        fields['source_address'] = value_
+        value_ = int.from_bytes(span[13:15], byteorder='little')
+        fields['data_sequence_number'] = value_
+        value_ = int.from_bytes(span[15:17], byteorder='little')
+        application_data_size = value_
+        span = span[17:]
+        if len(span) < application_data_size:
+            raise Exception('Invalid packet size')
+        fields['application_data'] = list(span[:application_data_size])
+        span = span[application_data_size:]
+        return DataMessageRcv(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        if self.session_handle > 4294967295:
+            print(f"Invalid value for field DataMessageRcv::session_handle: {self.session_handle} > 4294967295; the value will be truncated")
+            self.session_handle &= 4294967295
+        _span.extend(int.to_bytes((self.session_handle << 0), length=4, byteorder='little'))
+        _span.append((self.status << 0))
+        if self.source_address > 18446744073709551615:
+            print(f"Invalid value for field DataMessageRcv::source_address: {self.source_address} > 18446744073709551615; the value will be truncated")
+            self.source_address &= 18446744073709551615
+        _span.extend(int.to_bytes((self.source_address << 0), length=8, byteorder='little'))
+        if self.data_sequence_number > 65535:
+            print(f"Invalid value for field DataMessageRcv::data_sequence_number: {self.data_sequence_number} > 65535; the value will be truncated")
+            self.data_sequence_number &= 65535
+        _span.extend(int.to_bytes((self.data_sequence_number << 0), length=2, byteorder='little'))
+        _span.extend(int.to_bytes(((len(self.application_data) * 1) << 0), length=2, byteorder='little'))
+        _span.extend(self.application_data)
+        return DataPacket.serialize(self, payload = bytes(_span))
+
+    @property
+    def size(self) -> int:
+        return len(self.application_data) * 1 + 17
+
+@dataclass
+class UciCommand(ControlPacket):
+    
 
     def __post_init__(self):
         self.mt = MessageType.COMMAND

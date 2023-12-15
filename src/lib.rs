@@ -45,10 +45,14 @@ pub use mac_address::MacAddress;
 
 use crate::session::RangeDataNtfConfig;
 
+/// Size of UCI packet first octet
+const COMMON_HEADER_SIZE: usize = 1;
 /// Size of UCI packet headers.
 const HEADER_SIZE: usize = 4;
-/// Maximum size of an UCI packet payload.
-const MAX_PAYLOAD_SIZE: usize = 255;
+/// Maximum size of an UCI control packet payload.
+const MAX_CTRL_PACKET_PAYLOAD_SIZE: usize = 255;
+/// Maximum size of an UCI data packet payload.
+const MAX_DATA_PACKET_PAYLOAD_SIZE: usize = 1024;
 
 struct Connection {
     socket: TcpStream,
@@ -63,8 +67,11 @@ impl Connection {
         }
     }
 
-    /// Read a single UCI packet from the socket. The packet is automatically
-    /// re-assembled if segmented on the UCI transport.
+    /// Read a single UCI packet from the socket.
+    /// Control packets are automatically re-assembled if segmented on the UCI transport.
+    /// Data packets fragments are returned immediately, as each fragment needs to be
+    /// acknowledged by a credit notification.
+    /// Interspersing data and control segments is not supported.
     async fn read(&mut self) -> Result<Vec<u8>> {
         let mut complete_packet = vec![0; HEADER_SIZE];
 
@@ -78,10 +85,22 @@ impl Connection {
             self.socket
                 .read_exact(&mut complete_packet[0..HEADER_SIZE])
                 .await?;
-            let header = PacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
+            let common_packet_header =
+                PacketHeader::parse(&complete_packet[0..COMMON_HEADER_SIZE])?;
 
             // Read the packet payload.
-            let payload_length = header.get_payload_length() as usize;
+            let payload_length = match common_packet_header.get_mt() {
+                MessageType::Data => {
+                    let data_packet_header =
+                        DataPacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
+                    data_packet_header.get_payload_length() as usize
+                }
+                _ => {
+                    let control_packet_header =
+                        ControlPacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
+                    control_packet_header.get_payload_length() as usize
+                }
+            };
             let mut payload_bytes = vec![0; payload_length];
             self.socket.read_exact(&mut payload_bytes).await?;
             complete_packet.extend(&payload_bytes);
@@ -95,8 +114,12 @@ impl Connection {
                     .await?;
             }
 
+            if common_packet_header.get_mt() == MessageType::Data {
+                return Ok(complete_packet);
+            }
+
             // Check the Packet Boundary Flag.
-            match header.get_pbf() {
+            match common_packet_header.get_pbf() {
                 PacketBoundaryFlag::Complete => return Ok(complete_packet),
                 PacketBoundaryFlag::NotComplete => (),
             }
@@ -110,8 +133,15 @@ impl Connection {
         packet = &packet[HEADER_SIZE..];
 
         loop {
+            let message_type = get_message_type(header_bytes[0]);
+            let chunk_length = std::cmp::min(
+                packet.len(),
+                match message_type {
+                    MessageType::Data => MAX_DATA_PACKET_PAYLOAD_SIZE,
+                    _ => MAX_CTRL_PACKET_PAYLOAD_SIZE,
+                },
+            );
             // Update header with framing information.
-            let chunk_length = std::cmp::min(MAX_PAYLOAD_SIZE, packet.len());
             let pbf = if chunk_length < packet.len() {
                 PacketBoundaryFlag::NotComplete
             } else {
@@ -120,7 +150,14 @@ impl Connection {
             const PBF_MASK: u8 = 0x10;
             header_bytes[0] &= !PBF_MASK;
             header_bytes[0] |= (pbf as u8) << 4;
-            header_bytes[3] = chunk_length as u8;
+
+            match message_type {
+                MessageType::Data => {
+                    let chunk_le_bytes = (chunk_length as u16).to_le_bytes();
+                    header_bytes[2..4].copy_from_slice(&chunk_le_bytes);
+                }
+                _ => header_bytes[3] = chunk_length as u8,
+            }
 
             if let Some(ref mut pcapng_file) = self.pcapng_file {
                 let mut packet_bytes = vec![];
@@ -143,6 +180,11 @@ impl Connection {
     }
 }
 
+// Extract the message type from the first 3 bits of the passed (header) byte
+fn get_message_type(byte: u8) -> MessageType {
+    MessageType::try_from((byte >> 5) & 0x7).unwrap_or(MessageType::Command)
+}
+
 pub type PicaCommandStatus = Result<(), PicaCommandError>;
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -163,8 +205,10 @@ pub enum PicaCommand {
     Ranging(usize, u32),
     // Send an in-band request to stop ranging to a peer controlee identified by address and session id.
     StopRanging(MacAddress, u32),
+    // Execute data message send for selected device and data.
+    UciData(usize, DataPacket),
     // Execute UCI command received for selected device.
-    Command(usize, UciCommand),
+    UciCommand(usize, UciCommand),
     // Init Uci Device
     InitUciDevice(MacAddress, Position, oneshot::Sender<PicaCommandStatus>),
     // Set Position
@@ -184,7 +228,8 @@ impl Display for PicaCommand {
             PicaCommand::Disconnect(_) => "Disconnect",
             PicaCommand::Ranging(_, _) => "Ranging",
             PicaCommand::StopRanging(_, _) => "StopRanging",
-            PicaCommand::Command(_, _) => "Command",
+            PicaCommand::UciData(_, _) => "UciData",
+            PicaCommand::UciCommand(_, _) => "UciCommand",
             PicaCommand::InitUciDevice(_, _, _) => "InitUciDevice",
             PicaCommand::SetPosition(_, _, _) => "SetPosition",
             PicaCommand::CreateAnchor(_, _, _) => "CreateAnchor",
@@ -252,7 +297,8 @@ pub struct Pica {
 
 /// Result of UCI packet parsing.
 enum UciParseResult {
-    Ok(UciCommand),
+    UciCommand(UciCommand),
+    UciData(DataPacket),
     Err(Bytes),
     Skip,
 }
@@ -260,46 +306,51 @@ enum UciParseResult {
 /// Parse incoming UCI packets.
 /// Handle parsing errors by crafting a suitable error response packet.
 fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
-    match ControlPacket::parse(bytes) {
-        // Parsing error. Determine what error response should be
-        // returned to the host:
-        // - response and notifications are ignored, no response
-        // - if the group id is not known, STATUS_UNKNOWN_GID,
-        // - otherwise, and to simplify the code, STATUS_UNKNOWN_OID is
-        //      always returned. That means that malformed commands
-        //      get the same status code, instead of
-        //      STATUS_SYNTAX_ERROR.
-        Err(_) => {
-            let message_type = (bytes[0] >> 5) & 0x7;
-            let group_id = bytes[0] & 0xf;
-            let opcode_id = bytes[1] & 0x3f;
+    let message_type = get_message_type(bytes[0]);
+    match message_type {
+        MessageType::Data => match DataPacket::parse(bytes) {
+            Ok(packet) => UciParseResult::UciData(packet),
+            Err(_) => UciParseResult::Skip,
+        },
+        _ => {
+            match ControlPacket::parse(bytes) {
+                // Parsing error. Determine what error response should be
+                // returned to the host:
+                // - response and notifications are ignored, no response
+                // - if the group id is not known, STATUS_UNKNOWN_GID,
+                // - otherwise, and to simplify the code, STATUS_UNKNOWN_OID is
+                //      always returned. That means that malformed commands
+                //      get the same status code, instead of
+                //      STATUS_SYNTAX_ERROR.
+                Err(_) => {
+                    let group_id = bytes[0] & 0xf;
+                    let opcode_id = bytes[1] & 0x3f;
 
-            let status = match (
-                MessageType::try_from(message_type),
-                GroupId::try_from(group_id),
-            ) {
-                (Ok(MessageType::Command), Ok(_)) => UciStatusCode::UciStatusUnknownOid,
-                (Ok(MessageType::Command), Err(_)) => UciStatusCode::UciStatusUnknownGid,
-                _ => return UciParseResult::Skip,
-            };
-            // The PDL generated code cannot be used to generate
-            // responses with invalid group identifiers.
-            let response = vec![
-                (u8::from(MessageType::Response) << 5) | group_id,
-                opcode_id,
-                0,
-                1,
-                status.into(),
-            ];
-            UciParseResult::Err(response.into())
-        }
+                    let status = match (message_type, GroupId::try_from(group_id)) {
+                        (MessageType::Command, Ok(_)) => UciStatusCode::UciStatusUnknownOid,
+                        (MessageType::Command, Err(_)) => UciStatusCode::UciStatusUnknownGid,
+                        _ => return UciParseResult::Skip,
+                    };
+                    // The PDL generated code cannot be used to generate
+                    // responses with invalid group identifiers.
+                    let response = vec![
+                        (u8::from(MessageType::Response) << 5) | group_id,
+                        opcode_id,
+                        0,
+                        1,
+                        status.into(),
+                    ];
+                    UciParseResult::Err(response.into())
+                }
 
-        // Parsing success, ignore non command packets.
-        Ok(packet) => {
-            if let Ok(cmd) = packet.try_into() {
-                UciParseResult::Ok(cmd)
-            } else {
-                UciParseResult::Skip
+                // Parsing success, ignore non command packets.
+                Ok(packet) => {
+                    if let Ok(cmd) = packet.try_into() {
+                        UciParseResult::UciCommand(cmd)
+                    } else {
+                        UciParseResult::Skip
+                    }
+                }
             }
         }
     }
@@ -457,8 +508,12 @@ impl Pica {
                         match result {
                             Ok(packet) =>
                                 match parse_uci_packet(&packet) {
-                                    UciParseResult::Ok(cmd) =>
-                                        pica_tx.send(PicaCommand::Command(device_handle, cmd)).await.unwrap(),
+                                    UciParseResult::UciCommand(cmd) => {
+                                        pica_tx.send(PicaCommand::UciCommand(device_handle, cmd)).await.unwrap()
+                                    },
+                                    UciParseResult::UciData(data) => {
+                                        pica_tx.send(PicaCommand::UciData(device_handle, data)).await.unwrap()
+                                    },
                                     UciParseResult::Err(response) =>
                                         connection.write(&response).await.unwrap(),
                                     UciParseResult::Skip => (),
@@ -562,6 +617,20 @@ impl Pica {
         }
     }
 
+    async fn uci_data(&mut self, device_handle: usize, data: DataPacket) {
+        match self
+            .get_device_mut(device_handle)
+            .ok_or_else(|| PicaCommandError::DeviceNotFound(device_handle.into()))
+        {
+            Ok(device) => {
+                let response: SessionControlNotification = device.data_message_snd(data);
+                device.tx.send(response.into()).await.unwrap_or_else(|err| {
+                    println!("Failed to send UCI data packet response: {}", err)
+                });
+            }
+            Err(err) => println!("{}", err),
+        }
+    }
     async fn command(&mut self, device_handle: usize, cmd: UciCommand) {
         match self
             .get_device_mut(device_handle)
@@ -593,7 +662,8 @@ impl Pica {
                 Some(StopRanging(mac_address, session_id)) => {
                     self.stop_controlee_ranging(&mac_address, session_id).await;
                 }
-                Some(Command(device_handle, cmd)) => self.command(device_handle, cmd).await,
+                Some(UciData(device_handle, data)) => self.uci_data(device_handle, data).await,
+                Some(UciCommand(device_handle, cmd)) => self.command(device_handle, cmd).await,
                 Some(SetPosition(mac_address, position, pica_cmd_rsp_tx)) => {
                     self.set_position(mac_address, position, pica_cmd_rsp_tx)
                 }
