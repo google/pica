@@ -49,7 +49,7 @@ class Host:
         while True:
             # Read the common packet header.
             header_bytes = await self._read_exact(4)
-            header = uci.PacketHeader.parse_all(header_bytes)
+            header = uci.ControlPacketHeader.parse_all(header_bytes)
 
             # Read the packet payload.
             payload_bytes = await self._read_exact(header.payload_length)
@@ -79,6 +79,14 @@ class Host:
         # TODO packet fragmentation.
         packet = bytearray(packet.serialize())
         packet[3] = len(packet) - 4
+        self.writer.write(packet)
+
+    def send_data(self, packet: uci.DataPacket):
+        packet = bytearray(packet.serialize())
+        size = len(packet) - 4
+        size_bytes = size.to_bytes(2, byteorder='little')
+        packet[2] = size_bytes[0]
+        packet[3] = size_bytes[1]
         self.writer.write(packet)
 
     async def expect_control(

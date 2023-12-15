@@ -30,10 +30,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pica import Host
 from pica.packets import uci
 
+MAX_DATA_PACKET_PAYLOAD_SIZE = 1024
 
 def encode_short_mac_address(mac_address: str) -> bytes:
     return int(mac_address).to_bytes(2, byteorder='little')
-
 
 def encode_mac_address(mac_address: str) -> bytes:
     return int(mac_address).to_bytes(8, byteorder='little')
@@ -150,7 +150,7 @@ class Device:
         """Initialize the session"""
         self.host.send_control(uci.SessionInitCmd(
             session_id=int(session_id),
-            session_type=uci.SessionType.FIRA_RANGING_SESSION))
+            session_type=uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION))
 
     def session_deinit(self, session_id: str = '0', **kargs):
         """Deinitialize the session"""
@@ -248,6 +248,44 @@ class Device:
         """Get the number of times ranging has been attempted during the ranging session.."""
         self.host.send_control(uci.SessionGetRangingCountCmd(session_id=int(session_id)))
 
+    def data_transfer(self, dst_mac_address, file_name, session_id: str = '0', ):
+        """Initiates data transfer by sending (possibly segmented) UCI data packet(s)."""
+        
+        # Does not have flow control, i.e. waiting for data credit notifications in between sending packets
+        try:
+            with open(file_name, 'rb') as f:
+                b = f.read()
+                seq_num = 0
+                dst_mac_address = parse_mac_address(dst_mac_address)
+
+                if len(b) > MAX_DATA_PACKET_PAYLOAD_SIZE:
+                    for i in range(0, len(b), MAX_DATA_PACKET_PAYLOAD_SIZE):
+                        section = b[i:i+MAX_DATA_PACKET_PAYLOAD_SIZE]
+
+                        if i + MAX_DATA_PACKET_PAYLOAD_SIZE >= len(b):
+                            self.host.send_data(uci.DataMessageSnd(session_handle=int(session_id),
+                                                                   destination_address=int.from_bytes(dst_mac_address),
+                                                                   data_sequence_number=seq_num,
+                                                                   application_data=section))
+                        else:
+                            self.host.send_data(uci.DataMessageSnd(session_handle=int(session_id),
+                                                                   pbf = uci.PacketBoundaryFlag.NOT_COMPLETE,
+                                                                   destination_address=int.from_bytes(dst_mac_address),
+                                                                   data_sequence_number=seq_num,
+                                                                   application_data=section))
+                        
+                        seq_num += 1
+                        if seq_num >= 65535:
+                            seq_num = 0
+                else:
+                    self.host.send_data(uci.DataMessageSnd(session_handle=int(session_id),
+                                                           destination_address=int.from_bytes(dst_mac_address),
+                                                           data_sequence_number=seq_num,
+                                                           application_data=b))
+
+        except Exception as e:
+            print(e)
+
     async def read_responses_and_notifications(self):
         def chunks(l, n):
             for i in range(0, len(l), n):
@@ -309,6 +347,7 @@ async def command_line(device: Device):
         'session_update_controller_multicast_list': device.session_update_controller_multicast_list,
         'range_start': device.range_start,
         'range_stop': device.range_stop,
+        'data_transfer': device.data_transfer,
         'get_ranging_count': device.get_ranging_count,
     }
 
