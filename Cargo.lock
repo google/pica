@@ -62,9 +62,9 @@ dependencies = [
 
 [[package]]
 name = "bytes"
-version = "1.1.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4872d67bab6358e59559027aa3b9157c53d9358c51423c17554809a8858e0f8"
+checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 
 [[package]]
 name = "cfg-if"
@@ -373,9 +373,9 @@ checksum = "9b7820b9daea5457c9f21c69448905d723fbd21136ccf521748f23fd49e723ee"
 
 [[package]]
 name = "pdl-compiler"
-version = "0.1.7"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f99a9ac3d6a426c6fc0b85903a16d77bf148e20ddf755361f76e230d1b6d72cf"
+checksum = "d277c9e6a1869e95522f9bd532bc225f85c03434b48cd914524235910f9ccdbe"
 dependencies = [
  "argh",
  "codespan-reporting",
@@ -388,6 +388,16 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.38",
+]
+
+[[package]]
+name = "pdl-runtime"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce05e0a116b0250bb41732e2858eada706aebdf311d7f832898c9256bb442abe"
+dependencies = [
+ "bytes",
+ "thiserror",
 ]
 
 [[package]]
@@ -448,6 +458,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "pdl-compiler",
+ "pdl-runtime",
  "serde",
  "serde_json",
  "thiserror",

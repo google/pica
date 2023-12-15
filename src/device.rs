@@ -203,7 +203,7 @@ impl Device {
         );
 
         let (status, parameters) = if invalid_config_status.is_empty() {
-            self.config.extend(valid_parameters.into_iter());
+            self.config.extend(valid_parameters);
             (StatusCode::UciStatusOk, Vec::new())
         } else {
             (StatusCode::UciStatusInvalidParam, invalid_config_status)
