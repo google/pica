@@ -60,28 +60,20 @@ impl File {
         let packet_data_padding: usize = 4 - packet.len() % 4;
         let block_total_length: u32 = packet.len() as u32 + packet_data_padding as u32 + 32;
         let timestamp = self.start_time.elapsed().as_micros();
+        let file = &mut self.file;
 
         // Wrap the packet inside an Enhanced Packet Block.
-        self.file.write(&u32::to_le_bytes(0x00000006)).await?; // Block Type
-        self.file
-            .write(&u32::to_le_bytes(block_total_length))
-            .await?;
-        self.file.write(&u32::to_le_bytes(0)).await?; // Interface ID
-        self.file
-            .write(&u32::to_le_bytes((timestamp >> 32) as u32))
+        file.write(&u32::to_le_bytes(0x00000006)).await?; // Block Type
+        file.write(&u32::to_le_bytes(block_total_length)).await?;
+        file.write(&u32::to_le_bytes(0)).await?; // Interface ID
+        file.write(&u32::to_le_bytes((timestamp >> 32) as u32))
             .await?; // Timestamp (High)
-        self.file.write(&u32::to_le_bytes(timestamp as u32)).await?; // Timestamp (Low)
-        self.file
-            .write(&u32::to_le_bytes(packet.len() as u32))
-            .await?; // Captured Packet Length
-        self.file
-            .write(&u32::to_le_bytes(packet.len() as u32))
-            .await?; // Original Packet Length
-        self.file.write(packet).await?;
-        self.file.write(&vec![0; packet_data_padding]).await?;
-        self.file
-            .write(&u32::to_le_bytes(block_total_length))
-            .await?; // Block Total Length
+        file.write(&u32::to_le_bytes(timestamp as u32)).await?; // Timestamp (Low)
+        file.write(&u32::to_le_bytes(packet.len() as u32)).await?; // Captured Packet Length
+        file.write(&u32::to_le_bytes(packet.len() as u32)).await?; // Original Packet Length
+        file.write(packet).await?;
+        file.write(&vec![0; packet_data_padding]).await?;
+        file.write(&u32::to_le_bytes(block_total_length)).await?; // Block Total Length
         Ok(())
     }
 }

@@ -20,7 +20,6 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
 use thiserror::Error;
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -44,146 +43,6 @@ mod mac_address;
 pub use mac_address::MacAddress;
 
 use crate::session::RangeDataNtfConfig;
-
-/// Size of UCI packet first octet
-const COMMON_HEADER_SIZE: usize = 1;
-/// Size of UCI packet headers.
-const HEADER_SIZE: usize = 4;
-/// Maximum size of an UCI control packet payload.
-const MAX_CTRL_PACKET_PAYLOAD_SIZE: usize = 255;
-/// Maximum size of an UCI data packet payload.
-const MAX_DATA_PACKET_PAYLOAD_SIZE: usize = 1024;
-
-struct Connection {
-    socket: TcpStream,
-    pcapng_file: Option<pcapng::File>,
-}
-
-impl Connection {
-    fn new(socket: TcpStream, pcapng_file: Option<pcapng::File>) -> Self {
-        Connection {
-            socket,
-            pcapng_file,
-        }
-    }
-
-    /// Read a single UCI packet from the socket.
-    /// Control packets are automatically re-assembled if segmented on the UCI transport.
-    /// Data packets fragments are returned immediately, as each fragment needs to be
-    /// acknowledged by a credit notification.
-    /// Interspersing data and control segments is not supported.
-    async fn read(&mut self) -> Result<Vec<u8>> {
-        let mut complete_packet = vec![0; HEADER_SIZE];
-
-        // Note on reassembly:
-        // For each segment of a Control Message, the
-        // header of the Control Packet SHALL contain the same MT, GID and OID
-        // values.
-        // It is correct to keep only the last header of the segmented packet.
-        loop {
-            // Read the common packet header.
-            self.socket
-                .read_exact(&mut complete_packet[0..HEADER_SIZE])
-                .await?;
-            let common_packet_header =
-                PacketHeader::parse(&complete_packet[0..COMMON_HEADER_SIZE])?;
-
-            // Read the packet payload.
-            let payload_length = match common_packet_header.get_mt() {
-                MessageType::Data => {
-                    let data_packet_header =
-                        DataPacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
-                    data_packet_header.get_payload_length() as usize
-                }
-                _ => {
-                    let control_packet_header =
-                        ControlPacketHeader::parse(&complete_packet[0..HEADER_SIZE])?;
-                    control_packet_header.get_payload_length() as usize
-                }
-            };
-            let mut payload_bytes = vec![0; payload_length];
-            self.socket.read_exact(&mut payload_bytes).await?;
-            complete_packet.extend(&payload_bytes);
-
-            if let Some(ref mut pcapng_file) = self.pcapng_file {
-                let mut packet_bytes = vec![];
-                packet_bytes.extend(&complete_packet[0..HEADER_SIZE]);
-                packet_bytes.extend(&payload_bytes);
-                pcapng_file
-                    .write(&packet_bytes, pcapng::Direction::Tx)
-                    .await?;
-            }
-
-            if common_packet_header.get_mt() == MessageType::Data {
-                return Ok(complete_packet);
-            }
-
-            // Check the Packet Boundary Flag.
-            match common_packet_header.get_pbf() {
-                PacketBoundaryFlag::Complete => return Ok(complete_packet),
-                PacketBoundaryFlag::NotComplete => (),
-            }
-        }
-    }
-
-    /// Write a single UCI packet to the writer. The packet is automatically
-    /// segmented if the payload exceeds the maximum size limit.
-    async fn write(&mut self, mut packet: &[u8]) -> Result<()> {
-        let mut header_bytes = [packet[0], packet[1], packet[2], 0];
-        packet = &packet[HEADER_SIZE..];
-
-        loop {
-            let message_type = get_message_type(header_bytes[0]);
-            let chunk_length = std::cmp::min(
-                packet.len(),
-                match message_type {
-                    MessageType::Data => MAX_DATA_PACKET_PAYLOAD_SIZE,
-                    _ => MAX_CTRL_PACKET_PAYLOAD_SIZE,
-                },
-            );
-            // Update header with framing information.
-            let pbf = if chunk_length < packet.len() {
-                PacketBoundaryFlag::NotComplete
-            } else {
-                PacketBoundaryFlag::Complete
-            };
-            const PBF_MASK: u8 = 0x10;
-            header_bytes[0] &= !PBF_MASK;
-            header_bytes[0] |= (pbf as u8) << 4;
-
-            match message_type {
-                MessageType::Data => {
-                    let chunk_le_bytes = (chunk_length as u16).to_le_bytes();
-                    header_bytes[2..4].copy_from_slice(&chunk_le_bytes);
-                }
-                _ => header_bytes[3] = chunk_length as u8,
-            }
-
-            if let Some(ref mut pcapng_file) = self.pcapng_file {
-                let mut packet_bytes = vec![];
-                packet_bytes.extend(&header_bytes);
-                packet_bytes.extend(&packet[..chunk_length]);
-                pcapng_file
-                    .write(&packet_bytes, pcapng::Direction::Rx)
-                    .await?
-            }
-
-            // Write the header and payload segment bytes.
-            self.socket.try_write(&header_bytes)?;
-            self.socket.try_write(&packet[..chunk_length])?;
-            packet = &packet[chunk_length..];
-
-            if packet.is_empty() {
-                return Ok(());
-            }
-        }
-    }
-}
-
-// Extract the message type from the first 3 bits of the passed (header) byte
-fn get_message_type(byte: u8) -> MessageType {
-    MessageType::try_from((byte >> 5) & 0x7).unwrap_or(MessageType::Command)
-}
 
 pub type PicaCommandStatus = Result<(), PicaCommandError>;
 
@@ -306,7 +165,7 @@ enum UciParseResult {
 /// Parse incoming UCI packets.
 /// Handle parsing errors by crafting a suitable error response packet.
 fn parse_uci_packet(bytes: &[u8]) -> UciParseResult {
-    let message_type = get_message_type(bytes[0]);
+    let message_type = parse_message_type(bytes[0]);
     match message_type {
         MessageType::Data => match DataPacket::parse(bytes) {
             Ok(packet) => UciParseResult::UciData(packet),
@@ -490,8 +349,8 @@ impl Pica {
         // Spawn and detach the connection handling task.
         // The task notifies pica when exiting to let it clean
         // the state.
-        tokio::spawn(async move {
-            let pcapng_file: Option<pcapng::File> = if let Some(dir) = pcapng_dir {
+        tokio::task::spawn(async move {
+            let mut pcapng_file = if let Some(dir) = pcapng_dir {
                 let full_path = dir.join(format!("device-{}.pcapng", device_handle));
                 println!("Recording pcapng to file {}", full_path.as_path().display());
                 Some(pcapng::File::create(full_path).await.unwrap())
@@ -499,12 +358,15 @@ impl Pica {
                 None
             };
 
-            let mut connection = Connection::new(stream, pcapng_file);
+            let (uci_rx, uci_tx) = stream.into_split();
+            let mut uci_reader = packets::uci::Reader::new(uci_rx);
+            let mut uci_writer = packets::uci::Writer::new(uci_tx);
+
             'outer: loop {
                 tokio::select! {
                     // Read command packet sent from connected UWB host.
                     // Run associated command.
-                    result = connection.read() =>
+                    result = uci_reader.read(&mut pcapng_file) =>
                         match result {
                             Ok(packet) =>
                                 match parse_uci_packet(&packet) {
@@ -515,7 +377,7 @@ impl Pica {
                                         pica_tx.send(PicaCommand::UciData(device_handle, data)).await.unwrap()
                                     },
                                     UciParseResult::Err(response) =>
-                                        connection.write(&response).await.unwrap(),
+                                        uci_writer.write(&response, &mut pcapng_file).await.unwrap(),
                                     UciParseResult::Skip => (),
                                 },
                             Err(_) => break 'outer
@@ -523,7 +385,7 @@ impl Pica {
 
                     // Send response packets to the connected UWB host.
                     Some(packet) = packet_rx.recv() =>
-                        if connection.write(&packet.to_bytes()).await.is_err() {
+                        if uci_writer.write(&packet.to_bytes(), &mut pcapng_file).await.is_err() {
                             break 'outer
                         }
                 }
