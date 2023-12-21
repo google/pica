@@ -93,6 +93,7 @@ enum MultiNodeMode {
 enum UpdateMulticastListAction {
     Add = 0x00,
     Delete = 0x01,
+    AddWithShortSubSessionKey = 0x02,
 }
 
 #[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
@@ -283,6 +284,9 @@ pub struct AppConfig {
     uwb_initiation_time: u32,
     vendor_id: Option<Vec<u8>>,
     static_sts_iv: Option<Vec<u8>>,
+    session_key: Option<Vec<u8>>,
+    sub_session_key: Option<Vec<u8>>,
+    sub_session_id: u32,
 }
 
 impl Default for AppConfig {
@@ -333,6 +337,9 @@ impl Default for AppConfig {
             uwb_initiation_time: 0,
             vendor_id: None,
             static_sts_iv: None,
+            session_key: None,
+            sub_session_key: None,
+            sub_session_id: 0,
         }
     }
 }
@@ -558,6 +565,11 @@ impl AppConfig {
             AppConfigTlvType::InBandTerminationAttemptCount => {
                 self.in_band_termination_attempt_count = value[0]
             }
+            AppConfigTlvType::SessionKey => self.session_key = Some(value.to_vec()),
+            AppConfigTlvType::SubSessionId => {
+                self.sub_session_id = u32::from_le_bytes(value[..].try_into().unwrap())
+            }
+            AppConfigTlvType::SubsessionKey => self.sub_session_key = Some(value.to_vec()),
             id => {
                 println!("Ignored AppConfig parameter {:?}", id);
                 return Err(StatusCode::UciStatusInvalidParam);
@@ -602,6 +614,39 @@ impl AppConfig {
                 };
                 invalid_parameters
             })
+    }
+}
+
+enum ControleeType {
+    V1(Controlee),
+    V2_16Byte(Controlee_V2_0_16_Byte_Version),
+}
+
+impl ControleeType {
+    fn short_address(&self) -> [u8; 2] {
+        match self {
+            Self::V1(controlee) => controlee.short_address,
+            Self::V2_16Byte(controlee) => controlee.short_address,
+        }
+    }
+
+    fn subsession_id(&self) -> u32 {
+        match self {
+            Self::V1(controlee) => controlee.subsession_id,
+            Self::V2_16Byte(controlee) => controlee.subsession_id,
+        }
+    }
+}
+
+impl From<Controlee> for ControleeType {
+    fn from(value: Controlee) -> Self {
+        ControleeType::V1(value)
+    }
+}
+
+impl From<Controlee_V2_0_16_Byte_Version> for ControleeType {
+    fn from(value: Controlee_V2_0_16_Byte_Version) -> Self {
+        ControleeType::V2_16Byte(value)
     }
 }
 
@@ -815,37 +860,73 @@ impl Session {
         }
         let action = UpdateMulticastListAction::from_u8(cmd.get_action().into()).unwrap();
         let mut dst_addresses = self.app_config.dst_mac_addresses.clone();
-        let packet =
-            SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload()).unwrap();
-        let new_controlees = packet.controlees;
+        let new_controlees: Vec<ControleeType> = match (
+            SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload()),
+            SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload::parse(cmd.get_payload()),
+        ) {
+            (_, Ok(packet)) => {
+                // If subsession key is present when action is set other than 0x02,
+                // then the UWBS shall return RSP with Status SYNTAX_ERROR.
+                if action == UpdateMulticastListAction::Add
+                    || action == UpdateMulticastListAction::Delete
+                {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+                packet
+                    .controlees
+                    .iter()
+                    .map(|controlee| controlee.clone().into())
+                    .collect()
+            }
+            (Ok(packet), _) => {
+                // If subsession key is not present when action is set to 0x02,
+                // then the UWBS shall return RSP with Status SYNTAX_ERROR.
+                if action == UpdateMulticastListAction::AddWithShortSubSessionKey {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+                packet
+                    .controlees
+                    .iter()
+                    .map(|controlee| controlee.clone().into())
+                    .collect()
+            }
+            _ => panic!("Payload type not supported!"),
+        };
         let mut controlee_status = Vec::new();
 
         let session_id = self.id;
         let mut status = StatusCode::UciStatusOk;
 
         match action {
-            UpdateMulticastListAction::Add => {
+            UpdateMulticastListAction::Add
+            | UpdateMulticastListAction::AddWithShortSubSessionKey => {
                 new_controlees.iter().for_each(|controlee| {
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address)) {
+                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address())) {
                         if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
                             status = StatusCode::UciStatusMulticastListFull;
                             update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
                         } else {
-                            dst_addresses.push(MacAddress::Short(controlee.short_address));
+                            dst_addresses.push(MacAddress::Short(controlee.short_address()));
                         };
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: controlee.short_address,
-                        subsession_id: controlee.subsession_id,
+                        mac_address: controlee.short_address(),
+                        subsession_id: controlee.subsession_id(),
                         status: update_status,
                     });
                 });
             }
             UpdateMulticastListAction::Delete => {
-                new_controlees.iter().for_each(|controlee: &Controlee| {
+                new_controlees.iter().for_each(|controlee: &ControleeType| {
                     let pica_tx = self.pica_tx.clone();
-                    let address = controlee.short_address;
+                    let address = controlee.short_address();
                     let attempt_count = self.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                     if !dst_addresses.contains(&MacAddress::Short(address)) {
@@ -873,7 +954,7 @@ impl Session {
                     }
                     controlee_status.push(ControleeStatus {
                         mac_address: address,
-                        subsession_id: controlee.subsession_id,
+                        subsession_id: controlee.subsession_id(),
                         status: update_status,
                     });
                 });
