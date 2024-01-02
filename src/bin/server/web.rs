@@ -120,7 +120,7 @@ fn event_name(event: &PicaEvent) -> &'static str {
 async fn handle(
     mut req: Request<Body>,
     tx: mpsc::Sender<PicaCommand>,
-    events: broadcast::Sender<PicaEvent>,
+    events: broadcast::Receiver<PicaEvent>,
 ) -> Result<Response<Body>, Infallible> {
     let static_file = STATIC_FILES
         .iter()
@@ -168,7 +168,7 @@ async fn handle(
         .collect::<Vec<_>>()[..]
     {
         ["events"] => {
-            let stream = BroadcastStream::new(events.subscribe()).map(|result| {
+            let stream = BroadcastStream::new(events).map(|result| {
                 result.map(|event| {
                     format!(
                         "event: {}\ndata: {}\n\n",
@@ -256,7 +256,7 @@ pub async fn serve(
         let events = events.clone();
         async move {
             Ok::<_, Infallible>(service_fn(move |req| {
-                handle(req, tx.clone(), events.clone())
+                handle(req, tx.clone(), events.subscribe())
             }))
         }
     });
