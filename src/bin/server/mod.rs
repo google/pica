@@ -26,7 +26,7 @@ use pica::{Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio::try_join;
 
 const DEFAULT_UCI_PORT: u16 = 7000;
@@ -67,16 +67,16 @@ async fn main() -> Result<()> {
         args.uci_port, args.web_port,
         "UCI port and Web port shall be different."
     );
-    let (event_tx, _) = broadcast::channel(16);
 
-    let mut pica = Pica::new(event_tx.clone(), args.pcapng_dir);
+    let mut pica = Pica::new(args.pcapng_dir);
     let pica_tx = pica.tx();
+    let pica_events = pica.events();
 
     #[cfg(feature = "web")]
     try_join!(
         accept_incoming(pica_tx.clone(), args.uci_port),
         pica.run(),
-        web::serve(pica_tx, event_tx, args.web_port)
+        web::serve(pica_tx, pica_events, args.web_port)
     )?;
 
     #[cfg(not(feature = "web"))]

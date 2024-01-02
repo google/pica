@@ -243,8 +243,9 @@ fn make_measurement(
 }
 
 impl Pica {
-    pub fn new(event_tx: broadcast::Sender<PicaEvent>, pcapng_dir: Option<PathBuf>) -> Self {
+    pub fn new(pcapng_dir: Option<PathBuf>) -> Self {
         let (tx, rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
+        let (event_tx, _) = broadcast::channel(16);
         Pica {
             devices: HashMap::new(),
             anchors: HashMap::new(),
@@ -254,6 +255,10 @@ impl Pica {
             event_tx,
             pcapng_dir,
         }
+    }
+
+    pub fn events(&self) -> broadcast::Sender<PicaEvent> {
+        self.event_tx.clone()
     }
 
     pub fn tx(&self) -> mpsc::Sender<PicaCommand> {
