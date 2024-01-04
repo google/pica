@@ -94,6 +94,7 @@ enum UpdateMulticastListAction {
     Add = 0x00,
     Delete = 0x01,
     AddWithShortSubSessionKey = 0x02,
+    AddwithExtendedSubSessionKey = 0x03,
 }
 
 #[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
@@ -620,13 +621,15 @@ impl AppConfig {
 enum ControleeType {
     V1(Controlee),
     V2_16Byte(Controlee_V2_0_16_Byte_Version),
+    V2_32Byte(Controlee_V2_0_32_Byte_Version),
 }
 
 impl ControleeType {
-    fn short_address(&self) -> [u8; 2] {
+    fn short_address(&self) -> MacAddress {
         match self {
-            Self::V1(controlee) => controlee.short_address,
-            Self::V2_16Byte(controlee) => controlee.short_address,
+            Self::V1(controlee) => MacAddress::Short(controlee.short_address),
+            Self::V2_16Byte(controlee) => MacAddress::Short(controlee.short_address),
+            Self::V2_32Byte(controlee) => MacAddress::Short(controlee.short_address),
         }
     }
 
@@ -634,6 +637,7 @@ impl ControleeType {
         match self {
             Self::V1(controlee) => controlee.subsession_id,
             Self::V2_16Byte(controlee) => controlee.subsession_id,
+            Self::V2_32Byte(controlee) => controlee.subsession_id,
         }
     }
 }
@@ -647,6 +651,12 @@ impl From<Controlee> for ControleeType {
 impl From<Controlee_V2_0_16_Byte_Version> for ControleeType {
     fn from(value: Controlee_V2_0_16_Byte_Version) -> Self {
         ControleeType::V2_16Byte(value)
+    }
+}
+
+impl From<Controlee_V2_0_32_Byte_Version> for ControleeType {
+    fn from(value: Controlee_V2_0_32_Byte_Version) -> Self {
+        ControleeType::V2_32Byte(value)
     }
 }
 
@@ -860,43 +870,59 @@ impl Session {
         }
         let action = UpdateMulticastListAction::from_u8(cmd.get_action().into()).unwrap();
         let mut dst_addresses = self.app_config.dst_mac_addresses.clone();
-        let new_controlees: Vec<ControleeType> = match (
-            SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload()),
-            SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload::parse(cmd.get_payload()),
-        ) {
-            (_, Ok(packet)) => {
-                // If subsession key is present when action is set other than 0x02,
-                // then the UWBS shall return RSP with Status SYNTAX_ERROR.
-                if action == UpdateMulticastListAction::Add
-                    || action == UpdateMulticastListAction::Delete
+        let new_controlees: Vec<ControleeType> = match action {
+            UpdateMulticastListAction::Add | UpdateMulticastListAction::Delete => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload())
                 {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.clone().into())
+                        .collect()
+                } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
                         status: StatusCode::UciStatusSyntaxError,
                     }
                     .build();
                 }
-                packet
-                    .controlees
-                    .iter()
-                    .map(|controlee| controlee.clone().into())
-                    .collect()
             }
-            (Ok(packet), _) => {
-                // If subsession key is not present when action is set to 0x02,
-                // then the UWBS shall return RSP with Status SYNTAX_ERROR.
-                if action == UpdateMulticastListAction::AddWithShortSubSessionKey {
+            UpdateMulticastListAction::AddWithShortSubSessionKey => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload::parse(
+                        cmd.get_payload(),
+                    )
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.clone().into())
+                        .collect()
+                } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
                         status: StatusCode::UciStatusSyntaxError,
                     }
                     .build();
                 }
-                packet
-                    .controlees
-                    .iter()
-                    .map(|controlee| controlee.clone().into())
-                    .collect()
             }
-            _ => panic!("Payload type not supported!"),
+            UpdateMulticastListAction::AddwithExtendedSubSessionKey => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload::parse(
+                        cmd.get_payload(),
+                    )
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.clone().into())
+                        .collect()
+                } else {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+            }
         };
         let mut controlee_status = Vec::new();
 
@@ -905,19 +931,23 @@ impl Session {
 
         match action {
             UpdateMulticastListAction::Add
-            | UpdateMulticastListAction::AddWithShortSubSessionKey => {
+            | UpdateMulticastListAction::AddWithShortSubSessionKey
+            | UpdateMulticastListAction::AddwithExtendedSubSessionKey => {
                 new_controlees.iter().for_each(|controlee| {
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&MacAddress::Short(controlee.short_address())) {
+                    if !dst_addresses.contains(&controlee.short_address()) {
                         if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
                             status = StatusCode::UciStatusMulticastListFull;
                             update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
                         } else {
-                            dst_addresses.push(MacAddress::Short(controlee.short_address()));
+                            dst_addresses.push(controlee.short_address());
                         };
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: controlee.short_address(),
+                        mac_address: match controlee.short_address() {
+                            MacAddress::Short(address) => address,
+                            MacAddress::Extend(_) => panic!("Extended address is not supported!"),
+                        },
                         subsession_id: controlee.subsession_id(),
                         status: update_status,
                     });
@@ -929,11 +959,11 @@ impl Session {
                     let address = controlee.short_address();
                     let attempt_count = self.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&MacAddress::Short(address)) {
+                    if !dst_addresses.contains(&address) {
                         status = StatusCode::UciStatusAddressNotFound;
                         update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
                     } else {
-                        dst_addresses.retain(|value| *value != MacAddress::Short(address));
+                        dst_addresses.retain(|value| *value != address);
                         // If IN_BAND_TERMINATION_ATTEMPT_COUNT is not equal to 0x00, then the
                         // UWBS shall transmit the RCM with the “Stop Ranging” bit set to ‘1’
                         // for IN_BAND_TERMINATION_ATTEMPT_COUNT times to the corresponding
@@ -942,10 +972,7 @@ impl Session {
                             tokio::spawn(async move {
                                 for _ in 0..attempt_count {
                                     pica_tx
-                                        .send(PicaCommand::StopRanging(
-                                            MacAddress::Short(address),
-                                            session_id,
-                                        ))
+                                        .send(PicaCommand::StopRanging(address, session_id))
                                         .await
                                         .unwrap()
                                 }
@@ -953,7 +980,10 @@ impl Session {
                         }
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: address,
+                        mac_address: match address {
+                            MacAddress::Short(addr) => addr,
+                            MacAddress::Extend(_) => panic!("Extended address is not supported!"),
+                        },
                         subsession_id: controlee.subsession_id(),
                         status: update_status,
                     });
