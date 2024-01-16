@@ -42,7 +42,7 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedFiraMacVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedDeviceRoles, &[0x3]),                // INTIATOR | RESPONDER
     (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
-    (CapTlvType::SupportedStsConfig, &[0x7]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
+    (CapTlvType::SupportedStsConfig, &[0x1f]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY | PROVISIONED_STS | PROVISIONED_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
     (CapTlvType::SupportedMultiNodeModes, &[0xff]),
     (CapTlvType::SupportedRangingTimeStruct, &[0x01]), // Block Based Scheduling (default)
     (CapTlvType::SupportedScheduledMode, &[0x01]),     // Time scheduled ranging (default)
