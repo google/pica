@@ -16,21 +16,13 @@
 
 import asyncio
 import argparse
+
 from pica import Host
 from pica.packets import uci
+from helper import expect_correct_startup
 
 async def controller(host: Host, peer: Host):
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
-
-    host.send_control(
-        uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
-
-    await host.expect_control(
-        uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
-
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
+    await expect_correct_startup(host)
 
     host.send_control(
         uci.SessionInitCmd(
@@ -141,17 +133,7 @@ async def controller(host: Host, peer: Host):
 
 
 async def controlee(host: Host, peer: Host):
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
-
-    host.send_control(
-        uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
-
-    await host.expect_control(
-        uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
-    
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
+    await expect_correct_startup(host)
 
     host.send_control(
         uci.SessionInitCmd(

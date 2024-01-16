@@ -18,21 +18,12 @@ import asyncio
 import argparse
 from pica import Host
 from pica.packets import uci
+from helper import expect_correct_startup
 
 MAX_DATA_PACKET_PAYLOAD_SIZE = 1024
 
 async def data_message_send(host: Host, peer: Host, file: str):
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
-    
-    host.send_control(
-        uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
-
-    await host.expect_control(
-        uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
-    
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
+    await expect_correct_startup(host)
 
     host.send_control(
         uci.SessionInitCmd(
