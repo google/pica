@@ -16,7 +16,7 @@
 //! - [MAC] FiRa Consortium UWB MAC Technical Requirements
 //! - [UCI] FiRa Consortium UWB Command Interface Generic Technical specification
 
-use crate::packets::uci::*;
+use crate::packets::uci::{self, *};
 use crate::{MacAddress, PicaCommand};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -618,45 +618,45 @@ impl AppConfig {
     }
 }
 
-enum ControleeType {
-    V1(Controlee),
-    V2_16Byte(Controlee_V2_0_16_Byte_Version),
-    V2_32Byte(Controlee_V2_0_32_Byte_Version),
+enum SubSessionKey {
+    None,
+    Short([u8; 16]),
+    Extended([u8; 32]),
+}
+struct Controlee {
+    short_address: MacAddress,
+    sub_session_id: u32,
+    #[allow(dead_code)]
+    session_key: SubSessionKey,
 }
 
-impl ControleeType {
-    fn short_address(&self) -> MacAddress {
-        match self {
-            Self::V1(controlee) => MacAddress::Short(controlee.short_address),
-            Self::V2_16Byte(controlee) => MacAddress::Short(controlee.short_address),
-            Self::V2_32Byte(controlee) => MacAddress::Short(controlee.short_address),
+impl From<uci::Controlee> for Controlee {
+    fn from(value: uci::Controlee) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::None,
         }
     }
+}
 
-    fn subsession_id(&self) -> u32 {
-        match self {
-            Self::V1(controlee) => controlee.subsession_id,
-            Self::V2_16Byte(controlee) => controlee.subsession_id,
-            Self::V2_32Byte(controlee) => controlee.subsession_id,
+impl From<uci::Controlee_V2_0_16_Byte_Version> for Controlee {
+    fn from(value: uci::Controlee_V2_0_16_Byte_Version) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::Short(value.subsession_key),
         }
     }
 }
 
-impl From<Controlee> for ControleeType {
-    fn from(value: Controlee) -> Self {
-        ControleeType::V1(value)
-    }
-}
-
-impl From<Controlee_V2_0_16_Byte_Version> for ControleeType {
-    fn from(value: Controlee_V2_0_16_Byte_Version) -> Self {
-        ControleeType::V2_16Byte(value)
-    }
-}
-
-impl From<Controlee_V2_0_32_Byte_Version> for ControleeType {
-    fn from(value: Controlee_V2_0_32_Byte_Version) -> Self {
-        ControleeType::V2_32Byte(value)
+impl From<uci::Controlee_V2_0_32_Byte_Version> for Controlee {
+    fn from(value: uci::Controlee_V2_0_32_Byte_Version) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::Extended(value.subsession_key),
+        }
     }
 }
 
@@ -870,7 +870,7 @@ impl Session {
         }
         let action = UpdateMulticastListAction::from_u8(cmd.get_action().into()).unwrap();
         let mut dst_addresses = self.app_config.dst_mac_addresses.clone();
-        let new_controlees: Vec<ControleeType> = match action {
+        let new_controlees: Vec<Controlee> = match action {
             UpdateMulticastListAction::Add | UpdateMulticastListAction::Delete => {
                 if let Ok(packet) =
                     SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload())
@@ -935,28 +935,40 @@ impl Session {
             | UpdateMulticastListAction::AddwithExtendedSubSessionKey => {
                 new_controlees.iter().for_each(|controlee| {
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
-                    if !dst_addresses.contains(&controlee.short_address()) {
+                    if !dst_addresses.contains(&controlee.short_address) {
                         if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
                             status = StatusCode::UciStatusMulticastListFull;
                             update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
+                        } else if (action == UpdateMulticastListAction::AddWithShortSubSessionKey
+                            || action == UpdateMulticastListAction::AddwithExtendedSubSessionKey)
+                            && self.app_config.sts_config
+                                != StsConfig::ProvisionedForControleeIndividualKey
+                        {
+                            // If Action is 0x02 or 0x03 for STS_CONFIG values other than
+                            // 0x04, the UWBS shall return SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF
+                            // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
+                            // Controlee in the Controlee List.
+                            status = StatusCode::UciStatusFailed;
+                            update_status =
+                                MulticastUpdateStatusCode::StatusErrorSubSessionKeyNotApplicable;
                         } else {
-                            dst_addresses.push(controlee.short_address());
+                            dst_addresses.push(controlee.short_address);
                         };
                     }
                     controlee_status.push(ControleeStatus {
-                        mac_address: match controlee.short_address() {
+                        mac_address: match controlee.short_address {
                             MacAddress::Short(address) => address,
                             MacAddress::Extend(_) => panic!("Extended address is not supported!"),
                         },
-                        subsession_id: controlee.subsession_id(),
+                        subsession_id: controlee.sub_session_id,
                         status: update_status,
                     });
                 });
             }
             UpdateMulticastListAction::Delete => {
-                new_controlees.iter().for_each(|controlee: &ControleeType| {
+                new_controlees.iter().for_each(|controlee: &Controlee| {
                     let pica_tx = self.pica_tx.clone();
-                    let address = controlee.short_address();
+                    let address = controlee.short_address;
                     let attempt_count = self.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                     if !dst_addresses.contains(&address) {
@@ -984,7 +996,7 @@ impl Session {
                             MacAddress::Short(addr) => addr,
                             MacAddress::Extend(_) => panic!("Extended address is not supported!"),
                         },
-                        subsession_id: controlee.subsession_id(),
+                        subsession_id: controlee.sub_session_id,
                         status: update_status,
                     });
                 });
