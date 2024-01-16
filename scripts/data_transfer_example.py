@@ -100,19 +100,19 @@ async def data_transfer(host: Host, dst_mac_address: bytes, file: str, session_i
 
             if len(b) > MAX_DATA_PACKET_PAYLOAD_SIZE:
                 for i in range(0, len(b), MAX_DATA_PACKET_PAYLOAD_SIZE):
-                    section = b[i:i+MAX_DATA_PACKET_PAYLOAD_SIZE]
+                    chunk = b[i:i+MAX_DATA_PACKET_PAYLOAD_SIZE]
 
                     if i + MAX_DATA_PACKET_PAYLOAD_SIZE >= len(b):
                         host.send_data(uci.DataMessageSnd(session_handle=int(session_id),
                                                                 destination_address=int.from_bytes(dst_mac_address),
                                                                 data_sequence_number=seq_num,
-                                                                application_data=section))
+                                                                application_data=chunk))
                     else:
                         host.send_data(uci.DataMessageSnd(session_handle=int(session_id),
                                                                 pbf = uci.PacketBoundaryFlag.NOT_COMPLETE,
                                                                 destination_address=int.from_bytes(dst_mac_address),
                                                                 data_sequence_number=seq_num,
-                                                                application_data=section))
+                                                                application_data=chunk))
                     
                     seq_num += 1
                     if seq_num >= 65535:
@@ -139,14 +139,14 @@ async def run(address: str, uci_port: int, http_port: int, file: str):
     try:
         host0 = await Host.connect(address, uci_port, bytes([0, 1]))
         host1 = await Host.connect(address, uci_port, bytes([0, 2]))
-    except Exception as exn:
+    except Exception:
         print(
             f'Failed to connect to Pica server at address {address}:{uci_port}\n' +
             'Make sure the server is running')
         exit(1)
 
     async with asyncio.TaskGroup() as tg:
-        task0 = tg.create_task(data_message_send(host0, host1, file))
+        tg.create_task(data_message_send(host0, host1, file))
 
     host0.disconnect()
     host1.disconnect()
