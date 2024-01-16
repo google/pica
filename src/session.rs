@@ -630,8 +630,8 @@ struct Controlee {
     session_key: SubSessionKey,
 }
 
-impl From<uci::Controlee> for Controlee {
-    fn from(value: uci::Controlee) -> Self {
+impl From<&uci::Controlee> for Controlee {
+    fn from(value: &uci::Controlee) -> Self {
         Controlee {
             short_address: MacAddress::Short(value.short_address),
             sub_session_id: value.subsession_id,
@@ -640,8 +640,8 @@ impl From<uci::Controlee> for Controlee {
     }
 }
 
-impl From<uci::Controlee_V2_0_16_Byte_Version> for Controlee {
-    fn from(value: uci::Controlee_V2_0_16_Byte_Version) -> Self {
+impl From<&uci::Controlee_V2_0_16_Byte_Version> for Controlee {
+    fn from(value: &uci::Controlee_V2_0_16_Byte_Version) -> Self {
         Controlee {
             short_address: MacAddress::Short(value.short_address),
             sub_session_id: value.subsession_id,
@@ -650,8 +650,8 @@ impl From<uci::Controlee_V2_0_16_Byte_Version> for Controlee {
     }
 }
 
-impl From<uci::Controlee_V2_0_32_Byte_Version> for Controlee {
-    fn from(value: uci::Controlee_V2_0_32_Byte_Version) -> Self {
+impl From<&uci::Controlee_V2_0_32_Byte_Version> for Controlee {
+    fn from(value: &uci::Controlee_V2_0_32_Byte_Version) -> Self {
         Controlee {
             short_address: MacAddress::Short(value.short_address),
             sub_session_id: value.subsession_id,
@@ -878,7 +878,7 @@ impl Session {
                     packet
                         .controlees
                         .iter()
-                        .map(|controlee| controlee.clone().into())
+                        .map(|controlee| controlee.into())
                         .collect()
                 } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
@@ -896,7 +896,7 @@ impl Session {
                     packet
                         .controlees
                         .iter()
-                        .map(|controlee| controlee.clone().into())
+                        .map(|controlee| controlee.into())
                         .collect()
                 } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
@@ -914,7 +914,7 @@ impl Session {
                     packet
                         .controlees
                         .iter()
-                        .map(|controlee| controlee.clone().into())
+                        .map(|controlee| controlee.into())
                         .collect()
                 } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
