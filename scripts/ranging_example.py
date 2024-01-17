@@ -16,21 +16,13 @@
 
 import asyncio
 import argparse
+
 from pica import Host
 from pica.packets import uci
+from helper import init
 
 async def controller(host: Host, peer: Host):
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
-
-    host.send_control(
-        uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
-
-    await host.expect_control(
-        uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
-
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
+    await init(host)
 
     host.send_control(
         uci.SessionInitCmd(
@@ -107,7 +99,7 @@ async def controller(host: Host, peer: Host):
         uci.DeviceStatusNtf(
             device_state=uci.DeviceState.DEVICE_STATE_ACTIVE))
 
-    for n in range(1, 3):
+    for _ in range(1, 3):
         event = await host.expect_control(
             uci.ShortMacTwoWaySessionInfoNtf,
             timeout=2.0)
@@ -141,17 +133,7 @@ async def controller(host: Host, peer: Host):
 
 
 async def controlee(host: Host, peer: Host):
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
-
-    host.send_control(
-        uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
-
-    await host.expect_control(
-        uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
-    
-    await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY))
+    await expect_correct_startup(host)
 
     host.send_control(
         uci.SessionInitCmd(
@@ -228,7 +210,7 @@ async def controlee(host: Host, peer: Host):
         uci.DeviceStatusNtf(
             device_state=uci.DeviceState.DEVICE_STATE_ACTIVE))
 
-    for n in range(1, 3):
+    for _ in range(1, 3):
         event = await host.expect_control(
             uci.ShortMacTwoWaySessionInfoNtf,
             timeout=2.0)
@@ -265,15 +247,15 @@ async def run(address: str, uci_port: int, http_port: int):
     try:
         host0 = await Host.connect(address, uci_port, bytes([0, 1]))
         host1 = await Host.connect(address, uci_port, bytes([0, 2]))
-    except Exception as exn:
+    except Exception:
         print(
             f'Failed to connect to Pica server at address {address}:{uci_port}\n' +
             'Make sure the server is running')
         exit(1)
 
     async with asyncio.TaskGroup() as tg:
-        task0 = tg.create_task(controller(host0, host1))
-        task1 = tg.create_task(controlee(host1, host0))
+        tg.create_task(controller(host0, host1))
+        tg.create_task(controlee(host1, host0))
 
     host0.disconnect()
     host1.disconnect()
