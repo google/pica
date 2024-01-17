@@ -19,10 +19,10 @@ import argparse
 
 from pica import Host
 from pica.packets import uci
-from helper import expect_correct_startup
+from helper import init
 
 async def controller(host: Host, peer: Host):
-    await expect_correct_startup(host)
+    await init(host)
 
     host.send_control(
         uci.SessionInitCmd(

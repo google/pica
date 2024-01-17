@@ -16,7 +16,7 @@ from pica import Host
 from pica.packets import uci
 
 
-async def expect_correct_startup(host: Host):
+async def init(host: Host):
     await host.expect_control(
         uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )

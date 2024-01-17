@@ -18,12 +18,12 @@ import asyncio
 import argparse
 from pica import Host
 from pica.packets import uci
-from helper import expect_correct_startup
+from helper import init
 
 MAX_DATA_PACKET_PAYLOAD_SIZE = 1024
 
 async def data_message_send(host: Host, peer: Host, file: str):
-    await expect_correct_startup(host)
+    await init(host)
 
     host.send_control(
         uci.SessionInitCmd(
