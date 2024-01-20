@@ -133,7 +133,7 @@ async def controller(host: Host, peer: Host):
 
 
 async def controlee(host: Host, peer: Host):
-    await expect_correct_startup(host)
+    await init(host)
 
     host.send_control(
         uci.SessionInitCmd(
