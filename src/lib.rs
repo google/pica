@@ -37,7 +37,7 @@ mod device;
 use device::{Device, MAX_DEVICE};
 
 mod session;
-use session::{AppConfig, MAX_SESSION};
+use session::MAX_SESSION;
 
 mod mac_address;
 pub use mac_address::MacAddress;
@@ -287,42 +287,16 @@ impl Pica {
         }
     }
 
-    fn get_device_mut_by_mac(&mut self, mac_address: MacAddress) -> Option<&mut Device> {
+    fn get_device_mut_by_mac(&mut self, mac_address: &MacAddress) -> Option<&mut Device> {
         self.devices
             .values_mut()
-            .find(|d| d.mac_address == mac_address)
+            .find(|d| d.mac_address == *mac_address)
     }
 
-    fn get_device_by_mac(
-        &self,
-        mac_address: &MacAddress,
-        local_app_config: &AppConfig,
-        session_id: u32,
-    ) -> Option<&Device> {
-        self.devices.values().find(|device| {
-            if let Some(session) = device.get_session(session_id) {
-                session.app_config.device_mac_address == *mac_address
-                    && local_app_config.can_start_ranging_with_peer(&session.app_config)
-                    && session.session_state() == SessionState::SessionStateActive
-            } else {
-                false
-            }
-        })
-    }
-
-    fn get_device_mut_by_mac_and_session_id(
-        &mut self,
-        mac_address: &MacAddress,
-        session_id: u32,
-    ) -> Option<&mut Device> {
-        self.devices.values_mut().find(|device| {
-            if let Some(session) = device.get_session(session_id) {
-                session.app_config.device_mac_address == *mac_address
-                    && session.session_state() == SessionState::SessionStateActive
-            } else {
-                false
-            }
-        })
+    fn get_device_by_mac(&self, mac_address: &MacAddress) -> Option<&Device> {
+        self.devices
+            .values()
+            .find(|d| d.mac_address == *mac_address)
     }
 
     fn send_event(&self, event: PicaEvent) {
@@ -444,18 +418,19 @@ impl Pica {
                     assert!(local.0 == remote.0);
                     measurements.push(make_measurement(mac_address, local, remote));
                 }
-                if let Some(peer_device) =
-                    self.get_device_by_mac(mac_address, &session.app_config, session_id)
-                {
-                    let local: (u16, i16, i8) = device
-                        .position
-                        .compute_range_azimuth_elevation(&peer_device.position);
-                    let remote = peer_device
-                        .position
-                        .compute_range_azimuth_elevation(&device.position);
 
-                    assert!(local.0 == remote.0);
-                    measurements.push(make_measurement(mac_address, local, remote));
+                if let Some(peer_device) = self.get_device_by_mac(mac_address) {
+                    if peer_device.can_start_ranging(session, session_id) {
+                        let local: (u16, i16, i8) = device
+                            .position
+                            .compute_range_azimuth_elevation(&peer_device.position);
+                        let remote = peer_device
+                            .position
+                            .compute_range_azimuth_elevation(&device.position);
+
+                        assert!(local.0 == remote.0);
+                        measurements.push(make_measurement(mac_address, local, remote));
+                    }
                 }
             });
         if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
@@ -552,17 +527,21 @@ impl Pica {
     // Handle the in-band StopRanging command sent from controller to the controlee with
     // corresponding mac_address and session_id.
     async fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
-        if let Some(device) = self.get_device_mut_by_mac_and_session_id(mac_address, session_id) {
-            // If such device with target session is found, stop the ranging session.
-            let session = device.get_session_mut(session_id).unwrap();
-            session.stop_ranging_task();
-            session.set_state(
-                SessionState::SessionStateIdle,
-                ReasonCode::SessionStoppedDueToInbandSignal,
-            );
-            device.n_active_sessions -= 1;
-            if device.n_active_sessions == 0 {
-                device.set_state(DeviceState::DeviceStateReady);
+        if let Some(device) = self.get_device_mut_by_mac(mac_address) {
+            if let Some(session) = device.get_session_mut(session_id) {
+                if session.session_state() == SessionState::SessionStateActive {
+                    session.stop_ranging_task();
+                    session.set_state(
+                        SessionState::SessionStateIdle,
+                        ReasonCode::SessionStoppedDueToInbandSignal,
+                    );
+                    device.n_active_sessions = device.n_active_sessions.saturating_sub(1);
+                    if device.n_active_sessions == 0 {
+                        device.set_state(DeviceState::DeviceStateReady);
+                    }
+                } else {
+                    println!("stop_controlee_ranging: session is not active !");
+                }
             }
         }
     }
@@ -581,7 +560,7 @@ impl Pica {
         println!("  position={:?}", position);
 
         let status = self
-            .get_device_mut_by_mac(mac_address)
+            .get_device_mut_by_mac(&mac_address)
             .ok_or(PicaCommandError::DeviceNotFound(mac_address))
             .map(|uci_device| {
                 uci_device.mac_address = mac_address;
@@ -599,7 +578,7 @@ impl Pica {
         position: Position,
         pica_cmd_rsp_tx: oneshot::Sender<PicaCommandStatus>,
     ) {
-        let mut status = if let Some(uci_device) = self.get_device_mut_by_mac(mac_address) {
+        let mut status = if let Some(uci_device) = self.get_device_mut_by_mac(&mac_address) {
             uci_device.position = position;
             Ok(())
         } else if let Some(anchor) = self.anchors.get_mut(&mac_address) {

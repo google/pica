@@ -637,7 +637,7 @@ impl AppConfig {
         self.raw.get(&id).cloned()
     }
 
-    pub fn can_start_ranging_with_peer(&self, peer_config: &Self) -> bool {
+    pub fn is_compatible_for_ranging(&self, peer_config: &Self) -> bool {
         self == peer_config
             && self.device_role != peer_config.device_role
             && self.device_type != peer_config.device_type
