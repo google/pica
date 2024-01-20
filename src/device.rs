@@ -139,6 +139,18 @@ impl Device {
         self.sessions.get_mut(&session_id)
     }
 
+    pub fn can_start_ranging(&self, peer_session: &Session, session_id: u32) -> bool {
+        match self.get_session(session_id) {
+            Some(session) => {
+                session.session_state() == SessionState::SessionStateActive
+                    && session
+                        .app_config
+                        .is_compatible_for_ranging(&peer_session.app_config)
+            }
+            None => false,
+        }
+    }
+
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
     fn command_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
