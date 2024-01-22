@@ -1,0 +1,5 @@
+[project]
+name = "pica"
+dynamic = ["version"]
+description = "pica python uci packets"
+requires-python = ">=3.10"
