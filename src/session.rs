@@ -235,6 +235,27 @@ pub enum RangeDataNtfConfig {
     EnableAoaEdgeTrig = 0x06,
     EnableProximityAoaEdgeTrig = 0x07,
 }
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum LinkLayerMode {
+    Bypass = 0x00,
+    Assigned = 0x01,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum DataRepetitionCount {
+    NoRepetition = 0x00,
+    Infinite = 0xFF,
+}
+
+#[derive(Copy, Clone, FromPrimitive, ToPrimitive, PartialEq)]
+#[repr(u8)]
+pub enum SessionDataTransferStatusNtfConfig {
+    Disable = 0x00,
+    Enable = 0x01,
+}
 /// cf. [UCI] 8.3 Table 29
 #[derive(Clone)]
 pub struct AppConfig {
@@ -282,12 +303,16 @@ pub struct AppConfig {
     bprf_phr_data_rate: BprfPhrDataRate,
     max_number_of_measurements: u8,
     sts_length: StsLength,
-    uwb_initiation_time: u32,
+    uwb_initiation_time: u64,
     vendor_id: Option<Vec<u8>>,
     static_sts_iv: Option<Vec<u8>>,
     session_key: Option<Vec<u8>>,
     sub_session_key: Option<Vec<u8>>,
     sub_session_id: u32,
+    link_layer_mode: LinkLayerMode,
+    data_repetition_count: DataRepetitionCount,
+    session_data_transfer_status_ntf_config: SessionDataTransferStatusNtfConfig,
+    application_data_endpoint: u8,
 }
 
 impl Default for AppConfig {
@@ -341,6 +366,10 @@ impl Default for AppConfig {
             session_key: None,
             sub_session_key: None,
             sub_session_id: 0,
+            link_layer_mode: LinkLayerMode::Bypass,
+            data_repetition_count: DataRepetitionCount::NoRepetition,
+            session_data_transfer_status_ntf_config: SessionDataTransferStatusNtfConfig::Disable,
+            application_data_endpoint: 0,
         }
     }
 }
@@ -545,7 +574,7 @@ impl AppConfig {
                 self.max_rr_retry = u16::from_le_bytes(value[..].try_into().unwrap())
             }
             AppConfigTlvType::UwbInitiationTime => {
-                self.uwb_initiation_time = u32::from_le_bytes(value[..].try_into().unwrap())
+                self.uwb_initiation_time = u64::from_le_bytes(value[..].try_into().unwrap())
             }
             AppConfigTlvType::HoppingMode => {
                 self.hopping_mode = HoppingMode::from_u8(value[0]).unwrap()
@@ -571,6 +600,17 @@ impl AppConfig {
                 self.sub_session_id = u32::from_le_bytes(value[..].try_into().unwrap())
             }
             AppConfigTlvType::SubsessionKey => self.sub_session_key = Some(value.to_vec()),
+            AppConfigTlvType::LinkLayerMode => {
+                self.link_layer_mode = LinkLayerMode::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::DataRepetitionCount => {
+                self.data_repetition_count = DataRepetitionCount::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::SessionDataTransferStatusNtfConfig => {
+                self.session_data_transfer_status_ntf_config =
+                    SessionDataTransferStatusNtfConfig::from_u8(value[0]).unwrap()
+            }
+            AppConfigTlvType::ApplicationDataEndpoint => self.application_data_endpoint = value[0],
             id => {
                 println!("Ignored AppConfig parameter {:?}", id);
                 return Err(StatusCode::UciStatusInvalidParam);
