@@ -32,6 +32,8 @@ pub const DEFAULT_RANGING_INTERVAL: Duration = time::Duration::from_millis(200);
 pub const DEFAULT_SLOT_DURATION: u16 = 2400; // RTSU unit
 /// cf. [UCI] 8.3 Table 29
 pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
+pub const FIRA_1_1_INITIATION_TIME_SIZE: usize = 4;
+pub const FIRA_2_0_INITIATION_TIME_SIZE: usize = 8;
 
 #[derive(Copy, Clone, FromPrimitive, PartialEq, Eq)]
 pub enum DeviceType {
@@ -574,7 +576,16 @@ impl AppConfig {
                 self.max_rr_retry = u16::from_le_bytes(value[..].try_into().unwrap())
             }
             AppConfigTlvType::UwbInitiationTime => {
-                self.uwb_initiation_time = u64::from_le_bytes(value[..].try_into().unwrap())
+                self.uwb_initiation_time = match value.len() {
+                    // Backward compatible with Fira 1.1 Version UCI host.
+                    FIRA_1_1_INITIATION_TIME_SIZE => {
+                        u32::from_le_bytes(value[..].try_into().unwrap()) as u64
+                    }
+                    FIRA_2_0_INITIATION_TIME_SIZE => {
+                        u64::from_le_bytes(value[..].try_into().unwrap())
+                    }
+                    _ => panic!("Invalid initiation time!"),
+                }
             }
             AppConfigTlvType::HoppingMode => {
                 self.hopping_mode = HoppingMode::from_u8(value[0]).unwrap()
