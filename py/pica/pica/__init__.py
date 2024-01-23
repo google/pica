@@ -1,7 +1,7 @@
-
 import asyncio
 from typing import Union
 from .packets import uci
+
 
 class Host:
     def __init__(self, reader, writer, mac_address: bytes):
@@ -14,9 +14,8 @@ class Host:
         loop = asyncio.get_event_loop()
         self.reader_task = loop.create_task(self._read_packets())
 
-
     @staticmethod
-    async def connect(address: str, port: int, mac_address: bytes) -> 'Host':
+    async def connect(address: str, port: int, mac_address: bytes) -> "Host":
         reader, writer = await asyncio.open_connection(address, port)
         return Host(reader, writer, mac_address)
 
@@ -25,7 +24,7 @@ class Host:
         self.reader_task.cancel()
 
     async def _read_exact(self, expected_len: int) -> bytes:
-        """ Read an exact number of bytes from the socket.
+        """Read an exact number of bytes from the socket.
 
         Raises an exception if the socket gets disconnected."""
         received = bytes()
@@ -35,7 +34,7 @@ class Host:
         return received
 
     async def _read_packet(self) -> bytes:
-        """ Read a single UCI packet from the socket.
+        """Read a single UCI packet from the socket.
 
         The packet is automatically re-assembled if segmented on
         the UCI transport."""
@@ -64,7 +63,7 @@ class Host:
                     pass
 
     async def _read_packets(self):
-        """ Loop reading UCI packets from the socket.
+        """Loop reading UCI packets from the socket.
         Receiving packets are added to the control queue."""
         try:
             while True:
@@ -85,7 +84,7 @@ class Host:
     def send_data(self, packet: uci.DataPacket):
         packet = bytearray(packet.serialize())
         size = len(packet) - 4
-        size_bytes = size.to_bytes(2, byteorder='little')
+        size_bytes = size.to_bytes(2, byteorder="little")
         packet[2] = size_bytes[0]
         packet[3] = size_bytes[1]
         self.writer.write(packet)
