@@ -250,8 +250,6 @@ async def run(address: str, uci_port: int):
         tg.create_task(controller(host0, host1))
         tg.create_task(controlee(host1, host0))
 
-    logging.debug("calling disconnect")
-
     host0.disconnect()
     host1.disconnect()
 

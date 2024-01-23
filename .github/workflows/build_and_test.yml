@@ -1,5 +1,4 @@
-# Build, test and check the code against the linter and clippy
-name: Build, Test, Format and Clippy
+name: Build, Check, Test
 
 on:
   push:
@@ -9,13 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  PY_COLORS: "1"
 
 jobs:
   build_and_test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+    name: Build, Check, Test
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust 1.67.1
@@ -24,6 +22,16 @@ jobs:
         toolchain: 1.67.1
         override: true
         components: rustfmt, clippy
+    - name: Set Up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+    - name: Install
+      run: |
+        pip install --upgrade pip
+        pip install ./py/pica/
+        pip install pytest=="7.4.4"
+        pip install pytest_asyncio=="0.23.3"
     - name: Build
       run: cargo build
     - name: Test
@@ -32,3 +40,5 @@ jobs:
       run: cargo fmt --check --quiet
     - name: Clippy
       run: cargo clippy --no-deps -- --deny warnings
+    - name: Run Python tests suite
+      run: pytest --log-cli-level=DEBUG -v

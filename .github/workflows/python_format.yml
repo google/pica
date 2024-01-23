@@ -8,7 +8,7 @@ on:
 
 jobs:
   format:
-    name: Check Python formatting
+    name: Check format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -20,4 +20,4 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install black=="23.12.1"
-      - run: black --check scripts/ --exclude pica
+      - run: black --check tests/
