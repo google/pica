@@ -15,7 +15,7 @@ PICA_BIN = Path("./target/debug/pica-server")
 DATA_FILE = Path("README.md")
 PICA_LOCALHOST = "127.0.0.1"
 
-logging.basicConfig(level=os.environ.get("PICA_LOGLEVEL", "DEBUG").upper())  # type: ignore
+logging.basicConfig(level=os.environ.get("PICA_LOGLEVEL", "DEBUG").upper())
 
 
 def setup_artifacts(test_name: str) -> Tuple[Path, Path]:

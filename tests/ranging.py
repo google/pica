@@ -268,9 +268,6 @@ def main():
     parser.add_argument(
         "--uci-port", type=int, default=7000, help="Select the pica TCP UCI port"
     )
-    parser.add_argument(
-        "--http-port", type=int, default=3000, help="Select the pica HTTP port"
-    )
     asyncio.run(run(**vars(parser.parse_args())))
 
 

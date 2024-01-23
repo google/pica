@@ -194,9 +194,6 @@ def main():
         "--uci-port", type=int, default=7000, help="Select the pica TCP UCI port"
     )
     parser.add_argument(
-        "--http-port", type=int, default=3000, help="Select the pica HTTP port"
-    )
-    parser.add_argument(
         "--file", type=Path, required=True, help="Select the file to transfer"
     )
     asyncio.run(run(**vars(parser.parse_args())))

@@ -120,19 +120,20 @@ The set of HTTP commands let the user interact with Pica amd modify its scene.
 
 # Tests
 
-setup your python env:
+Setup your python env:
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install pytest
+pip install pytest_asyncio
 pip install -e py/pica/
 ```
 
-Then run the Tests
+Then run the tests
 
 ```bash
 pytest --log-cli-level=DEBUG -v
 ```
 
-The tests are located at `./tests/`
+The tests are located in `./tests/`
