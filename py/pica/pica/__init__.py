@@ -22,6 +22,7 @@ class Host:
 
     def disconnect(self):
         self.writer.close()
+        self.reader_task.cancel()
 
     async def _read_exact(self, expected_len: int) -> bytes:
         """ Read an exact number of bytes from the socket.

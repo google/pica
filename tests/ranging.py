@@ -16,10 +16,11 @@
 
 import asyncio
 import argparse
+import logging
 
 from pica import Host
 from pica.packets import uci
-from helper import init
+from .helper import init
 
 
 async def controller(host: Host, peer: Host):
@@ -234,12 +235,12 @@ async def controlee(host: Host, peer: Host):
     await host.expect_control(uci.SessionDeinitRsp(status=uci.StatusCode.UCI_STATUS_OK))
 
 
-async def run(address: str, uci_port: int, http_port: int):
+async def run(address: str, uci_port: int):
     try:
         host0 = await Host.connect(address, uci_port, bytes([0, 1]))
         host1 = await Host.connect(address, uci_port, bytes([0, 2]))
     except Exception:
-        print(
+        logging.debug(
             f"Failed to connect to Pica server at address {address}:{uci_port}\n"
             + "Make sure the server is running"
         )
@@ -249,10 +250,12 @@ async def run(address: str, uci_port: int, http_port: int):
         tg.create_task(controller(host0, host1))
         tg.create_task(controlee(host1, host0))
 
+    logging.debug("calling disconnect")
+
     host0.disconnect()
     host1.disconnect()
 
-    print("Ranging test completed")
+    logging.debug("Ranging test completed")
 
 
 def main():
