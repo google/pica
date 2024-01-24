@@ -18,12 +18,13 @@ import asyncio
 import argparse
 from pica import Host
 from pica.packets import uci
-from helper import init
+from .helper import init
+from pathlib import Path
 
 MAX_DATA_PACKET_PAYLOAD_SIZE = 1024
 
 
-async def data_message_send(host: Host, peer: Host, file: str):
+async def data_message_send(host: Host, peer: Host, file: Path):
     await init(host)
 
     host.send_control(
@@ -96,7 +97,9 @@ async def data_message_send(host: Host, peer: Host, file: str):
     await host.expect_control(uci.SessionDeinitRsp(status=uci.StatusCode.UCI_STATUS_OK))
 
 
-async def data_transfer(host: Host, dst_mac_address: bytes, file: str, session_id: int):
+async def data_transfer(
+    host: Host, dst_mac_address: bytes, file: Path, session_id: int
+):
     try:
         with open(file, "rb") as f:
             b = f.read()
@@ -158,7 +161,7 @@ async def data_transfer(host: Host, dst_mac_address: bytes, file: str, session_i
         print(e)
 
 
-async def run(address: str, uci_port: int, http_port: int, file: str):
+async def run(address: str, uci_port: int, file: Path):
     try:
         host0 = await Host.connect(address, uci_port, bytes([0, 1]))
         host1 = await Host.connect(address, uci_port, bytes([0, 2]))
@@ -191,10 +194,7 @@ def main():
         "--uci-port", type=int, default=7000, help="Select the pica TCP UCI port"
     )
     parser.add_argument(
-        "--http-port", type=int, default=3000, help="Select the pica HTTP port"
-    )
-    parser.add_argument(
-        "--file", type=str, required=True, help="Select the file to transfer"
+        "--file", type=Path, required=True, help="Select the file to transfer"
     )
     asyncio.run(run(**vars(parser.parse_args())))
 
