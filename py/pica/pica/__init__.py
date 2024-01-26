@@ -1,6 +1,8 @@
 import asyncio
-from typing import Union
+from typing import Union, Type, TypeVar
 from .packets import uci
+
+UciPacket = TypeVar("UciPacket", uci.DataPacket, uci.ControlPacket)
 
 
 class Host:
@@ -89,8 +91,25 @@ class Host:
         packet[3] = size_bytes[1]
         self.writer.write(packet)
 
+    async def expect_data(
+        self,
+        expected: Union[Type[uci.DataPacket], uci.DataPacket],
+        timeout: float = 1.0,
+    ) -> uci.DataPacket:
+        """Wait for a data packet being sent from the controller.
+
+        Raises ValueError if the packet is not well formatted.
+        Raises ValueError if the packet does not match the expected type or value.
+        Raises TimeoutError if no packet is received after `timeout` seconds.
+        Returns the received packet on success.
+        """
+
+        return await self._expect_packet(expected, uci.DataPacket, timeout)
+
     async def expect_control(
-        self, expected: Union[type, uci.ControlPacket], timeout: float = 1.0
+        self,
+        expected: Union[Type[uci.ControlPacket], uci.ControlPacket],
+        timeout: float = 1.0,
     ) -> uci.ControlPacket:
         """Wait for a control packet being sent from the controller.
 
@@ -100,8 +119,24 @@ class Host:
         Returns the received packet on success.
         """
 
+        return await self._expect_packet(expected, uci.ControlPacket, timeout)
+
+    async def _expect_packet(
+        self,
+        expected: Union[Type[UciPacket], UciPacket],
+        expected_packet_type: Type[UciPacket],
+        timeout: float = 1.0,
+    ) -> UciPacket:
+        """Wait for a packet being sent from the controller.
+
+        Raises ValueError if the packet is not well formatted.
+        Raises ValueError if the packet does not match the expected type or value.
+        Raises TimeoutError if no packet is received after `timeout` seconds.
+        Returns the received packet on success.
+        """
+
         packet = await asyncio.wait_for(self._recv_control(), timeout=timeout)
-        received = uci.ControlPacket.parse_all(packet)
+        received = expected_packet_type.parse_all(packet)
 
         if isinstance(expected, type) and not isinstance(received, expected):
             raise ValueError(
@@ -109,7 +144,7 @@ class Host:
                 + f" expected {expected.__name__}"
             )
 
-        if isinstance(expected, uci.ControlPacket) and received != expected:
+        if isinstance(expected, expected_packet_type) and received != expected:
             raise ValueError(
                 f"received unexpected packet {received.__class__.__name__},"
                 + f" expected {expected.__class__.__name__}"
