@@ -83,7 +83,7 @@ pub mod uci {
                     .read_exact(&mut complete_packet[0..HEADER_SIZE])
                     .await?;
                 let common_packet_header =
-                    PacketHeader::parse(&complete_packet[0..COMMON_HEADER_SIZE])?;
+                    CommonPacketHeader::parse(&complete_packet[0..COMMON_HEADER_SIZE])?;
 
                 // Read the packet payload.
                 let payload_length = match common_packet_header.get_mt() {
