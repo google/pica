@@ -1,8 +1,8 @@
 # File generated from <stdin>, with the command:
-#  pdlc src/uci_packets/pdl | pdl-compiler/scripts/generate_python_backend.py
+#  ./pdl-compiler/scripts/generate_python_backend.py
 # /!\ Do not edit by hand.
 from dataclasses import dataclass, field, fields
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 import enum
 import inspect
 import math
@@ -86,6 +86,14 @@ class PacketBoundaryFlag(enum.IntEnum):
     COMPLETE = 0x0
     NOT_COMPLETE = 0x1
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'PacketBoundaryFlag']:
+        try:
+            return PacketBoundaryFlag(v)
+        except ValueError as exn:
+            raise exn
+
+
 class GroupId(enum.IntEnum):
     CORE = 0x0
     SESSION_CONFIG = 0x1
@@ -99,9 +107,25 @@ class GroupId(enum.IntEnum):
     VENDOR_RESERVED_E = 0xe
     VENDOR_RESERVED_F = 0xf
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'GroupId']:
+        try:
+            return GroupId(v)
+        except ValueError as exn:
+            raise exn
+
+
 class DataPacketFormat(enum.IntEnum):
     DATA_SND = 0x1
     DATA_RCV = 0x2
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DataPacketFormat']:
+        try:
+            return DataPacketFormat(v)
+        except ValueError as exn:
+            raise exn
+
 
 class GroupIdOrDataPacketFormat(enum.IntEnum):
     CORE = 0x0
@@ -116,6 +140,14 @@ class GroupIdOrDataPacketFormat(enum.IntEnum):
     VENDOR_RESERVED_E = 0xe
     VENDOR_RESERVED_F = 0xf
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'GroupIdOrDataPacketFormat']:
+        try:
+            return GroupIdOrDataPacketFormat(v)
+        except ValueError as exn:
+            raise exn
+
+
 class CoreOpCode(enum.IntEnum):
     CORE_DEVICE_RESET = 0x0
     CORE_DEVICE_STATUS_NTF = 0x1
@@ -126,6 +158,14 @@ class CoreOpCode(enum.IntEnum):
     CORE_DEVICE_SUSPEND = 0x6
     CORE_GENERIC_ERROR_NTF = 0x7
     CORE_QUERY_UWBS_TIMESTAMP = 0x8
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'CoreOpCode']:
+        try:
+            return CoreOpCode(v)
+        except ValueError as exn:
+            raise exn
+
 
 class SessionConfigOpCode(enum.IntEnum):
     SESSION_INIT = 0x0
@@ -142,6 +182,14 @@ class SessionConfigOpCode(enum.IntEnum):
     SESSION_QUERY_DATA_SIZE_IN_RANGING = 0xb
     SESSION_SET_HUS_CONFIG = 0xc
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'SessionConfigOpCode']:
+        try:
+            return SessionConfigOpCode(v)
+        except ValueError as exn:
+            raise exn
+
+
 class SessionControlOpCode(enum.IntEnum):
     SESSION_START = 0x0
     SESSION_STOP = 0x1
@@ -150,14 +198,38 @@ class SessionControlOpCode(enum.IntEnum):
     SESSION_DATA_CREDIT_NTF = 0x4
     SESSION_DATA_TRANSFER_STATUS_NTF = 0x5
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'SessionControlOpCode']:
+        try:
+            return SessionControlOpCode(v)
+        except ValueError as exn:
+            raise exn
+
+
 class AppDataOpCode(enum.IntEnum):
     APP_DATA_TX = 0x0
     APP_DATA_RX = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'AppDataOpCode']:
+        try:
+            return AppDataOpCode(v)
+        except ValueError as exn:
+            raise exn
+
 
 class AndroidOpCode(enum.IntEnum):
     ANDROID_GET_POWER_STATS = 0x0
     ANDROID_SET_COUNTRY_CODE = 0x1
     ANDROID_FIRA_RANGE_DIAGNOSTICS = 0x2
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'AndroidOpCode']:
+        try:
+            return AndroidOpCode(v)
+        except ValueError as exn:
+            raise exn
+
 
 class StatusCode(enum.IntEnum):
     UCI_STATUS_OK = 0x0
@@ -173,8 +245,6 @@ class StatusCode(enum.IntEnum):
     UCI_STATUS_COMMAND_RETRY = 0xa
     UCI_STATUS_UNKNOWN = 0xb
     UCI_STATUS_NOT_APPLICABLE = 0xc
-    RFU_STATUS_CODE_RANGE_1_START = 0xd
-    RFU_STATUS_CODE_RANGE_1_END = 0x10
     UCI_STATUS_SESSION_NOT_EXIST = 0x11
     UCI_STATUS_SESSION_DUPLICATE = 0x12
     UCI_STATUS_SESSION_ACTIVE = 0x13
@@ -186,8 +256,6 @@ class StatusCode(enum.IntEnum):
     UCI_STATUS_ADDRESS_ALREADY_PRESENT = 0x19
     UCI_STATUS_ERROR_UWB_INITIATION_TIME_TOO_OLD = 0x1a
     UCI_STATUS_OK_NEGATIVE_DISTANCE_REPORT = 0x1b
-    RFU_STATUS_CODE_RANGE_2_START = 0x1c
-    RFU_STATUS_CODE_RANGE_2_END = 0x1f
     UCI_STATUS_RANGING_TX_FAILED = 0x20
     UCI_STATUS_RANGING_RX_TIMEOUT = 0x21
     UCI_STATUS_RANGING_RX_PHY_DEC_FAILED = 0x22
@@ -199,24 +267,42 @@ class StatusCode(enum.IntEnum):
     UCI_STATUS_ERROR_ROUND_INDEX_NOT_ACTIVATED = 0x28
     UCI_STATUS_ERROR_NUMBER_OF_ACTIVE_RANGING_ROUNDS_EXCEEDED = 0x29
     UCI_STATUS_ERROR_DL_TDOA_DEVICE_ADDRESS_NOT_MATCHING_IN_REPLY_TIME_LIST = 0x2a
-    RFU_STATUS_CODE_RANGE_3_START = 0x2b
-    RFU_STATUS_CODE_RANGE_3_END = 0x2f
     UCI_STATUS_DATA_MAX_TX_PSDU_SIZE_EXCEEDED = 0x30
     UCI_STATUS_DATA_RX_CRC_ERROR = 0x31
-    RFU_STATUS_CODE_RANGE_4_START = 0x32
-    RFU_STATUS_CODE_RANGE_4_END = 0x4f
-    VENDOR_SPECIFIC_STATUS_CODE_RANGE_1_START = 0x50
-    VENDOR_SPECIFIC_STATUS_CODE_RANGE_1_END = 0xfe
     VENDOR_SPECIFIC_STATUS_CODE_2 = 0xff
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'StatusCode']:
+        try:
+            return StatusCode(v)
+        except ValueError as exn:
+            return v
+
 
 class DataRcvStatusCode(enum.IntEnum):
     UCI_STATUS_SUCCESS = 0x0
     UCI_STATUS_ERROR = 0x1
     UCI_STATUS_UNKNOWN = 0x2
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DataRcvStatusCode']:
+        try:
+            return DataRcvStatusCode(v)
+        except ValueError as exn:
+            raise exn
+
+
 class CreditAvailability(enum.IntEnum):
     CREDIT_NOT_AVAILABLE = 0x0
     CREDIT_AVAILABLE = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'CreditAvailability']:
+        try:
+            return CreditAvailability(v)
+        except ValueError as exn:
+            raise exn
+
 
 class DataTransferNtfStatusCode(enum.IntEnum):
     UCI_DATA_TRANSFER_STATUS_REPETITION_OK = 0x0
@@ -228,12 +314,36 @@ class DataTransferNtfStatusCode(enum.IntEnum):
     UCI_DATA_TRANSFER_STATUS_ERROR_DATA_TRANSFER_IS_ONGOING = 0x6
     UCI_DATA_TRANSFER_STATUS_INVALID_FORMAT = 0x7
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DataTransferNtfStatusCode']:
+        try:
+            return DataTransferNtfStatusCode(v)
+        except ValueError as exn:
+            raise exn
+
+
 class ResetConfig(enum.IntEnum):
     UWBS_RESET = 0x0
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'ResetConfig']:
+        try:
+            return ResetConfig(v)
+        except ValueError as exn:
+            raise exn
+
 
 class DeviceConfigId(enum.IntEnum):
     DEVICE_STATE = 0x0
     LOW_POWER_MODE = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DeviceConfigId']:
+        try:
+            return DeviceConfigId(v)
+        except ValueError as exn:
+            raise exn
+
 
 class AppConfigTlvType(enum.IntEnum):
     DEVICE_TYPE = 0x0
@@ -269,6 +379,7 @@ class AppConfigTlvType(enum.IntEnum):
     RESPONDER_SLOT_INDEX = 0x1e
     PRF_MODE = 0x1f
     CAP_SIZE_RANGE = 0x20
+    TX_JITTER_WINDOW_SIZE = 0x21
     SCHEDULED_MODE = 0x22
     KEY_ROTATION = 0x23
     KEY_ROTATION_RATE = 0x24
@@ -296,24 +407,44 @@ class AppConfigTlvType(enum.IntEnum):
     MIN_FRAMES_PER_RR = 0x3a
     MTU_SIZE = 0x3b
     INTER_FRAME_INTERVAL = 0x3c
-    RFU_APP_CFG_TLV_TYPE_RANGE_1_START = 0x3d
-    RFU_APP_CFG_TLV_TYPE_RANGE_1_END = 0x44
+    DL_TDOA_RANGING_METHOD = 0x3d
+    DL_TDOA_TX_TIMESTAMP_CONF = 0x3e
+    DL_TDOA_HOP_COUNT = 0x3f
+    DL_TDOA_ANCHOR_CFO = 0x40
+    DL_TDOA_ANCHOR_LOCATION = 0x41
+    DL_TDOA_TX_ACTIVE_RANGING_ROUNDS = 0x42
+    DL_TDOA_BLOCK_STRIDING = 0x43
+    DL_TDOA_TIME_REFERENCE_ANCHOR = 0x44
     SESSION_KEY = 0x45
     SUBSESSION_KEY = 0x46
     SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG = 0x47
-    RFU_APP_CFG_TLV_TYPE_RANGE_2_START = 0x48
-    RFU_APP_CFG_TLV_TYPE_RANGE_2_END = 0x9f
-    VENDOR_SPECIFIC_APP_CFG_TLV_TYPE_RANGE_1_START = 0xa0
-    VENDOR_SPECIFIC_APP_CFG_TLV_TYPE_RANGE_1_END = 0xdf
-    RFU_APP_CFG_TLV_TYPE_RANGE_3_START = 0xe0
-    RFU_APP_CFG_TLV_TYPE_RANGE_3_END = 0xe2
-    VENDOR_SPECIFIC_APP_CFG_TLV_TYPE_RANGE_2_START = 0xe3
-    VENDOR_SPECIFIC_APP_CFG_TLV_TYPE_RANGE_2_END = 0xff
+    SESSION_TIME_BASE = 0x48
+    DL_TDOA_RESPONDER_TOF = 0x49
+    SECURE_RANGING_NEFA_LEVEL = 0x4a
+    SECURE_RANGING_CSW_LENGTH = 0x4b
+    APPLICATION_DATA_ENDPOINT = 0x4c
+    OWR_AOA_MEASUREMENT_NTF_PERIOD = 0x4d
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'AppConfigTlvType']:
+        try:
+            return AppConfigTlvType(v)
+        except ValueError as exn:
+            return v
+
 
 class FrameReportTlvType(enum.IntEnum):
     RSSI = 0x0
     AOA = 0x1
     CIR = 0x2
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'FrameReportTlvType']:
+        try:
+            return FrameReportTlvType(v)
+        except ValueError as exn:
+            raise exn
+
 
 class CapTlvType(enum.IntEnum):
     SUPPORTED_FIRA_PHY_VERSION_RANGE = 0x0
@@ -336,17 +467,15 @@ class CapTlvType(enum.IntEnum):
     SUPPORTED_EXTENDED_MAC_ADDRESS = 0x11
     SUPPORTED_MAX_MESSAGE_SIZE = 0x12
     SUPPORTED_MAX_DATA_PACKET_PAYLOAD_SIZE = 0x13
-    RFU_CAP_TLV_TYPE_RANGE_1_START = 0x14
-    RFU_CAP_TLV_TYPE_RANGE_1_END = 0x9f
-    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_1_START = 0xa0
-    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_1_END = 0xbf
     SUPPORTED_POWER_STATS = 0xc0
-    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_2_START = 0xc1
-    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_2_END = 0xdf
-    RFU_CAP_TLV_TYPE_RANGE_2_START = 0xe0
-    RFU_CAP_TLV_TYPE_RANGE_2_END = 0xe2
-    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_3_START = 0xe3
-    VENDOR_SPECIFIC_CAP_TLV_TYPE_RANGE_3_END = 0xff
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'CapTlvType']:
+        try:
+            return CapTlvType(v)
+        except ValueError as exn:
+            return v
+
 
 class AoaResultReqType(enum.IntEnum):
     AOA_DISABLE = 0x0
@@ -355,16 +484,40 @@ class AoaResultReqType(enum.IntEnum):
     AOA_ENABLE_ELEVATION = 0x3
     AOA_ENABLE_INTERLEAVED = 0xf0
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'AoaResultReqType']:
+        try:
+            return AoaResultReqType(v)
+        except ValueError as exn:
+            raise exn
+
+
 class DeviceState(enum.IntEnum):
     DEVICE_STATE_READY = 0x1
     DEVICE_STATE_ACTIVE = 0x2
     DEVICE_STATE_ERROR = 0xff
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DeviceState']:
+        try:
+            return DeviceState(v)
+        except ValueError as exn:
+            raise exn
+
 
 class SessionState(enum.IntEnum):
     SESSION_STATE_INIT = 0x0
     SESSION_STATE_DEINIT = 0x1
     SESSION_STATE_ACTIVE = 0x2
     SESSION_STATE_IDLE = 0x3
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'SessionState']:
+        try:
+            return SessionState(v)
+        except ValueError as exn:
+            raise exn
+
 
 class ReasonCode(enum.IntEnum):
     STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS = 0x0
@@ -373,8 +526,6 @@ class ReasonCode(enum.IntEnum):
     SESSION_SUSPENDED_DUE_TO_INBAND_SIGNAL = 0x3
     SESSION_RESUMED_DUE_TO_INBAND_SIGNAL = 0x4
     SESSION_STOPPED_DUE_TO_INBAND_SIGNAL = 0x5
-    RFU_REASON_CODE_RANGE_1_START = 0x6
-    RFU_REASON_CODE_RANGE_1_END = 0x1c
     ERROR_INVALID_UL_TDOA_RANDOM_WINDOW = 0x1d
     ERROR_MIN_RFRAMES_PER_RR_NOT_SUPPORTED = 0x1e
     ERROR_TX_DELAY_NOT_SUPPORTED = 0x1f
@@ -410,11 +561,15 @@ class ReasonCode(enum.IntEnum):
     ERROR_REF_UWB_SESSION_RANGING_DURATION_MISMATCH = 0x3d
     ERROR_REF_UWB_SESSION_INVALID_OFFSET_TIME = 0x3e
     ERROR_REF_UWB_SESSION_LOST = 0x3f
-    RFU_REASON_CODE_RANGE_2_START = 0x40
-    RFU_REASON_CODE_RANGE_2_END = 0x7f
-    VENDOR_SPECIFIC_REASON_CODE_RANGE_1_START = 0x80
-    VENDOR_SPECIFIC_REASON_CODE_RANGE_1_END = 0xfe
     VENDOR_SPECIFIC_REASON_CODE_2 = 0xff
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'ReasonCode']:
+        try:
+            return ReasonCode(v)
+        except ValueError as exn:
+            return v
+
 
 class MulticastUpdateStatusCode(enum.IntEnum):
     STATUS_OK_MULTICAST_LIST_UPDATE = 0x0
@@ -426,9 +581,25 @@ class MulticastUpdateStatusCode(enum.IntEnum):
     STATUS_ERROR_SESSION_KEY_NOT_FOUND = 0x7
     STATUS_ERROR_ADDRESS_ALREADY_PRESENT = 0x8
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'MulticastUpdateStatusCode']:
+        try:
+            return MulticastUpdateStatusCode(v)
+        except ValueError as exn:
+            raise exn
+
+
 class MacAddressIndicator(enum.IntEnum):
     SHORT_ADDRESS = 0x0
     EXTENDED_ADDRESS = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'MacAddressIndicator']:
+        try:
+            return MacAddressIndicator(v)
+        except ValueError as exn:
+            raise exn
+
 
 class SessionType(enum.IntEnum):
     FIRA_RANGING_SESSION = 0x0
@@ -440,6 +611,14 @@ class SessionType(enum.IntEnum):
     CCC = 0xa0
     DEVICE_TEST_MODE = 0xd0
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'SessionType']:
+        try:
+            return SessionType(v)
+        except ValueError as exn:
+            raise exn
+
+
 class MessageType(enum.IntEnum):
     DATA = 0x0
     COMMAND = 0x1
@@ -448,8 +627,16 @@ class MessageType(enum.IntEnum):
     RESERVED_FOR_TESTING_1 = 0x4
     RESERVED_FOR_TESTING_2 = 0x5
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'MessageType']:
+        try:
+            return MessageType(v)
+        except ValueError as exn:
+            raise exn
+
+
 @dataclass
-class PacketHeader(Packet):
+class CommonPacketHeader(Packet):
     pbf: PacketBoundaryFlag = field(kw_only=True, default=PacketBoundaryFlag.COMPLETE)
     mt: MessageType = field(kw_only=True, default=MessageType.DATA)
 
@@ -457,14 +644,14 @@ class PacketHeader(Packet):
         pass
 
     @staticmethod
-    def parse(span: bytes) -> Tuple['PacketHeader', bytes]:
+    def parse(span: bytes) -> Tuple['CommonPacketHeader', bytes]:
         fields = {'payload': None}
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['pbf'] = PacketBoundaryFlag((span[0] >> 4) & 0x1)
-        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        fields['pbf'] = PacketBoundaryFlag.from_int((span[0] >> 4) & 0x1)
+        fields['mt'] = MessageType.from_int((span[0] >> 5) & 0x7)
         span = span[1:]
-        return PacketHeader(**fields), span
+        return CommonPacketHeader(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
         _span = bytearray()
@@ -493,8 +680,8 @@ class ControlPacketHeader(Packet):
         fields = {'payload': None}
         if len(span) < 4:
             raise Exception('Invalid packet size')
-        fields['pbf'] = PacketBoundaryFlag((span[0] >> 4) & 0x1)
-        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        fields['pbf'] = PacketBoundaryFlag.from_int((span[0] >> 4) & 0x1)
+        fields['mt'] = MessageType.from_int((span[0] >> 5) & 0x7)
         value_ = int.from_bytes(span[1:3], byteorder='little')
         fields['payload_length'] = span[3]
         span = span[4:]
@@ -532,8 +719,8 @@ class DataPacketHeader(Packet):
         fields = {'payload': None}
         if len(span) < 4:
             raise Exception('Invalid packet size')
-        fields['pbf'] = PacketBoundaryFlag((span[0] >> 4) & 0x1)
-        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        fields['pbf'] = PacketBoundaryFlag.from_int((span[0] >> 4) & 0x1)
+        fields['mt'] = MessageType.from_int((span[0] >> 5) & 0x7)
         value_ = int.from_bytes(span[2:4], byteorder='little')
         fields['payload_length'] = value_
         span = span[4:]
@@ -571,8 +758,8 @@ class ControlPacket(Packet):
         fields = {'payload': None}
         if len(span) < 4:
             raise Exception('Invalid packet size')
-        fields['gid'] = GroupId((span[0] >> 0) & 0xf)
-        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        fields['gid'] = GroupId.from_int((span[0] >> 0) & 0xf)
+        fields['mt'] = MessageType.from_int((span[0] >> 5) & 0x7)
         fields['opcode'] = (span[1] >> 0) & 0x3f
         value_ = int.from_bytes(span[2:4], byteorder='little')
         span = span[4:]
@@ -810,9 +997,9 @@ class DataPacket(Packet):
         fields = {'payload': None}
         if len(span) < 4:
             raise Exception('Invalid packet size')
-        fields['dpf'] = DataPacketFormat((span[0] >> 0) & 0xf)
-        fields['pbf'] = PacketBoundaryFlag((span[0] >> 4) & 0x1)
-        fields['mt'] = MessageType((span[0] >> 5) & 0x7)
+        fields['dpf'] = DataPacketFormat.from_int((span[0] >> 0) & 0xf)
+        fields['pbf'] = PacketBoundaryFlag.from_int((span[0] >> 4) & 0x1)
+        fields['mt'] = MessageType.from_int((span[0] >> 5) & 0x7)
         value_ = int.from_bytes(span[2:4], byteorder='little')
         span = span[4:]
         payload = span
@@ -919,7 +1106,7 @@ class DataMessageRcv(DataPacket):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_handle'] = value_
-        fields['status'] = StatusCode(span[4])
+        fields['status'] = StatusCode.from_int(span[4])
         value_ = int.from_bytes(span[5:13], byteorder='little')
         fields['source_address'] = value_
         value_ = int.from_bytes(span[13:15], byteorder='little')
@@ -1059,7 +1246,7 @@ class UciCommand(ControlPacket):
 
 @dataclass
 class UciResponse(ControlPacket):
-
+    
 
     def __post_init__(self):
         self.mt = MessageType.RESPONSE
@@ -1172,7 +1359,7 @@ class UciResponse(ControlPacket):
 
 @dataclass
 class UciNotification(ControlPacket):
-
+    
 
     def __post_init__(self):
         self.mt = MessageType.NOTIFICATION
@@ -1229,7 +1416,7 @@ class UciNotification(ControlPacket):
 
 @dataclass
 class CoreCommand(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.CORE
@@ -1279,7 +1466,7 @@ class CoreCommand(UciCommand):
 
 @dataclass
 class CoreResponse(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.CORE
@@ -1329,7 +1516,7 @@ class CoreResponse(UciResponse):
 
 @dataclass
 class CoreNotification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.CORE
@@ -1363,7 +1550,7 @@ class CoreNotification(UciNotification):
 
 @dataclass
 class SessionConfigCommand(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.SESSION_CONFIG
@@ -1429,7 +1616,7 @@ class SessionConfigCommand(UciCommand):
 
 @dataclass
 class SessionConfigResponse(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.SESSION_CONFIG
@@ -1499,7 +1686,7 @@ class SessionConfigResponse(UciResponse):
 
 @dataclass
 class SessionConfigNotification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.SESSION_CONFIG
@@ -1580,7 +1767,7 @@ class SessionControlCommand(UciCommand):
 
 @dataclass
 class SessionControlResponse(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.SESSION_CONTROL
@@ -1618,7 +1805,7 @@ class SessionControlResponse(UciResponse):
 
 @dataclass
 class SessionControlNotification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.SESSION_CONTROL
@@ -1656,7 +1843,7 @@ class SessionControlNotification(UciNotification):
 
 @dataclass
 class AndroidCommand(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_ANDROID
@@ -1690,7 +1877,7 @@ class AndroidCommand(UciCommand):
 
 @dataclass
 class AndroidResponse(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_ANDROID
@@ -1724,7 +1911,7 @@ class AndroidResponse(UciResponse):
 
 @dataclass
 class AndroidNotification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_ANDROID
@@ -1767,7 +1954,7 @@ class DeviceResetCmd(CoreCommand):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['reset_config'] = ResetConfig(span[0])
+        fields['reset_config'] = ResetConfig.from_int(span[0])
         span = span[1:]
         return DeviceResetCmd(**fields), span
 
@@ -1795,7 +1982,7 @@ class DeviceResetRsp(CoreResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return DeviceResetRsp(**fields), span
 
@@ -1823,7 +2010,7 @@ class DeviceStatusNtf(CoreNotification):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['device_state'] = DeviceState(span[0])
+        fields['device_state'] = DeviceState.from_int(span[0])
         span = span[1:]
         return DeviceStatusNtf(**fields), span
 
@@ -1838,7 +2025,7 @@ class DeviceStatusNtf(CoreNotification):
 
 @dataclass
 class GetDeviceInfoCmd(CoreCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 2
@@ -1879,7 +2066,7 @@ class GetDeviceInfoRsp(CoreResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 10:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         value_ = int.from_bytes(span[1:3], byteorder='little')
         fields['uci_version'] = value_
         value_ = int.from_bytes(span[3:5], byteorder='little')
@@ -1928,7 +2115,7 @@ class GetDeviceInfoRsp(CoreResponse):
 
 @dataclass
 class GetCapsInfoCmd(CoreCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 3
@@ -1962,7 +2149,7 @@ class CapTlv(Packet):
         fields = {'payload': None}
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['t'] = CapTlvType(span[0])
+        fields['t'] = CapTlvType.from_int(span[0])
         v_count = span[1]
         span = span[2:]
         if len(span) < v_count:
@@ -2001,7 +2188,7 @@ class GetCapsInfoRsp(CoreResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         tlvs_count = span[1]
         span = span[2:]
         tlvs = []
@@ -2039,7 +2226,7 @@ class DeviceConfigTlv(Packet):
         fields = {'payload': None}
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['cfg_id'] = DeviceConfigId(span[0])
+        fields['cfg_id'] = DeviceConfigId.from_int(span[0])
         v_count = span[1]
         span = span[2:]
         if len(span) < v_count:
@@ -2113,8 +2300,8 @@ class DeviceConfigStatus(Packet):
         fields = {'payload': None}
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['cfg_id'] = DeviceConfigId(span[0])
-        fields['status'] = StatusCode(span[1])
+        fields['cfg_id'] = DeviceConfigId.from_int(span[0])
+        fields['status'] = StatusCode.from_int(span[1])
         span = span[2:]
         return DeviceConfigStatus(**fields), span
 
@@ -2144,7 +2331,7 @@ class SetConfigRsp(CoreResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         cfg_status_count = span[1]
         span = span[2:]
         if len(span) < cfg_status_count * 2:
@@ -2223,7 +2410,7 @@ class GetConfigRsp(CoreResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         tlvs_count = span[1]
         span = span[2:]
         tlvs = []
@@ -2263,7 +2450,7 @@ class GenericError(CoreNotification):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return GenericError(**fields), span
 
@@ -2278,7 +2465,7 @@ class GenericError(CoreNotification):
 
 @dataclass
 class CoreQueryTimeStampCmd(CoreCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 8
@@ -2315,7 +2502,7 @@ class CoreQueryTimeStampRsp(CoreResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 9:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         value_ = int.from_bytes(span[1:9], byteorder='little')
         fields['timeStamp'] = value_
         span = span[9:]
@@ -2352,7 +2539,7 @@ class SessionInitCmd(SessionConfigCommand):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_id'] = value_
-        fields['session_type'] = SessionType(span[4])
+        fields['session_type'] = SessionType.from_int(span[4])
         span = span[5:]
         return SessionInitCmd(**fields), span
 
@@ -2385,7 +2572,7 @@ class SessionInitRsp_V2(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 5:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         value_ = int.from_bytes(span[1:5], byteorder='little')
         fields['session_handle'] = value_
         span = span[5:]
@@ -2419,7 +2606,7 @@ class SessionInitRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return SessionInitRsp(**fields), span
 
@@ -2479,7 +2666,7 @@ class SessionDeinitRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return SessionDeinitRsp(**fields), span
 
@@ -2511,7 +2698,7 @@ class SessionStatusNtf(SessionConfigNotification):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
-        fields['session_state'] = SessionState(span[4])
+        fields['session_state'] = SessionState.from_int(span[4])
         fields['reason_code'] = span[5]
         span = span[6:]
         return SessionStatusNtf(**fields), span
@@ -2546,7 +2733,7 @@ class AppConfigTlv(Packet):
         fields = {'payload': None}
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['cfg_id'] = AppConfigTlvType(span[0])
+        fields['cfg_id'] = AppConfigTlvType.from_int(span[0])
         v_count = span[1]
         span = span[2:]
         if len(span) < v_count:
@@ -2627,8 +2814,8 @@ class AppConfigStatus(Packet):
         fields = {'payload': None}
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['cfg_id'] = AppConfigTlvType(span[0])
-        fields['status'] = StatusCode(span[1])
+        fields['cfg_id'] = AppConfigTlvType.from_int(span[0])
+        fields['status'] = StatusCode.from_int(span[1])
         span = span[2:]
         return AppConfigStatus(**fields), span
 
@@ -2658,7 +2845,7 @@ class SessionSetAppConfigRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         cfg_status_count = span[1]
         span = span[2:]
         if len(span) < cfg_status_count * 2:
@@ -2744,7 +2931,7 @@ class SessionGetAppConfigRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         tlvs_count = span[1]
         span = span[2:]
         tlvs = []
@@ -2771,7 +2958,7 @@ class SessionGetAppConfigRsp(SessionConfigResponse):
 
 @dataclass
 class SessionGetCountCmd(SessionConfigCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 5
@@ -2808,7 +2995,7 @@ class SessionGetCountRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         fields['session_count'] = span[1]
         span = span[2:]
         return SessionGetCountRsp(**fields), span
@@ -2874,8 +3061,8 @@ class SessionGetStateRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
-        fields['session_state'] = SessionState(span[1])
+        fields['status'] = StatusCode.from_int(span[0])
+        fields['session_state'] = SessionState.from_int(span[1])
         span = span[2:]
         return SessionGetStateRsp(**fields), span
 
@@ -2948,7 +3135,7 @@ class SessionUpdateDtTagRangingRoundsRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 2:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         ranging_round_indexes_count = span[1]
         span = span[2:]
         if len(span) < ranging_round_indexes_count:
@@ -3094,6 +3281,14 @@ class UpdateMulticastListAction(enum.IntEnum):
     ADD_CONTROLEE_WITH_SHORT_SUB_SESSION_KEY = 0x2
     ADD_CONTROLEE_WITH_LONG_SUB_SESSION_KEY = 0x3
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'UpdateMulticastListAction']:
+        try:
+            return UpdateMulticastListAction(v)
+        except ValueError as exn:
+            raise exn
+
+
 @dataclass
 class SessionUpdateControllerMulticastListCmd(SessionConfigCommand):
     session_token: int = field(kw_only=True, default=0)
@@ -3112,7 +3307,7 @@ class SessionUpdateControllerMulticastListCmd(SessionConfigCommand):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
-        fields['action'] = UpdateMulticastListAction(span[4])
+        fields['action'] = UpdateMulticastListAction.from_int(span[4])
         span = span[5:]
         payload = span
         span = bytes([])
@@ -3246,7 +3441,7 @@ class SessionSetHybridConfigRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return SessionSetHybridConfigRsp(**fields), span
 
@@ -3385,7 +3580,7 @@ class SessionUpdateControllerMulticastListRsp(SessionConfigResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return SessionUpdateControllerMulticastListRsp(**fields), span
 
@@ -3418,7 +3613,7 @@ class ControleeStatus(Packet):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['subsession_id'] = value_
-        fields['status'] = MulticastUpdateStatusCode(span[4])
+        fields['status'] = MulticastUpdateStatusCode.from_int(span[4])
         span = span[5:]
         return ControleeStatus(**fields), span
 
@@ -3507,7 +3702,7 @@ class DataCreditNtf(SessionControlNotification):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
-        fields['credit_availability'] = CreditAvailability(span[4])
+        fields['credit_availability'] = CreditAvailability.from_int(span[4])
         span = span[5:]
         return DataCreditNtf(**fields), span
 
@@ -3545,7 +3740,7 @@ class DataTransferStatusNtf(SessionControlNotification):
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
         fields['uci_sequence_number'] = span[4]
-        fields['status'] = DataTransferNtfStatusCode(span[5])
+        fields['status'] = DataTransferNtfStatusCode.from_int(span[5])
         fields['tx_count'] = span[6]
         span = span[7:]
         return DataTransferStatusNtf(**fields), span
@@ -3644,7 +3839,7 @@ class SessionQueryMaxDataSizeRsp(SessionConfigResponse):
 
 @dataclass
 class SessionStartCmd(SessionControlCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 0
@@ -3680,7 +3875,7 @@ class SessionStartRsp(SessionControlResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return SessionStartRsp(**fields), span
 
@@ -3720,7 +3915,7 @@ class ShortAddressTwoWayRangingMeasurement(Packet):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:2], byteorder='little')
         fields['mac_address'] = value_
-        fields['status'] = StatusCode(span[2])
+        fields['status'] = StatusCode.from_int(span[2])
         fields['nlos'] = span[3]
         value_ = int.from_bytes(span[4:6], byteorder='little')
         fields['distance'] = value_
@@ -3833,7 +4028,7 @@ class ExtendedAddressTwoWayRangingMeasurement(Packet):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:8], byteorder='little')
         fields['mac_address'] = value_
-        fields['status'] = StatusCode(span[8])
+        fields['status'] = StatusCode.from_int(span[8])
         fields['nlos'] = span[9]
         value_ = int.from_bytes(span[10:12], byteorder='little')
         fields['distance'] = value_
@@ -3939,7 +4134,7 @@ class ShortAddressOwrAoaRangingMeasurement(Packet):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:2], byteorder='little')
         fields['mac_address'] = value_
-        fields['status'] = StatusCode(span[2])
+        fields['status'] = StatusCode.from_int(span[2])
         fields['nlos'] = span[3]
         fields['frame_sequence_number'] = span[4]
         value_ = int.from_bytes(span[5:7], byteorder='little')
@@ -4016,7 +4211,7 @@ class ExtendedAddressOwrAoaRangingMeasurement(Packet):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:8], byteorder='little')
         fields['mac_address'] = value_
-        fields['status'] = StatusCode(span[8])
+        fields['status'] = StatusCode.from_int(span[8])
         fields['nlos'] = span[9]
         fields['frame_sequence_number'] = span[10]
         value_ = int.from_bytes(span[11:13], byteorder='little')
@@ -4077,6 +4272,14 @@ class RangingMeasurementType(enum.IntEnum):
     DL_TDOA = 0x2
     OWR_AOA = 0x3
 
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'RangingMeasurementType']:
+        try:
+            return RangingMeasurementType(v)
+        except ValueError as exn:
+            raise exn
+
+
 @dataclass
 class SessionInfoNtf(SessionControlNotification):
     sequence_number: int = field(kw_only=True, default=0)
@@ -4104,8 +4307,8 @@ class SessionInfoNtf(SessionControlNotification):
         fields['rcr_indicator'] = span[8]
         value_ = int.from_bytes(span[9:13], byteorder='little')
         fields['current_ranging_interval'] = value_
-        fields['ranging_measurement_type'] = RangingMeasurementType(span[13])
-        fields['mac_address_indicator'] = MacAddressIndicator(span[15])
+        fields['ranging_measurement_type'] = RangingMeasurementType.from_int(span[13])
+        fields['mac_address_indicator'] = MacAddressIndicator.from_int(span[15])
         value_ = int.from_bytes(span[16:24], byteorder='little')
         span = span[24:]
         payload = span
@@ -4438,7 +4641,7 @@ class ExtendedMacOwrAoaSessionInfoNtf(SessionInfoNtf):
 
 @dataclass
 class SessionStopCmd(SessionControlCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 1
@@ -4474,7 +4677,7 @@ class SessionStopRsp(SessionControlResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return SessionStopRsp(**fields), span
 
@@ -4489,7 +4692,7 @@ class SessionStopRsp(SessionControlResponse):
 
 @dataclass
 class SessionGetRangingCountCmd(SessionControlCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 3
@@ -4526,7 +4729,7 @@ class SessionGetRangingCountRsp(SessionControlResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 5:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         value_ = int.from_bytes(span[1:5], byteorder='little')
         fields['count'] = value_
         span = span[5:]
@@ -4547,7 +4750,7 @@ class SessionGetRangingCountRsp(SessionControlResponse):
 
 @dataclass
 class AndroidGetPowerStatsCmd(AndroidCommand):
-
+    
 
     def __post_init__(self):
         self.opcode = 0
@@ -4584,7 +4787,7 @@ class PowerStats(Packet):
         fields = {'payload': None}
         if len(span) < 17:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         value_ = int.from_bytes(span[1:5], byteorder='little')
         fields['idle_time_ms'] = value_
         value_ = int.from_bytes(span[5:9], byteorder='little')
@@ -4692,7 +4895,7 @@ class AndroidSetCountryCodeRsp(AndroidResponse):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['status'] = StatusCode(span[0])
+        fields['status'] = StatusCode.from_int(span[0])
         span = span[1:]
         return AndroidSetCountryCodeRsp(**fields), span
 
@@ -4718,7 +4921,7 @@ class FrameReportTlv(Packet):
         fields = {'payload': None}
         if len(span) < 3:
             raise Exception('Invalid packet size')
-        fields['t'] = FrameReportTlvType(span[0])
+        fields['t'] = FrameReportTlvType.from_int(span[0])
         value_ = int.from_bytes(span[1:3], byteorder='little')
         v_size = value_
         span = span[3:]
@@ -4751,7 +4954,7 @@ class FrameReportTlvPacket(Packet):
         fields = {'payload': None}
         if len(span) < 3:
             raise Exception('Invalid packet size')
-        fields['t'] = FrameReportTlvType(span[0])
+        fields['t'] = FrameReportTlvType.from_int(span[0])
         value_ = int.from_bytes(span[1:3], byteorder='little')
         _body__size = value_
         span = span[3:]
@@ -5127,7 +5330,7 @@ class AndroidRangeDiagnosticsNtf(AndroidNotification):
 
 @dataclass
 class UciVendor_9_Command(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_9
@@ -5153,7 +5356,7 @@ class UciVendor_9_Command(UciCommand):
 
 @dataclass
 class UciVendor_A_Command(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_A
@@ -5179,7 +5382,7 @@ class UciVendor_A_Command(UciCommand):
 
 @dataclass
 class UciVendor_B_Command(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_B
@@ -5205,7 +5408,7 @@ class UciVendor_B_Command(UciCommand):
 
 @dataclass
 class UciVendor_E_Command(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_E
@@ -5231,7 +5434,7 @@ class UciVendor_E_Command(UciCommand):
 
 @dataclass
 class UciVendor_F_Command(UciCommand):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_F
@@ -5257,7 +5460,7 @@ class UciVendor_F_Command(UciCommand):
 
 @dataclass
 class UciVendor_9_Response(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_9
@@ -5283,7 +5486,7 @@ class UciVendor_9_Response(UciResponse):
 
 @dataclass
 class UciVendor_A_Response(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_A
@@ -5309,7 +5512,7 @@ class UciVendor_A_Response(UciResponse):
 
 @dataclass
 class UciVendor_B_Response(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_B
@@ -5335,7 +5538,7 @@ class UciVendor_B_Response(UciResponse):
 
 @dataclass
 class UciVendor_E_Response(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_E
@@ -5361,7 +5564,7 @@ class UciVendor_E_Response(UciResponse):
 
 @dataclass
 class UciVendor_F_Response(UciResponse):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_F
@@ -5387,7 +5590,7 @@ class UciVendor_F_Response(UciResponse):
 
 @dataclass
 class UciVendor_9_Notification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_9
@@ -5413,7 +5616,7 @@ class UciVendor_9_Notification(UciNotification):
 
 @dataclass
 class UciVendor_A_Notification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_A
@@ -5439,7 +5642,7 @@ class UciVendor_A_Notification(UciNotification):
 
 @dataclass
 class UciVendor_B_Notification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_B
@@ -5465,7 +5668,7 @@ class UciVendor_B_Notification(UciNotification):
 
 @dataclass
 class UciVendor_E_Notification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_E
@@ -5491,7 +5694,7 @@ class UciVendor_E_Notification(UciNotification):
 
 @dataclass
 class UciVendor_F_Notification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.VENDOR_RESERVED_F
@@ -5517,7 +5720,7 @@ class UciVendor_F_Notification(UciNotification):
 
 @dataclass
 class TestNotification(UciNotification):
-
+    
 
     def __post_init__(self):
         self.gid = GroupId.TEST
