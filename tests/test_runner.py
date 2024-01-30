@@ -1,5 +1,4 @@
 import asyncio
-from asyncio.subprocess import Process
 import pytest
 import pytest_asyncio
 import logging
