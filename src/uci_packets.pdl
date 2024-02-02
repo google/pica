@@ -478,7 +478,7 @@ enum MessageType: 3 {
 }
 
 // Used to parse message type
-packet PacketHeader {
+packet CommonPacketHeader {
   _reserved_ : 4,
   pbf : PacketBoundaryFlag,
   mt : MessageType,
