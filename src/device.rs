@@ -25,8 +25,10 @@ use tokio::sync::mpsc;
 use tokio::time;
 
 use super::session::{Session, MAX_SESSION};
+use super::UciPacket;
 
 pub const MAX_DEVICE: usize = 4;
+
 const UCI_VERSION: u16 = 0x0002; // Version 2.0
 const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
 const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
@@ -78,7 +80,7 @@ pub struct Device {
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
-    pub tx: mpsc::Sender<ControlPacket>,
+    pub tx: mpsc::Sender<UciPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
     config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
@@ -89,7 +91,7 @@ pub struct Device {
 impl Device {
     pub fn new(
         device_handle: usize,
-        tx: mpsc::Sender<ControlPacket>,
+        tx: mpsc::Sender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         let mac_address = {
@@ -131,21 +133,43 @@ impl Device {
         self.set_state(DeviceState::DeviceStateReady);
     }
 
-    pub fn get_session(&self, session_id: u32) -> Option<&Session> {
+    pub fn session(&self, session_id: u32) -> Option<&Session> {
         self.sessions.get(&session_id)
     }
 
-    pub fn get_session_mut(&mut self, session_id: u32) -> Option<&mut Session> {
+    pub fn session_mut(&mut self, session_id: u32) -> Option<&mut Session> {
         self.sessions.get_mut(&session_id)
     }
 
     pub fn can_start_ranging(&self, peer_session: &Session, session_id: u32) -> bool {
-        match self.get_session(session_id) {
+        match self.session(session_id) {
             Some(session) => {
                 session.session_state() == SessionState::SessionStateActive
                     && session
                         .app_config
                         .is_compatible_for_ranging(&peer_session.app_config)
+            }
+            None => false,
+        }
+    }
+
+    pub fn can_start_data_transfer(&self, session_id: u32) -> bool {
+        match self.session(session_id) {
+            Some(session) => {
+                session.session_state() == SessionState::SessionStateActive
+                    && session.session_type() == SessionType::FiraRangingAndInBandDataSession
+                    && session.app_config.can_start_data_transfer()
+            }
+            None => false,
+        }
+    }
+
+    pub fn can_receive_data_transfer(&self, session_id: u32) -> bool {
+        match self.session(session_id) {
+            Some(session) => {
+                session.session_state() == SessionState::SessionStateActive
+                    && session.session_type() == SessionType::FiraRangingAndInBandDataSession
+                    && session.app_config.can_receive_data_transfer()
             }
             None => false,
         }
@@ -296,7 +320,7 @@ impl Device {
                 Some(_) => StatusCode::UciStatusSessionDuplicate,
                 None => {
                     // Should not fail
-                    self.get_session_mut(session_id).unwrap().init();
+                    self.session_mut(session_id).unwrap().init();
                     StatusCode::UciStatusOk
                 }
             }
@@ -371,10 +395,11 @@ impl Device {
     }
 
     pub fn data_message_snd(&mut self, data: DataPacket) -> SessionControlNotification {
+        println!("[{}] data_message_send", self.handle);
         match data.specialize() {
             DataPacketChild::DataMessageSnd(data_msg_snd) => {
                 let session_token = data_msg_snd.get_session_handle();
-                if let Some(session) = self.get_session_mut(session_token) {
+                if let Some(session) = self.session_mut(session_token) {
                     session.data_message_snd(data_msg_snd)
                 } else {
                     DataTransferStatusNtfBuilder {
@@ -418,7 +443,6 @@ impl Device {
             },
             // Handle commands for session management
             UciCommandChild::SessionConfigCommand(session_command) => {
-                // Session commands directly handled at Device level
                 match session_command.specialize() {
                     SessionConfigCommandChild::SessionInitCmd(cmd) => {
                         return self.command_session_init(cmd).into();
@@ -447,7 +471,7 @@ impl Device {
                     _ => panic!("Unsupported session command type"),
                 };
 
-                if let Some(session) = self.get_session_mut(session_id) {
+                if let Some(session) = self.session_mut(session_id) {
                     // There is a session matching the session_id in the command
                     // Pass the command through
                     match session_command.specialize() {
@@ -498,7 +522,7 @@ impl Device {
             }
             UciCommandChild::SessionControlCommand(ranging_command) => {
                 let session_id = ranging_command.get_session_id();
-                if let Some(session) = self.get_session_mut(session_id) {
+                if let Some(session) = self.session_mut(session_id) {
                     // Forward to the proper session
                     let response = session.ranging_command(ranging_command);
                     match response.specialize() {

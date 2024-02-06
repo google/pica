@@ -45,6 +45,7 @@ pub use mac_address::MacAddress;
 use crate::session::RangeDataNtfConfig;
 
 pub type PicaCommandStatus = Result<(), PicaCommandError>;
+pub type UciPacket = Vec<u8>;
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum PicaCommandError {
@@ -364,7 +365,7 @@ impl Pica {
 
                     // Send response packets to the connected UWB host.
                     Some(packet) = packet_rx.recv() =>
-                        if uci_writer.write(&packet.to_bytes(), &mut pcapng_file).await.is_err() {
+                        if uci_writer.write(&packet, &mut pcapng_file).await.is_err() {
                             break 'outer
                         }
                 }
@@ -400,9 +401,10 @@ impl Pica {
         println!("  session_id={}", session_id);
 
         let device = self.get_device(device_handle).unwrap();
-        let session = device.get_session(session_id).unwrap();
+        let session = device.session(session_id).unwrap();
 
         let mut measurements = Vec::new();
+        let mut peer_device_data_transfer = Vec::new();
         session
             .get_dst_mac_addresses()
             .iter()
@@ -431,8 +433,33 @@ impl Pica {
                         assert!(local.0 == remote.0);
                         measurements.push(make_measurement(mac_address, local, remote));
                     }
+                    if device.can_start_data_transfer(session_id)
+                        && peer_device.can_receive_data_transfer(session_id)
+                    {
+                        peer_device_data_transfer.push(peer_device);
+                    }
                 }
             });
+        // TODO: Data transfer should be limited in size for
+        // each round of ranging
+        for peer_device in peer_device_data_transfer.iter() {
+            peer_device
+                .tx
+                .send(
+                    DataMessageRcvBuilder {
+                        application_data: session.data().clone().into(),
+                        data_sequence_number: 0x01,
+                        pbf: PacketBoundaryFlag::Complete,
+                        session_handle: session_id,
+                        source_address: device.mac_address.into(),
+                        status: UciStatusCode::UciStatusOk,
+                    }
+                    .build()
+                    .into(),
+                )
+                .await
+                .unwrap();
+        }
         if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
             device
                 .tx
@@ -453,10 +480,16 @@ impl Pica {
                 .unwrap();
 
             let device = self.get_device_mut(device_handle).unwrap();
-            let session = device.get_session_mut(session_id).unwrap();
+            let session = device.session_mut(session_id).unwrap();
 
             session.sequence_number += 1;
         }
+
+        // TODO: Clean the data only when all the data is transfered
+        let device = self.get_device_mut(device_handle).unwrap();
+        let session = device.session_mut(session_id).unwrap();
+
+        session.clear_data();
     }
 
     async fn uci_data(&mut self, device_handle: usize, data: DataPacket) {
@@ -482,7 +515,7 @@ impl Pica {
                 let response: ControlPacket = device.command(cmd).into();
                 device
                     .tx
-                    .send(response)
+                    .send(response.to_vec())
                     .await
                     .unwrap_or_else(|err| println!("Failed to send UCI command response: {}", err));
             }
@@ -528,7 +561,7 @@ impl Pica {
     // corresponding mac_address and session_id.
     async fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
         if let Some(device) = self.get_device_mut_by_mac(mac_address) {
-            if let Some(session) = device.get_session_mut(session_id) {
+            if let Some(session) = device.session_mut(session_id) {
                 if session.session_state() == SessionState::SessionStateActive {
                     session.stop_ranging_task();
                     session.set_state(
