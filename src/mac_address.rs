@@ -49,6 +49,15 @@ impl From<usize> for MacAddress {
     }
 }
 
+impl From<MacAddress> for u64 {
+    fn from(mac_address: MacAddress) -> Self {
+        match mac_address {
+            MacAddress::Short(addr) => u16::from_le_bytes(addr) as u64,
+            MacAddress::Extend(addr) => u64::from_le_bytes(addr),
+        }
+    }
+}
+
 impl TryFrom<String> for MacAddress {
     type Error = Error;
     fn try_from(mac_address: String) -> std::result::Result<Self, Error> {
@@ -143,5 +152,21 @@ mod tests {
             short_mac_address
         );
         assert_eq!(extend_mac_address.to_string(), extend_mac_address);
+    }
+
+    #[test]
+    fn test_short_mac_to_u64() {
+        let short_mac = MacAddress::Short([0x01, 0x02]);
+        let result: u64 = short_mac.into();
+        let expected: u64 = 0x0201;
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_extend_mac_to_u64() {
+        let extend_mac = MacAddress::Extend([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+        let result: u64 = extend_mac.into();
+        let expected: u64 = 0x0807060504030201;
+        assert_eq!(result, expected);
     }
 }
