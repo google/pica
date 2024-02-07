@@ -14,6 +14,7 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use log;
 use pdl_runtime::Packet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -312,7 +313,7 @@ impl Pica {
         let pica_tx = self.tx.clone();
         let pcapng_dir = self.pcapng_dir.clone();
 
-        println!("[{}] Connecting device", device_handle);
+        log::debug!("[{}] Connecting device", device_handle);
 
         self.counter += 1;
         let mut device = Device::new(device_handle, packet_tx, self.tx.clone());
@@ -332,7 +333,7 @@ impl Pica {
         tokio::task::spawn(async move {
             let mut pcapng_file = if let Some(dir) = pcapng_dir {
                 let full_path = dir.join(format!("device-{}.pcapng", device_handle));
-                println!("Recording pcapng to file {}", full_path.as_path().display());
+                log::debug!("Recording pcapng to file {}", full_path.as_path().display());
                 Some(pcapng::File::create(full_path).await.unwrap())
             } else {
                 None
@@ -378,7 +379,7 @@ impl Pica {
     }
 
     fn disconnect(&mut self, device_handle: usize) {
-        println!("[{}] Disconnecting device", device_handle);
+        log::debug!("[{}] Disconnecting device", device_handle);
 
         match self
             .devices
@@ -392,13 +393,13 @@ impl Pica {
                 });
                 self.devices.remove(&device_handle);
             }
-            Err(err) => println!("{}", err),
+            Err(err) => log::error!("{}", err),
         }
     }
 
     async fn ranging(&mut self, device_handle: usize, session_id: u32) {
-        println!("[{}] Ranging event", device_handle);
-        println!("  session_id={}", session_id);
+        log::debug!("[{}] Ranging event", device_handle);
+        log::debug!("  session_id={}", session_id);
 
         let device = self.get_device(device_handle).unwrap();
         let session = device.session(session_id).unwrap();
@@ -500,10 +501,10 @@ impl Pica {
             Ok(device) => {
                 let response: SessionControlNotification = device.data_message_snd(data);
                 device.tx.send(response.into()).await.unwrap_or_else(|err| {
-                    println!("Failed to send UCI data packet response: {}", err)
+                    log::error!("Failed to send UCI data packet response: {}", err)
                 });
             }
-            Err(err) => println!("{}", err),
+            Err(err) => log::error!("{}", err),
         }
     }
     async fn command(&mut self, device_handle: usize, cmd: UciCommand) {
@@ -517,9 +518,11 @@ impl Pica {
                     .tx
                     .send(response.to_vec())
                     .await
-                    .unwrap_or_else(|err| println!("Failed to send UCI command response: {}", err));
+                    .unwrap_or_else(|err| {
+                        log::error!("Failed to send UCI command response: {}", err)
+                    });
             }
-            Err(err) => println!("{}", err),
+            Err(err) => log::error!("{}", err),
         }
     }
 
@@ -573,7 +576,7 @@ impl Pica {
                         device.set_state(DeviceState::DeviceStateReady);
                     }
                 } else {
-                    println!("stop_controlee_ranging: session is not active !");
+                    log::warn!("stop_controlee_ranging: session is not active !");
                 }
             }
         }
@@ -588,9 +591,9 @@ impl Pica {
         position: Position,
         pica_cmd_rsp_tx: oneshot::Sender<PicaCommandStatus>,
     ) {
-        println!("[_] Init device");
-        println!("  mac_address: {}", mac_address);
-        println!("  position={:?}", position);
+        log::debug!("[_] Init device");
+        log::debug!("  mac_address: {}", mac_address);
+        log::debug!("  position={:?}", position);
 
         let status = self
             .get_device_mut_by_mac(&mac_address)
@@ -601,7 +604,7 @@ impl Pica {
             });
 
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("Failed to send init-uci-device command response: {:?}", err)
+            log::error!("Failed to send init-uci-device command response: {:?}", err)
         });
     }
 
@@ -626,7 +629,7 @@ impl Pica {
         }
 
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("Failed to send set-position command response: {:?}", err)
+            log::error!("Failed to send set-position command response: {:?}", err)
         });
     }
 
@@ -691,7 +694,7 @@ impl Pica {
         position: Position,
         pica_cmd_rsp_tx: oneshot::Sender<PicaCommandStatus>,
     ) {
-        println!("Create anchor: {} {}", mac_address, position);
+        log::debug!("Create anchor: {} {}", mac_address, position);
         let status = if self.get_category(&mac_address).is_some() {
             Err(PicaCommandError::DeviceAlreadyExists(mac_address))
         } else {
@@ -714,7 +717,7 @@ impl Pica {
         };
 
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("Failed to send create-anchor command response: {:?}", err)
+            log::error!("Failed to send create-anchor command response: {:?}", err)
         })
     }
 
@@ -723,8 +726,8 @@ impl Pica {
         mac_address: MacAddress,
         pica_cmd_rsp_tx: oneshot::Sender<PicaCommandStatus>,
     ) {
-        println!("[_] Destroy anchor");
-        println!("  mac_address: {}", mac_address);
+        log::debug!("[_] Destroy anchor");
+        log::debug!("  mac_address: {}", mac_address);
 
         let status = if self.anchors.remove(&mac_address).is_none() {
             Err(PicaCommandError::DeviceNotFound(mac_address))
@@ -736,12 +739,12 @@ impl Pica {
             Ok(())
         };
         pica_cmd_rsp_tx.send(status).unwrap_or_else(|err| {
-            println!("Failed to send destroy-anchor command response: {:?}", err)
+            log::error!("Failed to send destroy-anchor command response: {:?}", err)
         })
     }
 
     fn get_state(&self, state_tx: oneshot::Sender<Vec<(Category, MacAddress, Position)>>) {
-        println!("[_] Get State");
+        log::debug!("[_] Get State");
 
         state_tx
             .send(

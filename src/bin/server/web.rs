@@ -18,6 +18,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use anyhow::{Context, Result};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{body, Body, Request, Response, Server, StatusCode as HttpStatusCode};
+use log;
 use serde::{Deserialize, Serialize};
 use serde_json::error::Category as SerdeErrorCategory;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -79,7 +80,7 @@ macro_rules! position {
                     Position::default()
                 } else {
                     let reason = format!("Error while deserializing position: {}", err);
-                    println!("{}", reason);
+                    log::error!("{}", reason);
                     return Ok(Response::builder().status(406).body(reason.into()).unwrap());
                 }
             }
@@ -93,7 +94,7 @@ macro_rules! mac_address {
             Ok(mac_address) => mac_address,
             Err(err) => {
                 let reason = format!("Error mac_address: {}", err);
-                println!("{}", reason);
+                log::error!("{}", reason);
                 return Ok(Response::builder().status(406).body(reason.into()).unwrap());
             }
         }
@@ -137,7 +138,7 @@ async fn handle(
     let (pica_cmd_rsp_tx, pica_cmd_rsp_rx) = oneshot::channel::<PicaCommandStatus>();
 
     let send_cmd = |pica_cmd| async {
-        println!("PicaCommand: {}", pica_cmd);
+        log::debug!("PicaCommand: {}", pica_cmd);
         tx.send(pica_cmd).await.unwrap();
         let (status, description) = match pica_cmd_rsp_rx.await {
             Ok(Ok(_)) => (HttpStatusCode::OK, "success".into()),
@@ -153,7 +154,7 @@ async fn handle(
                 format!("Error getting command response: {}", err),
             ),
         };
-        println!("  status: {}, {}", status, description);
+        log::debug!("  status: {}, {}", status, description);
         Response::builder()
             .status(status)
             .body(description.into())
@@ -218,7 +219,7 @@ async fn handle(
             struct GetStateResponse {
                 devices: Vec<Device>,
             }
-            println!("PicaCommand: GetState");
+            log::debug!("PicaCommand: GetState");
             let (state_tx, state_rx) = oneshot::channel::<Vec<_>>();
             tx.send(PicaCommand::GetState(state_tx)).await.unwrap();
             let devices = match state_rx.await {
@@ -263,7 +264,7 @@ pub async fn serve(
 
     let server = Server::bind(&addr.into()).serve(make_svc);
 
-    println!("Pica: Web server started on http://0.0.0.0:{}", web_port);
+    log::debug!("Pica: Web server started on http://0.0.0.0:{}", web_port);
 
     server.await.context("Web Server Error")
 }

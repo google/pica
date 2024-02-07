@@ -19,6 +19,7 @@
 use crate::packets::uci::{self, *};
 use crate::{MacAddress, PicaCommand};
 use bytes::BytesMut;
+use log;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -626,7 +627,7 @@ impl AppConfig {
             }
             AppConfigTlvType::ApplicationDataEndpoint => self.application_data_endpoint = value[0],
             id => {
-                println!("Ignored AppConfig parameter {:?}", id);
+                log::error!("Ignored AppConfig parameter {:?}", id);
                 return Err(StatusCode::UciStatusInvalidParam);
             }
         };
@@ -819,9 +820,10 @@ impl Session {
 
     fn command_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> SessionSetAppConfigRsp {
         // TODO properly handle these asserts
-        println!(
+        log::debug!(
             "[{}:0x{:x}] Session Set App Config",
-            self.device_handle, self.id
+            self.device_handle,
+            self.id
         );
         assert_eq!(self.id, cmd.get_session_token());
         assert!(
@@ -875,9 +877,10 @@ impl Session {
     }
 
     fn command_get_app_config(&self, cmd: SessionGetAppConfigCmd) -> SessionGetAppConfigRsp {
-        println!(
+        log::debug!(
             "[{}:0x{:x}] Session Get App Config",
-            self.device_handle, self.id
+            self.device_handle,
+            self.id
         );
         assert_eq!(self.id, cmd.get_session_token());
 
@@ -896,7 +899,7 @@ impl Session {
                                 v: Vec::new(),
                             }),
                         },
-                        Err(_) => println!("Failed to parse AppConfigTlv: {:?}", *config_id),
+                        Err(_) => log::error!("Failed to parse AppConfigTlv: {:?}", *config_id),
                     }
                     (valid_parameters, invalid_parameters)
                 },
@@ -915,7 +918,7 @@ impl Session {
     }
 
     fn command_get_state(&self, cmd: SessionGetStateCmd) -> SessionGetStateRsp {
-        println!("[{}:0x{:x}] Session Get State", self.device_handle, self.id);
+        log::debug!("[{}:0x{:x}] Session Get State", self.device_handle, self.id);
         assert_eq!(self.id, cmd.get_session_token());
         SessionGetStateRspBuilder {
             status: StatusCode::UciStatusOk,
@@ -928,9 +931,10 @@ impl Session {
         &mut self,
         cmd: SessionUpdateControllerMulticastListCmd,
     ) -> SessionUpdateControllerMulticastListRsp {
-        println!(
+        log::debug!(
             "[{}:0x{:x}] Session Update Controller Multicast List",
-            self.device_handle, self.id
+            self.device_handle,
+            self.id
         );
         assert_eq!(self.id, cmd.get_session_token());
         if (self.state != SessionState::SessionStateActive
@@ -1107,7 +1111,7 @@ impl Session {
     }
 
     fn command_range_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
-        println!("[{}:0x{:x}] Range Start", self.device_handle, self.id);
+        log::debug!("[{}:0x{:x}] Range Start", self.device_handle, self.id);
         assert_eq!(self.id, cmd.get_session_id());
 
         let status = if self.state != SessionState::SessionStateIdle {
@@ -1144,7 +1148,7 @@ impl Session {
         }
     }
     fn command_range_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
-        println!("[{}:0x{:x}] Range Stop", self.device_handle, self.id);
+        log::debug!("[{}:0x{:x}] Range Stop", self.device_handle, self.id);
         assert_eq!(self.id, cmd.get_session_id());
 
         let status = if self.state != SessionState::SessionStateActive {
@@ -1164,9 +1168,10 @@ impl Session {
         &self,
         cmd: SessionGetRangingCountCmd,
     ) -> SessionGetRangingCountRsp {
-        println!(
+        log::debug!(
             "[{}:0x{:x}] Range Get Ranging Count",
-            self.device_handle, self.id
+            self.device_handle,
+            self.id
         );
         assert_eq!(self.id, cmd.get_session_id());
 
@@ -1209,7 +1214,7 @@ impl Session {
     }
 
     pub fn data_message_snd(&mut self, data: DataMessageSnd) -> SessionControlNotification {
-        println!("[{}] data_message_snd", self.device_handle);
+        log::debug!("[{}] data_message_snd", self.device_handle);
         let session_token = data.get_session_handle();
         let uci_sequence_number = data.get_data_sequence_number() as u8;
 

@@ -17,6 +17,8 @@ use crate::position::Position;
 use crate::MacAddress;
 use crate::PicaCommand;
 
+use log;
+
 use std::collections::HashMap;
 use std::iter::Extend;
 use std::time::Duration;
@@ -179,8 +181,8 @@ impl Device {
     // send a notification once the reset is done
     fn command_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
         let reset_config = cmd.get_reset_config();
-        println!("[{}] DeviceReset", self.handle);
-        println!("  reset_config={:?}", reset_config);
+        log::debug!("[{}] DeviceReset", self.handle);
+        log::debug!("  reset_config={:?}", reset_config);
 
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
@@ -193,7 +195,7 @@ impl Device {
 
     fn command_get_device_info(&self, _cmd: GetDeviceInfoCmd) -> GetDeviceInfoRsp {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
-        println!("[{}] GetDeviceInfo", self.handle);
+        log::debug!("[{}] GetDeviceInfo", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady);
         GetDeviceInfoRspBuilder {
             status: StatusCode::UciStatusOk,
@@ -207,7 +209,7 @@ impl Device {
     }
 
     pub fn command_get_caps_info(&self, _cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
-        println!("[{}] GetCapsInfo", self.handle);
+        log::debug!("[{}] GetCapsInfo", self.handle);
 
         let caps = DEFAULT_CAPS_INFO
             .iter()
@@ -225,7 +227,7 @@ impl Device {
     }
 
     pub fn command_set_config(&mut self, cmd: SetConfigCmd) -> SetConfigRsp {
-        println!("[{}] SetConfig", self.handle);
+        log::debug!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
 
         let (valid_parameters, invalid_config_status) = cmd.get_tlvs().iter().fold(
@@ -253,7 +255,7 @@ impl Device {
     }
 
     pub fn command_get_config(&self, cmd: GetConfigCmd) -> GetConfigRsp {
-        println!("[{}] GetConfig", self.handle);
+        log::debug!("[{}] GetConfig", self.handle);
 
         // TODO: do this config shall be set on device reset
         let ids = cmd.get_cfg_id();
@@ -276,7 +278,7 @@ impl Device {
                             v: Vec::new(),
                         }),
                     },
-                    Err(_) => println!("Failed to parse config id: {:?}", id),
+                    Err(_) => log::error!("Failed to parse config id: {:?}", id),
                 }
 
                 (valid_parameters, invalid_parameters)
@@ -300,9 +302,9 @@ impl Device {
         let session_id = cmd.get_session_id();
         let session_type = cmd.get_session_type();
 
-        println!("[{}] Session init", self.handle);
-        println!("  session_id=0x{:x}", session_id);
-        println!("  session_type={:?}", session_type);
+        log::debug!("[{}] Session init", self.handle);
+        log::debug!("  session_id=0x{:x}", session_id);
+        log::debug!("  session_type={:?}", session_type);
 
         let status = if self.sessions.len() >= MAX_SESSION {
             StatusCode::UciStatusMaxSessionsExceeded
@@ -331,8 +333,8 @@ impl Device {
 
     fn command_session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
         let session_id = cmd.get_session_token();
-        println!("[{}] Session deinit", self.handle);
-        println!("  session_id=0x{:x}", session_id);
+        log::debug!("[{}] Session deinit", self.handle);
+        log::debug!("  session_id=0x{:x}", session_id);
 
         let status = match self.sessions.get_mut(&session_id) {
             Some(session) => {
@@ -351,7 +353,7 @@ impl Device {
     }
 
     fn command_session_get_count(&self, _cmd: SessionGetCountCmd) -> SessionGetCountRsp {
-        println!("[{}] Session get count", self.handle);
+        log::debug!("[{}] Session get count", self.handle);
 
         SessionGetCountRspBuilder {
             status: StatusCode::UciStatusOk,
@@ -365,8 +367,8 @@ impl Device {
         cmd: AndroidSetCountryCodeCmd,
     ) -> AndroidSetCountryCodeRsp {
         let country_code = *cmd.get_country_code();
-        println!("[{}] Set country code", self.handle);
-        println!("  country_code={},{}", country_code[0], country_code[1]);
+        log::debug!("[{}] Set country code", self.handle);
+        log::debug!("  country_code={},{}", country_code[0], country_code[1]);
 
         self.country_code = country_code;
         AndroidSetCountryCodeRspBuilder {
@@ -379,7 +381,7 @@ impl Device {
         &mut self,
         _cmd: AndroidGetPowerStatsCmd,
     ) -> AndroidGetPowerStatsRsp {
-        println!("[{}] Get power stats", self.handle);
+        log::debug!("[{}] Get power stats", self.handle);
 
         // TODO
         AndroidGetPowerStatsRspBuilder {
@@ -395,7 +397,7 @@ impl Device {
     }
 
     pub fn data_message_snd(&mut self, data: DataPacket) -> SessionControlNotification {
-        println!("[{}] data_message_send", self.handle);
+        log::debug!("[{}] data_message_send", self.handle);
         match data.specialize() {
             DataPacketChild::DataMessageSnd(data_msg_snd) => {
                 let session_token = data_msg_snd.get_session_handle();
