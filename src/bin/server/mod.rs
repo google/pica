@@ -22,6 +22,8 @@ mod web;
 
 use anyhow::Result;
 use clap::Parser;
+use env_logger::Env;
+use log;
 use pica::{Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
@@ -35,11 +37,11 @@ const DEFAULT_WEB_PORT: u16 = 3000;
 async fn accept_incoming(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
-    println!("Pica: Listening on: {}", uci_port);
+    log::info!("Pica: Listening on: {}", uci_port);
 
     loop {
         let (socket, addr) = uci_listener.accept().await?;
-        println!("Uwb host addr: {}", addr);
+        log::info!("Uwb host addr: {}", addr);
         tx.send(PicaCommand::Connect(socket)).await?
     }
 }
@@ -62,6 +64,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+
     let args = Args::parse();
     assert_ne!(
         args.uci_port, args.web_port,
