@@ -465,7 +465,7 @@ impl AppConfig {
                         MacAddress::Short(value[..].try_into().unwrap())
                     }
                     MacAddressMode::AddressMode2 => {
-                        MacAddress::Extend(value[..].try_into().unwrap())
+                        MacAddress::Extended(value[..].try_into().unwrap())
                     }
                     _ => panic!("Unexpected MAC Address Mode"),
                 };
@@ -489,7 +489,7 @@ impl AppConfig {
                     .chunks(mac_address_size)
                     .map(|c| match self.mac_address_mode {
                         MacAddressMode::AddressMode0 => MacAddress::Short(c.try_into().unwrap()),
-                        MacAddressMode::AddressMode2 => MacAddress::Extend(c.try_into().unwrap()),
+                        MacAddressMode::AddressMode2 => MacAddress::Extended(c.try_into().unwrap()),
                         _ => panic!("Unexpected MAC Address Mode"),
                     })
                     .collect();
@@ -1037,7 +1037,7 @@ impl Session {
                     controlee_status.push(ControleeStatus {
                         mac_address: match controlee.short_address {
                             MacAddress::Short(address) => address,
-                            MacAddress::Extend(_) => panic!("Extended address is not supported!"),
+                            MacAddress::Extended(_) => panic!("Extended address is not supported!"),
                         },
                         subsession_id: controlee.sub_session_id,
                         status: update_status,
@@ -1073,7 +1073,7 @@ impl Session {
                     controlee_status.push(ControleeStatus {
                         mac_address: match address {
                             MacAddress::Short(addr) => addr,
-                            MacAddress::Extend(_) => panic!("Extended address is not supported!"),
+                            MacAddress::Extended(_) => panic!("Extended address is not supported!"),
                         },
                         subsession_id: controlee.sub_session_id,
                         status: update_status,
