@@ -18,7 +18,6 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use anyhow::{Context, Result};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{body, Body, Request, Response, Server, StatusCode as HttpStatusCode};
-use log;
 use serde::{Deserialize, Serialize};
 use serde_json::error::Category as SerdeErrorCategory;
 use tokio::sync::{broadcast, mpsc, oneshot};

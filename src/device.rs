@@ -17,8 +17,6 @@ use crate::position::Position;
 use crate::MacAddress;
 use crate::PicaCommand;
 
-use log;
-
 use std::collections::HashMap;
 use std::iter::Extend;
 use std::time::Duration;

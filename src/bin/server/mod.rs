@@ -23,7 +23,6 @@ mod web;
 use anyhow::Result;
 use clap::Parser;
 use env_logger::Env;
-use log;
 use pica::{Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
