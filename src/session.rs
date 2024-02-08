@@ -19,7 +19,6 @@
 use crate::packets::uci::{self, *};
 use crate::{MacAddress, PicaCommand};
 use bytes::BytesMut;
-use log;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;

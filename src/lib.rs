@@ -14,7 +14,6 @@
 
 use anyhow::Result;
 use bytes::Bytes;
-use log;
 use pdl_runtime::Packet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
