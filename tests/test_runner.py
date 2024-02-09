@@ -10,7 +10,7 @@ from typing import Tuple
 
 from . import ranging, data_transfer
 
-PICA_BIN = Path("./target/debug/pica-server")
+PICA_BIN = Path("./target/debug/pica")
 DATA_FILE = Path("README.md")
 PICA_LOCALHOST = "127.0.0.1"
 

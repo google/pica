@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::packets::uci::*;
-use crate::position::Position;
 use crate::MacAddress;
 use crate::PicaCommand;
 
@@ -74,9 +73,8 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
 ];
 
 pub struct Device {
-    handle: usize,
+    pub handle: usize,
     pub mac_address: MacAddress,
-    pub position: Position,
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
@@ -101,7 +99,6 @@ impl Device {
         Device {
             handle: device_handle,
             mac_address,
-            position: Position::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
             tx,

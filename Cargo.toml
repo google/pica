@@ -14,7 +14,7 @@ authors = [
   "David De Jesus Duarte <licorne@google.com>",
   "Henri Chataing <henrichataing@google.com>",
 ]
-default-run = "pica-server"
+default-run = "pica"
 exclude = [
   "res/*",
   "scripts/*"
@@ -28,8 +28,13 @@ name = "pica"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pica-server"
-path = "src/bin/server/mod.rs"
+name = "pica"
+path = "src/bin/main.rs"
+
+[[bin]]
+name = "pica-http"
+path = "src/bin/http-server/main.rs"
+features = ["web"]
 
 [features]
 default = ["web"]
