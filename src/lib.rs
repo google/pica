@@ -384,19 +384,12 @@ impl Pica {
     fn disconnect(&mut self, device_handle: usize) {
         log::debug!("[{}] Disconnecting device", device_handle);
 
-        match self
-            .devices
-            .get(&device_handle)
-            .ok_or_else(|| PicaCommandError::DeviceNotFound(device_handle.into()))
-        {
-            Ok(device) => {
-                self.send_event(PicaEvent::Disconnected {
-                    handle: device_handle,
-                    mac_address: device.mac_address,
-                });
-                self.devices.remove(&device_handle);
-            }
-            Err(err) => log::error!("{}", err),
+        if let Some(device) = self.devices.get(&device_handle) {
+            self.send_event(PicaEvent::Disconnected {
+                handle: device_handle,
+                mac_address: device.mac_address,
+            });
+            self.devices.remove(&device_handle);
         }
     }
 
@@ -498,25 +491,19 @@ impl Pica {
     }
 
     async fn uci_data(&mut self, device_handle: usize, data: DataPacket) {
-        match self
-            .get_device_mut(device_handle)
-            .ok_or_else(|| PicaCommandError::DeviceNotFound(device_handle.into()))
-        {
-            Ok(device) => {
+        match self.get_device_mut(device_handle) {
+            Some(device) => {
                 let response: SessionControlNotification = device.data_message_snd(data);
                 device.tx.send(response.into()).await.unwrap_or_else(|err| {
                     log::error!("Failed to send UCI data packet response: {}", err)
                 });
             }
-            Err(err) => log::error!("{}", err),
+            None => log::error!("Device {} not found", device_handle),
         }
     }
-    async fn command(&mut self, device_handle: usize, cmd: UciCommand) {
-        match self
-            .get_device_mut(device_handle)
-            .ok_or_else(|| PicaCommandError::DeviceNotFound(device_handle.into()))
-        {
-            Ok(device) => {
+    async fn uci_command(&mut self, device_handle: usize, cmd: UciCommand) {
+        match self.get_device_mut(device_handle) {
+            Some(device) => {
                 let response: ControlPacket = device.command(cmd).into();
                 device
                     .tx
@@ -526,7 +513,7 @@ impl Pica {
                         log::error!("Failed to send UCI command response: {}", err)
                     });
             }
-            Err(err) => log::error!("{}", err),
+            None => log::error!("Device {} not found", device_handle),
         }
     }
 
@@ -545,7 +532,7 @@ impl Pica {
                     self.stop_controlee_ranging(&mac_address, session_id).await;
                 }
                 Some(UciData(device_handle, data)) => self.uci_data(device_handle, data).await,
-                Some(UciCommand(device_handle, cmd)) => self.command(device_handle, cmd).await,
+                Some(UciCommand(device_handle, cmd)) => self.uci_command(device_handle, cmd).await,
                 Some(CreateAnchor(mac_address, pica_cmd_rsp_tx)) => {
                     self.create_anchor(mac_address, pica_cmd_rsp_tx)
                 }

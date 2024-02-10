@@ -43,13 +43,6 @@ impl MacAddress {
     }
 }
 
-impl From<usize> for MacAddress {
-    fn from(device_handle: usize) -> Self {
-        let handle = device_handle as u64;
-        MacAddress::Extended(handle.to_be_bytes())
-    }
-}
-
 impl From<MacAddress> for u64 {
     fn from(mac_address: MacAddress) -> Self {
         match mac_address {
