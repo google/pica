@@ -88,16 +88,13 @@ pub struct Device {
 
 impl Device {
     pub fn new(
-        device_handle: usize,
+        handle: usize,
+        mac_address: MacAddress,
         tx: mpsc::Sender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
-        let mac_address = {
-            let handle = device_handle as u16;
-            MacAddress::Short(handle.to_be_bytes())
-        };
         Device {
-            handle: device_handle,
+            handle,
             mac_address,
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
@@ -182,7 +179,12 @@ impl Device {
         let status = match reset_config {
             ResetConfig::UwbsReset => StatusCode::UciStatusOk,
         };
-        *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
+        *self = Device::new(
+            self.handle,
+            self.mac_address,
+            self.tx.clone(),
+            self.pica_tx.clone(),
+        );
         self.init();
 
         DeviceResetRspBuilder { status }.build()

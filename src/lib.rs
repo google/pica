@@ -320,7 +320,13 @@ impl Pica {
         log::debug!("[{}] Connecting device", device_handle);
 
         self.counter += 1;
-        let mut device = Device::new(device_handle, packet_tx, self.command_tx.clone());
+        let mac_address = MacAddress::Short((device_handle as u16).to_be_bytes());
+        let mut device = Device::new(
+            device_handle,
+            mac_address,
+            packet_tx,
+            self.command_tx.clone(),
+        );
         device.init();
 
         self.send_event(PicaEvent::Connected {
