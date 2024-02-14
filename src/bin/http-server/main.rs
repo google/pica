@@ -542,7 +542,7 @@ async fn main() -> Result<()> {
 
     let context = Context::new();
 
-    let mut pica = Pica::new(Box::new(context.clone()), args.pcapng_dir);
+    let pica = Pica::new(Box::new(context.clone()), args.pcapng_dir);
     let cmd_tx = pica.commands();
     let events_rx = pica.events();
 

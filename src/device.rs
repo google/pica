@@ -78,7 +78,7 @@ pub struct Device {
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
-    pub tx: mpsc::Sender<UciPacket>,
+    pub tx: mpsc::UnboundedSender<UciPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
     config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
@@ -90,7 +90,7 @@ impl Device {
     pub fn new(
         handle: usize,
         mac_address: MacAddress,
-        tx: mpsc::Sender<UciPacket>,
+        tx: mpsc::UnboundedSender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         Device {
@@ -118,7 +118,6 @@ impl Device {
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(5)).await;
             tx.send(DeviceStatusNtfBuilder { device_state }.build().into())
-                .await
                 .unwrap()
         });
     }
