@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let mut pica = Pica::new(Box::new(MockRangingEstimator()), args.pcapng_dir);
+    let pica = Pica::new(Box::new(MockRangingEstimator()), args.pcapng_dir);
     let commands = pica.commands();
 
     try_join!(accept_incoming(commands.clone(), args.uci_port), pica.run(),)?;

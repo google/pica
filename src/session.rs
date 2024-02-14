@@ -734,7 +734,7 @@ pub struct Session {
     pub sequence_number: u32,
     pub app_config: AppConfig,
     ranging_task: Option<JoinHandle<()>>,
-    tx: mpsc::Sender<UciPacket>,
+    tx: mpsc::UnboundedSender<UciPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
 }
 
@@ -743,7 +743,7 @@ impl Session {
         id: u32,
         session_type: SessionType,
         device_handle: usize,
-        tx: mpsc::Sender<UciPacket>,
+        tx: mpsc::UnboundedSender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         Self {
@@ -781,7 +781,6 @@ impl Session {
                 .build()
                 .into(),
             )
-            .await
             .unwrap()
         });
     }
@@ -1103,7 +1102,6 @@ impl Session {
                 .build()
                 .into(),
             )
-            .await
             .unwrap()
         });
         SessionUpdateControllerMulticastListRspBuilder { status }.build()

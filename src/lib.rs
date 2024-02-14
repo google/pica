@@ -73,10 +73,9 @@ pub struct Pica {
     counter: usize,
     devices: HashMap<Handle, Device>,
     anchors: HashMap<MacAddress, Anchor>,
-    command_rx: mpsc::Receiver<PicaCommand>,
+    command_rx: Option<mpsc::Receiver<PicaCommand>>,
     command_tx: mpsc::Sender<PicaCommand>,
     event_tx: broadcast::Sender<PicaEvent>,
-    #[allow(unused)]
     ranging_estimator: Box<dyn RangingEstimator>,
     pcapng_dir: Option<PathBuf>,
 }
@@ -255,7 +254,7 @@ impl Pica {
             devices: HashMap::new(),
             anchors: HashMap::new(),
             counter: 0,
-            command_rx,
+            command_rx: Some(command_rx),
             command_tx,
             event_tx,
             ranging_estimator,
@@ -311,8 +310,8 @@ impl Pica {
         let _ = self.event_tx.send(event);
     }
 
-    async fn connect(&mut self, stream: TcpStream) {
-        let (packet_tx, mut packet_rx) = mpsc::channel(MAX_SESSION);
+    fn connect(&mut self, stream: TcpStream) {
+        let (packet_tx, mut packet_rx) = mpsc::unbounded_channel();
         let device_handle = self.counter;
         let pica_tx = self.command_tx.clone();
         let pcapng_dir = self.pcapng_dir.clone();
@@ -399,7 +398,7 @@ impl Pica {
         }
     }
 
-    async fn ranging(&mut self, device_handle: usize, session_id: u32) {
+    fn ranging(&mut self, device_handle: usize, session_id: u32) {
         log::debug!("[{}] Ranging event", device_handle);
         log::debug!("  session_id={}", session_id);
 
@@ -461,7 +460,6 @@ impl Pica {
                     .build()
                     .into(),
                 )
-                .await
                 .unwrap();
         }
         if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
@@ -480,7 +478,6 @@ impl Pica {
                     .build()
                     .into(),
                 )
-                .await
                 .unwrap();
 
             let device = self.get_device_mut(device_handle).unwrap();
@@ -496,63 +493,65 @@ impl Pica {
         session.clear_data();
     }
 
-    async fn uci_data(&mut self, device_handle: usize, data: DataPacket) {
+    fn uci_data(&mut self, device_handle: usize, data: DataPacket) {
         match self.get_device_mut(device_handle) {
             Some(device) => {
                 let response: SessionControlNotification = device.data_message_snd(data);
-                device.tx.send(response.into()).await.unwrap_or_else(|err| {
+                device.tx.send(response.into()).unwrap_or_else(|err| {
                     log::error!("Failed to send UCI data packet response: {}", err)
                 });
             }
             None => log::error!("Device {} not found", device_handle),
         }
     }
-    async fn uci_command(&mut self, device_handle: usize, cmd: UciCommand) {
+
+    fn uci_command(&mut self, device_handle: usize, cmd: UciCommand) {
         match self.get_device_mut(device_handle) {
             Some(device) => {
                 let response: ControlPacket = device.command(cmd).into();
-                device
-                    .tx
-                    .send(response.to_vec())
-                    .await
-                    .unwrap_or_else(|err| {
-                        log::error!("Failed to send UCI command response: {}", err)
-                    });
+                device.tx.send(response.to_vec()).unwrap_or_else(|err| {
+                    log::error!("Failed to send UCI command response: {}", err)
+                });
             }
             None => log::error!("Device {} not found", device_handle),
         }
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    fn pica_command(&mut self, command: PicaCommand) {
+        use PicaCommand::*;
+        match command {
+            Connect(stream) => self.connect(stream),
+            Disconnect(device_handle) => self.disconnect(device_handle),
+            Ranging(device_handle, session_id) => self.ranging(device_handle, session_id),
+            StopRanging(mac_address, session_id) => {
+                self.stop_controlee_ranging(&mac_address, session_id)
+            }
+            UciData(device_handle, data) => self.uci_data(device_handle, data),
+            UciCommand(device_handle, cmd) => self.uci_command(device_handle, cmd),
+            CreateAnchor(mac_address, pica_cmd_rsp_tx) => {
+                self.create_anchor(mac_address, pica_cmd_rsp_tx)
+            }
+            DestroyAnchor(mac_address, pica_cmd_rsp_tx) => {
+                self.destroy_anchor(mac_address, pica_cmd_rsp_tx)
+            }
+        }
+    }
+
+    /// Run the internal pica event loop.
+    pub async fn run(mut self) -> Result<()> {
+        let Some(mut command_rx) = self.command_rx.take() else {
+            anyhow::bail!("missing pica command receiver")
+        };
         loop {
-            use PicaCommand::*;
-            match self.command_rx.recv().await {
-                Some(Connect(stream)) => {
-                    self.connect(stream).await;
-                }
-                Some(Disconnect(device_handle)) => self.disconnect(device_handle),
-                Some(Ranging(device_handle, session_id)) => {
-                    self.ranging(device_handle, session_id).await;
-                }
-                Some(StopRanging(mac_address, session_id)) => {
-                    self.stop_controlee_ranging(&mac_address, session_id).await;
-                }
-                Some(UciData(device_handle, data)) => self.uci_data(device_handle, data).await,
-                Some(UciCommand(device_handle, cmd)) => self.uci_command(device_handle, cmd).await,
-                Some(CreateAnchor(mac_address, pica_cmd_rsp_tx)) => {
-                    self.create_anchor(mac_address, pica_cmd_rsp_tx)
-                }
-                Some(DestroyAnchor(mac_address, pica_cmd_rsp_tx)) => {
-                    self.destroy_anchor(mac_address, pica_cmd_rsp_tx)
-                }
-                None => (),
-            };
+            if let Some(command) = command_rx.recv().await {
+                self.pica_command(command)
+            }
         }
     }
 
     // Handle the in-band StopRanging command sent from controller to the controlee with
     // corresponding mac_address and session_id.
-    async fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
+    fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
         if let Some(device) = self.get_device_mut_by_mac(mac_address) {
             if let Some(session) = device.session_mut(session_id) {
                 if session.session_state() == SessionState::SessionStateActive {
@@ -622,5 +621,22 @@ impl Pica {
         rsp_tx.send(status).unwrap_or_else(|err| {
             log::error!("Failed to send destroy-anchor command response: {:?}", err)
         })
+    }
+}
+
+/// Run the internal pica event loop.
+/// As opposed to Pica::run, the context is passed under a mutex, which
+/// allows synchronous access to the context for device creation.
+pub async fn run(this: std::sync::Mutex<Pica>) -> Result<()> {
+    // Extract the mpsc receiver from the Pica context.
+    // The receiver cannot be cloned.
+    let Some(mut command_rx) = this.lock().unwrap().command_rx.take() else {
+        anyhow::bail!("missing pica command receiver");
+    };
+
+    loop {
+        if let Some(command) = command_rx.recv().await {
+            this.lock().unwrap().pica_command(command)
+        }
     }
 }
