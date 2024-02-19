@@ -312,6 +312,7 @@ impl Pica {
 
     fn connect(&mut self, stream: TcpStream) {
         let (packet_tx, mut packet_rx) = mpsc::unbounded_channel();
+        let invalid_packet_tx = packet_tx.clone();
         let device_handle = self.counter;
         let pica_tx = self.command_tx.clone();
         let pcapng_dir = self.pcapng_dir.clone();
@@ -339,10 +340,10 @@ impl Pica {
         // The task notifies pica when exiting to let it clean
         // the state.
         tokio::task::spawn(async move {
-            let mut pcapng_file = if let Some(dir) = pcapng_dir {
+            let pcapng_file = if let Some(dir) = pcapng_dir {
                 let full_path = dir.join(format!("device-{}.pcapng", device_handle));
                 log::debug!("Recording pcapng to file {}", full_path.as_path().display());
-                Some(pcapng::File::create(full_path).await.unwrap())
+                Some(pcapng::File::create(full_path).unwrap())
             } else {
                 None
             };
@@ -351,34 +352,45 @@ impl Pica {
             let mut uci_reader = packets::uci::Reader::new(uci_rx);
             let mut uci_writer = packets::uci::Writer::new(uci_tx);
 
-            'outer: loop {
-                tokio::select! {
-                    // Read command packet sent from connected UWB host.
-                    // Run associated command.
-                    result = uci_reader.read(&mut pcapng_file) =>
-                        match result {
-                            Ok(packet) =>
-                                match parse_uci_packet(&packet) {
-                                    UciParseResult::UciCommand(cmd) => {
-                                        pica_tx.send(PicaCommand::UciCommand(device_handle, cmd)).await.unwrap()
-                                    },
-                                    UciParseResult::UciData(data) => {
-                                        pica_tx.send(PicaCommand::UciData(device_handle, data)).await.unwrap()
-                                    },
-                                    UciParseResult::Err(response) =>
-                                        uci_writer.write(&response, &mut pcapng_file).await.unwrap(),
-                                    UciParseResult::Skip => (),
-                                },
-                            Err(_) => break 'outer
-                        },
-
-                    // Send response packets to the connected UWB host.
-                    Some(packet) = packet_rx.recv() =>
-                        if uci_writer.write(&packet, &mut pcapng_file).await.is_err() {
-                            break 'outer
+            tokio::try_join!(
+                async {
+                    loop {
+                        // Read UCI packets sent from connected UWB host.
+                        // Run associated command.
+                        match uci_reader.read(&pcapng_file).await {
+                            Ok(packet) => match parse_uci_packet(&packet) {
+                                UciParseResult::UciCommand(cmd) => pica_tx
+                                    .send(PicaCommand::UciCommand(device_handle, cmd))
+                                    .await
+                                    .unwrap(),
+                                UciParseResult::UciData(data) => pica_tx
+                                    .send(PicaCommand::UciData(device_handle, data))
+                                    .await
+                                    .unwrap(),
+                                UciParseResult::Err(response) => {
+                                    invalid_packet_tx.send(response.into()).unwrap()
+                                }
+                                UciParseResult::Skip => (),
+                            },
+                            err => break err,
                         }
+                    }
+                },
+                async {
+                    loop {
+                        // Write UCI packets to connected UWB host.
+                        let Some(packet) = packet_rx.recv().await else {
+                            anyhow::bail!("uci packet channel closed");
+                        };
+                        match uci_writer.write(&packet, &pcapng_file).await {
+                            Ok(_) => (),
+                            err => break err,
+                        }
+                    }
                 }
-            }
+            )
+            .unwrap();
+
             pica_tx
                 .send(PicaCommand::Disconnect(device_handle))
                 .await
