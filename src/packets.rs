@@ -68,7 +68,7 @@ pub mod uci {
         /// re-assembled if segmented on the UCI transport. Data segments
         /// are _not_ re-assembled but returned immediatly for credit
         /// acknowledgment.
-        pub async fn read(&mut self, pcapng: &mut Option<pcapng::File>) -> anyhow::Result<Vec<u8>> {
+        pub async fn read(&mut self, pcapng: &Option<pcapng::File>) -> anyhow::Result<Vec<u8>> {
             use tokio::io::AsyncReadExt;
 
             let mut complete_packet = vec![0; HEADER_SIZE];
@@ -102,11 +102,11 @@ pub mod uci {
                 self.socket.read_exact(&mut payload_bytes).await?;
                 complete_packet.extend(&payload_bytes);
 
-                if let Some(ref mut pcapng) = pcapng {
+                if let Some(ref pcapng) = pcapng {
                     let mut packet_bytes = vec![];
                     packet_bytes.extend(&complete_packet[0..HEADER_SIZE]);
                     packet_bytes.extend(&payload_bytes);
-                    pcapng.write(&packet_bytes, pcapng::Direction::Tx).await?;
+                    pcapng.write(&packet_bytes, pcapng::Direction::Tx)?;
                 }
 
                 if common_packet_header.get_mt() == MessageType::Data {
@@ -135,7 +135,7 @@ pub mod uci {
         pub async fn write(
             &mut self,
             mut packet: &[u8],
-            pcapng: &mut Option<pcapng::File>,
+            pcapng: &Option<pcapng::File>,
         ) -> anyhow::Result<()> {
             use tokio::io::AsyncWriteExt;
 
@@ -169,11 +169,11 @@ pub mod uci {
                     _ => header_bytes[3] = chunk_length as u8,
                 }
 
-                if let Some(ref mut pcapng) = pcapng {
+                if let Some(ref pcapng) = pcapng {
                     let mut packet_bytes = vec![];
                     packet_bytes.extend(&header_bytes);
                     packet_bytes.extend(&packet[..chunk_length]);
-                    pcapng.write(&packet_bytes, pcapng::Direction::Rx).await?
+                    pcapng.write(&packet_bytes, pcapng::Direction::Rx)?
                 }
 
                 // Write the header and payload segment bytes.
