@@ -46,6 +46,7 @@ pdl-compiler = "0.2.3"
 [dependencies]
 anyhow = "1.0.56"
 bytes = "1"
+futures = "0.3.30"
 clap = { version = "4.1.8", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
 glam = "0.25.0"
 hex = "0.4.3"

@@ -17,11 +17,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
+use std::pin::Pin;
 use thiserror::Error;
-use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-mod packets;
+pub mod packets;
 mod pcapng;
 
 use packets::uci::StatusCode as UciStatusCode;
@@ -39,6 +39,8 @@ pub use mac_address::MacAddress;
 use crate::session::RangeDataNtfConfig;
 
 pub type UciPacket = Vec<u8>;
+pub type UciStream = Pin<Box<dyn futures::stream::Stream<Item = Vec<u8>> + Send>>;
+pub type UciSink = Pin<Box<dyn futures::sink::Sink<Vec<u8>, Error = anyhow::Error> + Send>>;
 
 /// Handle allocated for created devices or anchors.
 /// The handle is unique across the lifetime of the Pica context
@@ -86,10 +88,9 @@ pub enum PicaCommandError {
     DeviceNotFound(MacAddress),
 }
 
-#[derive(Debug)]
 pub enum PicaCommand {
     // Connect a new device.
-    Connect(TcpStream),
+    Connect(UciStream, UciSink),
     // Disconnect the selected device.
     Disconnect(usize),
     // Execute ranging command for selected device and session.
@@ -113,7 +114,7 @@ pub enum PicaCommand {
 impl Display for PicaCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cmd = match self {
-            PicaCommand::Connect(_) => "Connect",
+            PicaCommand::Connect(_, _) => "Connect",
             PicaCommand::Disconnect(_) => "Disconnect",
             PicaCommand::Ranging(_, _) => "Ranging",
             PicaCommand::StopRanging(_, _) => "StopRanging",
@@ -244,78 +245,155 @@ impl Pica {
         let _ = self.event_tx.send(event);
     }
 
-    fn connect(&mut self, stream: TcpStream) {
-        let (packet_tx, mut packet_rx) = mpsc::unbounded_channel();
-        let device_handle = self.counter;
+    /// Handle an incoming stream of UCI packets.
+    /// Reassemble control packets when fragmented, data packets are unmodified.
+    async fn read_routine(
+        mut uci_stream: impl futures::stream::Stream<Item = Vec<u8>> + Unpin,
+        cmd_tx: mpsc::Sender<PicaCommand>,
+        handle: Handle,
+        pcapng_file: Option<&pcapng::File>,
+    ) -> anyhow::Result<()> {
+        use futures::stream::StreamExt;
+
+        loop {
+            let mut complete_packet: Option<Vec<u8>> = None;
+            loop {
+                let packet = uci_stream
+                    .next()
+                    .await
+                    .ok_or(anyhow::anyhow!("input packet stream closed"))?;
+                let header =
+                    packets::uci::CommonPacketHeader::parse(&packet[0..COMMON_HEADER_SIZE])?;
+
+                if let Some(file) = pcapng_file {
+                    file.write(&packet, pcapng::Direction::Tx)?;
+                }
+
+                match &mut complete_packet {
+                    Some(complete_packet) => {
+                        complete_packet.extend_from_slice(&packet[HEADER_SIZE..])
+                    }
+                    None => complete_packet = Some(packet),
+                }
+
+                if header.get_pbf() == packets::uci::PacketBoundaryFlag::Complete
+                    || header.get_mt() == packets::uci::MessageType::Data
+                {
+                    break;
+                }
+            }
+
+            cmd_tx
+                .send(PicaCommand::UciPacket(handle, complete_packet.unwrap()))
+                .await
+                .unwrap()
+        }
+    }
+
+    /// Segment a stream of UCI packets.
+    async fn write_routine(
+        mut uci_sink: impl futures::sink::Sink<Vec<u8>> + Unpin,
+        mut packet_rx: mpsc::UnboundedReceiver<UciPacket>,
+        _handle: Handle,
+        pcapng_file: Option<&pcapng::File>,
+    ) -> anyhow::Result<()> {
+        use futures::sink::SinkExt;
+
+        loop {
+            let complete_packet = packet_rx
+                .recv()
+                .await
+                .ok_or(anyhow::anyhow!("output packet stream closed"))?;
+            let mut offset = HEADER_SIZE;
+            let mt = parse_message_type(complete_packet[0]);
+
+            while offset < complete_packet.len() {
+                let remaining_length = complete_packet.len() - offset;
+                let fragment_length = std::cmp::min(
+                    remaining_length,
+                    if mt == MessageType::Data {
+                        MAX_DATA_PACKET_PAYLOAD_SIZE
+                    } else {
+                        MAX_CTRL_PACKET_PAYLOAD_SIZE
+                    },
+                );
+                let pbf = if fragment_length == remaining_length {
+                    PacketBoundaryFlag::Complete
+                } else {
+                    PacketBoundaryFlag::NotComplete
+                };
+
+                let mut packet = Vec::with_capacity(HEADER_SIZE + fragment_length);
+
+                packet.extend_from_slice(&complete_packet[0..HEADER_SIZE]);
+                const PBF_MASK: u8 = 0x10;
+                packet[0] &= !PBF_MASK;
+                packet[0] |= (pbf as u8) << 4;
+
+                match mt {
+                    MessageType::Data => {
+                        packet[2..4].copy_from_slice(&(fragment_length as u16).to_le_bytes())
+                    }
+                    _ => packet[3] = fragment_length as u8,
+                }
+
+                packet.extend_from_slice(&complete_packet[offset..offset + fragment_length]);
+
+                if let Some(file) = pcapng_file {
+                    file.write(&packet, pcapng::Direction::Rx)?;
+                }
+
+                uci_sink
+                    .send(packet)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("output packet sink closed"))?;
+
+                offset += fragment_length;
+            }
+        }
+    }
+
+    fn connect(&mut self, stream: UciStream, sink: UciSink) {
+        let (packet_tx, packet_rx) = mpsc::unbounded_channel();
         let pica_tx = self.command_tx.clone();
+        let disconnect_tx = self.command_tx.clone();
         let pcapng_dir = self.pcapng_dir.clone();
 
-        log::debug!("[{}] Connecting device", device_handle);
-
+        let handle = self.counter;
         self.counter += 1;
-        let mac_address = MacAddress::Short((device_handle as u16).to_be_bytes());
-        let mut device = Device::new(
-            device_handle,
-            mac_address,
-            packet_tx,
-            self.command_tx.clone(),
-        );
+
+        log::debug!("[{}] Connecting device", handle);
+
+        let mac_address = MacAddress::Short((handle as u16).to_be_bytes());
+        let mut device = Device::new(handle, mac_address, packet_tx, self.command_tx.clone());
         device.init();
 
         self.send_event(PicaEvent::Connected {
-            handle: device_handle,
+            handle,
             mac_address: device.mac_address,
         });
 
-        self.devices.insert(device_handle, device);
+        self.devices.insert(handle, device);
 
         // Spawn and detach the connection handling task.
         // The task notifies pica when exiting to let it clean
         // the state.
         tokio::task::spawn(async move {
             let pcapng_file = if let Some(dir) = pcapng_dir {
-                let full_path = dir.join(format!("device-{}.pcapng", device_handle));
+                let full_path = dir.join(format!("device-{}.pcapng", handle));
                 log::debug!("Recording pcapng to file {}", full_path.as_path().display());
                 Some(pcapng::File::create(full_path).unwrap())
             } else {
                 None
             };
 
-            let (uci_rx, uci_tx) = stream.into_split();
-            let mut uci_reader = packets::uci::Reader::new(uci_rx);
-            let mut uci_writer = packets::uci::Writer::new(uci_tx);
+            let _ = tokio::try_join!(
+                async { Self::read_routine(stream, pica_tx, handle, pcapng_file.as_ref()).await },
+                async { Self::write_routine(sink, packet_rx, handle, pcapng_file.as_ref()).await }
+            );
 
-            tokio::try_join!(
-                async {
-                    loop {
-                        // Read UCI packets sent from connected UWB host.
-                        // Run associated command.
-                        match uci_reader.read(&pcapng_file).await {
-                            Ok(packet) => pica_tx
-                                .send(PicaCommand::UciPacket(device_handle, packet))
-                                .await
-                                .unwrap(),
-                            err => break err,
-                        }
-                    }
-                },
-                async {
-                    loop {
-                        // Write UCI packets to connected UWB host.
-                        let Some(packet) = packet_rx.recv().await else {
-                            anyhow::bail!("uci packet channel closed");
-                        };
-                        match uci_writer.write(&packet, &pcapng_file).await {
-                            Ok(_) => (),
-                            err => break err,
-                        }
-                    }
-                }
-            )
-            .unwrap();
-
-            pica_tx
-                .send(PicaCommand::Disconnect(device_handle))
+            disconnect_tx
+                .send(PicaCommand::Disconnect(handle))
                 .await
                 .unwrap()
         });
@@ -438,7 +516,7 @@ impl Pica {
     fn pica_command(&mut self, command: PicaCommand) {
         use PicaCommand::*;
         match command {
-            Connect(stream) => self.connect(stream),
+            Connect(stream, sink) => self.connect(stream, sink),
             Disconnect(device_handle) => self.disconnect(device_handle),
             Ranging(device_handle, session_id) => self.ranging(device_handle, session_id),
             StopRanging(mac_address, session_id) => {
