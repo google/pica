@@ -168,6 +168,11 @@ impl Device {
         }
     }
 
+    // Send a response or notification to the Host.
+    fn send_control(&mut self, packet: impl Into<Vec<u8>>) {
+        let _ = self.tx.send(packet.into());
+    }
+
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
     fn command_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
@@ -428,7 +433,7 @@ impl Device {
         }
     }
 
-    pub fn command(&mut self, cmd: UciCommand) -> UciResponse {
+    fn receive_command(&mut self, cmd: UciCommand) -> UciResponse {
         match cmd.specialize() {
             // Handle commands for this device
             UciCommandChild::CoreCommand(core_command) => match core_command.specialize() {
@@ -609,6 +614,61 @@ impl Device {
                 payload: None,
             }
             .build(),
+        }
+    }
+
+    pub fn receive_packet(&mut self, packet: Vec<u8>) {
+        let mt = parse_message_type(packet[0]);
+        match mt {
+            MessageType::Data => match DataPacket::parse(&packet) {
+                Ok(packet) => {
+                    let notification = self.data_message_snd(packet);
+                    self.send_control(notification)
+                }
+                Err(err) => log::error!("failed to parse incoming Data packet: {}", err),
+            },
+            MessageType::Command => {
+                match ControlPacket::parse(&packet) {
+                    // Parsing error. Determine what error response should be
+                    // returned to the host:
+                    // - response and notifications are ignored, no response
+                    // - if the group id is not known, STATUS_UNKNOWN_GID,
+                    // - otherwise, and to simplify the code, STATUS_UNKNOWN_OID is
+                    //      always returned. That means that malformed commands
+                    //      get the same status code, instead of
+                    //      STATUS_SYNTAX_ERROR.
+                    Err(_) => {
+                        let group_id = packet[0] & 0xf;
+                        let opcode_id = packet[1] & 0x3f;
+
+                        let status = if GroupId::try_from(group_id).is_ok() {
+                            StatusCode::UciStatusUnknownOid
+                        } else {
+                            StatusCode::UciStatusUnknownGid
+                        };
+                        // The PDL generated code cannot be used to generate
+                        // responses with invalid group identifiers.
+                        let response = vec![
+                            (u8::from(MessageType::Response) << 5) | group_id,
+                            opcode_id,
+                            0,
+                            1,
+                            status.into(),
+                        ];
+                        self.send_control(response)
+                    }
+
+                    // Parsing success, ignore non command packets.
+                    Ok(cmd) => {
+                        let response = self.receive_command(cmd.try_into().unwrap());
+                        self.send_control(response)
+                    }
+                }
+            }
+
+            // Message types for notifications and responses ignored
+            // by the controller.
+            _ => log::warn!("received unexpected packet of MT {:?}", mt),
         }
     }
 }
