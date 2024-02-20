@@ -32,7 +32,15 @@ async fn accept_incoming(cmd_tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Re
     loop {
         let (socket, addr) = uci_listener.accept().await?;
         log::info!("Uwb host addr: {}", addr);
-        cmd_tx.send(PicaCommand::Connect(socket)).await?
+
+        let (read_half, write_half) = socket.into_split();
+        let stream = Box::pin(futures::stream::unfold(read_half, pica::packets::uci::read));
+        let sink = Box::pin(futures::sink::unfold(write_half, pica::packets::uci::write));
+
+        cmd_tx
+            .send(PicaCommand::Connect(stream, sink))
+            .await
+            .map_err(|_| anyhow::anyhow!("pica command stream closed"))?
     }
 }
 
