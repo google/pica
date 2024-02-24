@@ -122,7 +122,7 @@ impl Device {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(5)).await;
-            tx.send(DeviceStatusNtfBuilder { device_state }.build().into())
+            tx.send(CoreDeviceStatusNtfBuilder { device_state }.build().into())
                 .unwrap()
         });
     }
@@ -180,13 +180,13 @@ impl Device {
 
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
-    fn core_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
+    fn core_device_reset(&mut self, cmd: CoreDeviceResetCmd) -> CoreDeviceResetRsp {
         let reset_config = cmd.get_reset_config();
         log::debug!("[{}] DeviceReset", self.handle);
         log::debug!("  reset_config={:?}", reset_config);
 
         let status = match reset_config {
-            ResetConfig::UwbsReset => StatusCode::UciStatusOk,
+            ResetConfig::UwbsReset => uci::Status::Ok,
         };
         *self = Device::new(
             self.handle,
@@ -196,15 +196,15 @@ impl Device {
         );
         self.init();
 
-        DeviceResetRspBuilder { status }.build()
+        CoreDeviceResetRspBuilder { status }.build()
     }
 
-    fn core_get_device_info(&self, _cmd: GetDeviceInfoCmd) -> GetDeviceInfoRsp {
+    fn core_get_device_info(&self, _cmd: CoreGetDeviceInfoCmd) -> CoreGetDeviceInfoRsp {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
         log::debug!("[{}] GetDeviceInfo", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady);
-        GetDeviceInfoRspBuilder {
-            status: StatusCode::UciStatusOk,
+        CoreGetDeviceInfoRspBuilder {
+            status: uci::Status::Ok,
             uci_version: UCI_VERSION,
             mac_version: MAC_VERSION,
             phy_version: PHY_VERSION,
@@ -214,7 +214,7 @@ impl Device {
         .build()
     }
 
-    pub fn core_get_caps_info(&self, _cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
+    pub fn core_get_caps_info(&self, _cmd: CoreGetCapsInfoCmd) -> CoreGetCapsInfoRsp {
         log::debug!("[{}] GetCapsInfo", self.handle);
 
         let caps = DEFAULT_CAPS_INFO
@@ -225,14 +225,14 @@ impl Device {
             })
             .collect();
 
-        GetCapsInfoRspBuilder {
-            status: StatusCode::UciStatusOk,
+        CoreGetCapsInfoRspBuilder {
+            status: uci::Status::Ok,
             tlvs: caps,
         }
         .build()
     }
 
-    pub fn core_set_config(&mut self, cmd: SetConfigCmd) -> SetConfigRsp {
+    pub fn core_set_config(&mut self, cmd: CoreSetConfigCmd) -> CoreSetConfigRsp {
         log::debug!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
 
@@ -248,19 +248,19 @@ impl Device {
 
         let (status, parameters) = if invalid_config_status.is_empty() {
             self.config.extend(valid_parameters);
-            (StatusCode::UciStatusOk, Vec::new())
+            (uci::Status::Ok, Vec::new())
         } else {
-            (StatusCode::UciStatusInvalidParam, invalid_config_status)
+            (uci::Status::InvalidParam, invalid_config_status)
         };
 
-        SetConfigRspBuilder {
+        CoreSetConfigRspBuilder {
             cfg_status: parameters,
             status,
         }
         .build()
     }
 
-    pub fn core_get_config(&self, cmd: GetConfigCmd) -> GetConfigRsp {
+    pub fn core_get_config(&self, cmd: CoreGetConfigCmd) -> CoreGetConfigRsp {
         log::debug!("[{}] GetConfig", self.handle);
 
         // TODO: do this config shall be set on device reset
@@ -292,12 +292,12 @@ impl Device {
         );
 
         let (status, parameters) = if invalid_parameters.is_empty() {
-            (StatusCode::UciStatusOk, valid_parameters)
+            (uci::Status::Ok, valid_parameters)
         } else {
-            (StatusCode::UciStatusInvalidParam, invalid_parameters)
+            (uci::Status::InvalidParam, invalid_parameters)
         };
 
-        GetConfigRspBuilder {
+        CoreGetConfigRspBuilder {
             status,
             tlvs: parameters,
         }
@@ -313,17 +313,17 @@ impl Device {
         log::debug!("  session_type={:?}", session_type);
 
         let status = if self.sessions.len() >= MAX_SESSION {
-            StatusCode::UciStatusMaxSessionsExceeded
+            uci::Status::MaxSessionsExceeded
         } else {
             match self.sessions.insert(
                 session_id,
                 Session::new(session_id, session_type, self.handle, self.tx.clone()),
             ) {
-                Some(_) => StatusCode::UciStatusSessionDuplicate,
+                Some(_) => uci::Status::SessionDuplicate,
                 None => {
                     // Should not fail
                     self.session_mut(session_id).unwrap().init();
-                    StatusCode::UciStatusOk
+                    uci::Status::Ok
                 }
             }
         };
@@ -345,9 +345,9 @@ impl Device {
                     }
                 }
                 self.sessions.remove(&session_id);
-                StatusCode::UciStatusOk
+                uci::Status::Ok
             }
-            None => StatusCode::UciStatusSessionNotExist,
+            None => uci::Status::SessionNotExist,
         };
         SessionDeinitRspBuilder { status }.build()
     }
@@ -356,7 +356,7 @@ impl Device {
         log::debug!("[{}] Session get count", self.handle);
 
         SessionGetCountRspBuilder {
-            status: StatusCode::UciStatusOk,
+            status: uci::Status::Ok,
             session_count: self.sessions.len() as u8,
         }
         .build()
@@ -374,7 +374,7 @@ impl Device {
         let Some(session) = self.sessions.get_mut(&session_handle) else {
             return SessionSetAppConfigRspBuilder {
                 cfg_status: Vec::new(),
-                status: StatusCode::UciStatusSessionNotExist,
+                status: uci::Status::SessionNotExist,
             }
             .build();
         };
@@ -392,7 +392,7 @@ impl Device {
                 .any(|cfg| IMMUTABLE_PARAMETERS.contains(&cfg.cfg_id))
             {
                 return SessionSetAppConfigRspBuilder {
-                    status: StatusCode::UciStatusSessionActive,
+                    status: uci::Status::SessionActive,
                     cfg_status: vec![],
                 }
                 .build();
@@ -402,7 +402,7 @@ impl Device {
         let (status, invalid_parameters) = if session.state != SessionState::SessionStateInit
             && session.state != SessionState::SessionStateActive
         {
-            (StatusCode::UciStatusRejected, Vec::new())
+            (uci::Status::Rejected, Vec::new())
         } else {
             let mut app_config = session.app_config.clone();
             let mut invalid_parameters = vec![];
@@ -411,7 +411,7 @@ impl Device {
                     Ok(_) => (),
                     Err(_) => invalid_parameters.push(AppConfigStatus {
                         cfg_id: cfg.cfg_id,
-                        status: uci::StatusCode::UciStatusInvalidParam,
+                        status: uci::Status::InvalidParam,
                     }),
                 }
             }
@@ -440,7 +440,7 @@ impl Device {
                     session_handle
                 );
                 return SessionSetAppConfigRspBuilder {
-                    status: uci::StatusCode::UciStatusRejected,
+                    status: uci::Status::Rejected,
                     cfg_status: vec![],
                 }
                 .build();
@@ -454,9 +454,9 @@ impl Device {
                         ReasonCode::StateChangeWithSessionManagementCommands,
                     );
                 }
-                (StatusCode::UciStatusOk, invalid_parameters)
+                (uci::Status::Ok, invalid_parameters)
             } else {
-                (StatusCode::UciStatusInvalidParam, invalid_parameters)
+                (uci::Status::InvalidParam, invalid_parameters)
             }
         };
 
@@ -479,7 +479,7 @@ impl Device {
         let Some(session) = self.sessions.get(&session_handle) else {
             return SessionGetAppConfigRspBuilder {
                 tlvs: vec![],
-                status: StatusCode::UciStatusSessionNotExist,
+                status: uci::Status::SessionNotExist,
             }
             .build();
         };
@@ -501,9 +501,9 @@ impl Device {
             }
 
             if invalid_parameters.is_empty() {
-                (StatusCode::UciStatusOk, valid_parameters)
+                (uci::Status::Ok, valid_parameters)
             } else {
-                (StatusCode::UciStatusFailed, Vec::new())
+                (uci::Status::Failed, Vec::new())
             }
         };
 
@@ -522,13 +522,13 @@ impl Device {
         let Some(session) = self.sessions.get(&session_handle) else {
             return SessionGetStateRspBuilder {
                 session_state: SessionState::SessionStateInit,
-                status: StatusCode::UciStatusSessionNotExist,
+                status: uci::Status::SessionNotExist,
             }
             .build();
         };
 
         SessionGetStateRspBuilder {
-            status: StatusCode::UciStatusOk,
+            status: uci::Status::Ok,
             session_state: session.state,
         }
         .build()
@@ -548,7 +548,7 @@ impl Device {
 
         let Some(session) = self.sessions.get_mut(&session_handle) else {
             return SessionUpdateControllerMulticastListRspBuilder {
-                status: StatusCode::UciStatusSessionNotExist,
+                status: uci::Status::SessionNotExist,
             }
             .build();
         };
@@ -559,7 +559,7 @@ impl Device {
             || session.app_config.multi_node_mode != Some(MultiNodeMode::OneToMany)
         {
             return SessionUpdateControllerMulticastListRspBuilder {
-                status: StatusCode::UciStatusRejected,
+                status: uci::Status::Rejected,
             }
             .build();
         }
@@ -578,7 +578,7 @@ impl Device {
                         .collect()
                 } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
-                        status: StatusCode::UciStatusSyntaxError,
+                        status: uci::Status::SyntaxError,
                     }
                     .build();
                 }
@@ -596,7 +596,7 @@ impl Device {
                         .collect()
                 } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
-                        status: StatusCode::UciStatusSyntaxError,
+                        status: uci::Status::SyntaxError,
                     }
                     .build();
                 }
@@ -614,14 +614,14 @@ impl Device {
                         .collect()
                 } else {
                     return SessionUpdateControllerMulticastListRspBuilder {
-                        status: StatusCode::UciStatusSyntaxError,
+                        status: uci::Status::SyntaxError,
                     }
                     .build();
                 }
             }
         };
         let mut controlee_status = Vec::new();
-        let mut status = StatusCode::UciStatusOk;
+        let mut status = uci::Status::Ok;
 
         match action {
             UpdateMulticastListAction::AddControlee
@@ -631,7 +631,7 @@ impl Device {
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                     if !dst_addresses.contains(&controlee.short_address) {
                         if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
-                            status = StatusCode::UciStatusMulticastListFull;
+                            status = uci::Status::MulticastListFull;
                             update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
                         } else if (action
                             == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
@@ -644,7 +644,7 @@ impl Device {
                             // 0x04, the UWBS shall return SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF
                             // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
                             // Controlee in the Controlee List.
-                            status = StatusCode::UciStatusFailed;
+                            status = uci::Status::Failed;
                             update_status =
                                 MulticastUpdateStatusCode::StatusErrorSubSessionKeyNotApplicable;
                         } else {
@@ -668,7 +668,7 @@ impl Device {
                     let attempt_count = session.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                     if !dst_addresses.contains(&address) {
-                        status = StatusCode::UciStatusAddressNotFound;
+                        status = uci::Status::AddressNotFound;
                         update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
                     } else {
                         dst_addresses.retain(|value| *value != address);
@@ -732,14 +732,14 @@ impl Device {
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
             return SessionStartRspBuilder {
-                status: StatusCode::UciStatusSessionNotExist,
+                status: uci::Status::SessionNotExist,
             }
             .build();
         };
 
         if session.state != SessionState::SessionStateIdle {
             return SessionStartRspBuilder {
-                status: StatusCode::UciStatusSessionNotConfigured,
+                status: uci::Status::SessionNotConfigured,
             }
             .build();
         }
@@ -769,7 +769,7 @@ impl Device {
         self.set_state(DeviceState::DeviceStateActive);
 
         SessionStartRspBuilder {
-            status: StatusCode::UciStatusOk,
+            status: uci::Status::Ok,
         }
         .build()
     }
@@ -781,14 +781,14 @@ impl Device {
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
             return SessionStopRspBuilder {
-                status: StatusCode::UciStatusSessionNotExist,
+                status: uci::Status::SessionNotExist,
             }
             .build();
         };
 
         if session.state != SessionState::SessionStateActive {
             return SessionStopRspBuilder {
-                status: StatusCode::UciStatusSessionActive,
+                status: uci::Status::SessionActive,
             }
             .build();
         }
@@ -805,7 +805,7 @@ impl Device {
         }
 
         SessionStopRspBuilder {
-            status: StatusCode::UciStatusOk,
+            status: uci::Status::Ok,
         }
         .build()
     }
@@ -824,14 +824,14 @@ impl Device {
 
         let Some(session) = self.sessions.get(&session_id) else {
             return SessionGetRangingCountRspBuilder {
-                status: StatusCode::UciStatusSessionNotExist,
+                status: uci::Status::SessionNotExist,
                 count: 0,
             }
             .build();
         };
 
         SessionGetRangingCountRspBuilder {
-            status: StatusCode::UciStatusOk,
+            status: uci::Status::Ok,
             count: session.sequence_number,
         }
         .build()
@@ -847,7 +847,7 @@ impl Device {
 
         self.country_code = country_code;
         AndroidSetCountryCodeRspBuilder {
-            status: StatusCode::UciStatusOk,
+            status: uci::Status::Ok,
         }
         .build()
     }
@@ -861,7 +861,7 @@ impl Device {
         // TODO
         AndroidGetPowerStatsRspBuilder {
             stats: PowerStats {
-                status: StatusCode::UciStatusOk,
+                status: uci::Status::Ok,
                 idle_time_ms: 0,
                 tx_time_ms: 0,
                 rx_time_ms: 0,
@@ -871,7 +871,7 @@ impl Device {
         .build()
     }
 
-    pub fn data_message_snd(&mut self, data: DataPacket) -> SessionControlNotification {
+    pub fn data_message_snd(&mut self, data: DataPacket) -> ControlPacket {
         log::debug!("[{}] data_message_send", self.handle);
         match data.specialize() {
             DataPacketChild::DataMessageSnd(data_msg_snd) => {
@@ -879,7 +879,7 @@ impl Device {
                 if let Some(session) = self.session_mut(session_token) {
                     session.data_message_snd(data_msg_snd)
                 } else {
-                    DataTransferStatusNtfBuilder {
+                    SessionDataTransferStatusNtfBuilder {
                         session_token,
                         status: DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
                         tx_count: 1, // TODO: support for retries?
@@ -892,7 +892,7 @@ impl Device {
             DataPacketChild::DataMessageRcv(data_msg_rcv) => {
                 // This function should not be passed anything besides DataMessageSnd
                 let session_token = data_msg_rcv.get_session_handle();
-                DataTransferStatusNtfBuilder {
+                SessionDataTransferStatusNtfBuilder {
                     session_token,
                     status: DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
                     tx_count: 1, // TODO: support for retries?
@@ -907,23 +907,23 @@ impl Device {
         }
     }
 
-    fn receive_command(&mut self, cmd: UciCommand) -> UciResponse {
-        use AndroidCommandChild::*;
-        use CoreCommandChild::*;
-        use SessionConfigCommandChild::*;
-        use SessionControlCommandChild::*;
-        use UciCommandChild::*;
+    fn receive_command(&mut self, cmd: ControlPacket) -> ControlPacket {
+        use AndroidPacketChild::*;
+        use ControlPacketChild::*;
+        use CorePacketChild::*;
+        use SessionConfigPacketChild::*;
+        use SessionControlPacketChild::*;
 
         match cmd.specialize() {
-            CoreCommand(cmd) => match cmd.specialize() {
-                DeviceResetCmd(cmd) => self.core_device_reset(cmd).into(),
-                GetDeviceInfoCmd(cmd) => self.core_get_device_info(cmd).into(),
-                GetCapsInfoCmd(cmd) => self.core_get_caps_info(cmd).into(),
-                SetConfigCmd(cmd) => self.core_set_config(cmd).into(),
-                GetConfigCmd(cmd) => self.core_get_config(cmd).into(),
-                _ => panic!("Unsupported Core command 0x{:02x}", cmd.get_opcode()),
+            CorePacket(cmd) => match cmd.specialize() {
+                CoreDeviceResetCmd(cmd) => self.core_device_reset(cmd).into(),
+                CoreGetDeviceInfoCmd(cmd) => self.core_get_device_info(cmd).into(),
+                CoreGetCapsInfoCmd(cmd) => self.core_get_caps_info(cmd).into(),
+                CoreSetConfigCmd(cmd) => self.core_set_config(cmd).into(),
+                CoreGetConfigCmd(cmd) => self.core_get_config(cmd).into(),
+                _ => unimplemented!("Unsupported Core oid {:?}", cmd.get_oid()),
             },
-            SessionConfigCommand(cmd) => match cmd.specialize() {
+            SessionConfigPacket(cmd) => match cmd.specialize() {
                 SessionInitCmd(cmd) => self.session_init(cmd).into(),
                 SessionDeinitCmd(cmd) => self.session_deinit(cmd).into(),
                 SessionGetCountCmd(cmd) => self.session_get_count(cmd).into(),
@@ -933,62 +933,47 @@ impl Device {
                 SessionUpdateControllerMulticastListCmd(cmd) => {
                     self.session_update_controller_multicast_list(cmd).into()
                 }
-                _ => panic!(
-                    "Unsupported Session Config command 0x{:02x}",
-                    cmd.get_opcode()
-                ),
+                _ => unimplemented!("Unsupported Session Config oid {:?}", cmd.get_oid()),
             },
-            SessionControlCommand(cmd) => match cmd.specialize() {
+            SessionControlPacket(cmd) => match cmd.specialize() {
                 SessionStartCmd(cmd) => self.session_start(cmd).into(),
                 SessionStopCmd(cmd) => self.session_stop(cmd).into(),
                 SessionGetRangingCountCmd(cmd) => self.session_get_ranging_count(cmd).into(),
-                _ => panic!(
-                    "Unsupported Session Control command 0x{:02x}",
-                    cmd.get_opcode()
-                ),
+                _ => unimplemented!("Unsupported Session Control oid {:?}", cmd.get_oid()),
             },
-            AndroidCommand(cmd) => match cmd.specialize() {
+            AndroidPacket(cmd) => match cmd.specialize() {
                 AndroidSetCountryCodeCmd(cmd) => self.android_set_country_code(cmd).into(),
                 AndroidGetPowerStatsCmd(cmd) => self.android_get_power_stats(cmd).into(),
-                _ => panic!("Unsupported Android command 0x{:02x}", cmd.get_opcode()),
+                _ => unimplemented!("Unsupported Android oid {:?}", cmd.get_oid()),
             },
-            UciVendor_9_Command(vendor_command) => UciVendor_9_ResponseBuilder {
-                opcode: vendor_command.get_opcode(),
-                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            ControlPacketChild::Payload(_)
+                if matches!(
+                    cmd.get_mt(),
+                    uci::MessageType::Response | uci::MessageType::Notification
+                ) =>
+            {
+                unreachable!("Unhandled control messsage with type {:?}", cmd.get_mt());
             }
-            .build()
-            .into(),
-            UciVendor_A_Command(vendor_command) => UciVendor_A_ResponseBuilder {
-                opcode: vendor_command.get_opcode(),
-                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            ControlPacketChild::Payload(payload) => {
+                // [UCI] 4.3.2 Exception Handling for Control Messages
+                // The UWBS shall respond to an unknown Command (unknown GID
+                // or OID) with a Response having the same GID and OID field
+                // values as the Command, followed by a Status field with the
+                // value of STATUS_UNKNOWN_GID/STATUS_UNKNOWN_OID respectively
+                // and no additional fields.
+                log::error!("Unsupported gid {:?}", cmd.get_gid());
+                ControlPacketBuilder {
+                    mt: uci::MessageType::Response,
+                    gid: cmd.get_gid(),
+                    payload: Some(
+                        vec![payload[0], payload[1], 0x1, uci::Status::UnknownGid.into()].into(),
+                    ),
+                }
+                .build()
             }
-            .build()
-            .into(),
-            UciVendor_B_Command(vendor_command) => UciVendor_B_ResponseBuilder {
-                opcode: vendor_command.get_opcode(),
-                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
+            ControlPacketChild::None => {
+                unreachable!()
             }
-            .build()
-            .into(),
-            UciVendor_E_Command(vendor_command) => UciVendor_E_ResponseBuilder {
-                opcode: vendor_command.get_opcode(),
-                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
-            }
-            .build()
-            .into(),
-            UciVendor_F_Command(vendor_command) => UciVendor_F_ResponseBuilder {
-                opcode: vendor_command.get_opcode(),
-                payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
-            }
-            .build()
-            .into(),
-            // TODO: Handle properly without panic
-            _ => UciResponseBuilder {
-                gid: GroupId::Core,
-                opcode: 0,
-                payload: Option::None,
-            }
-            .build(),
         }
     }
 
@@ -1017,9 +1002,9 @@ impl Device {
                         let opcode_id = packet[1] & 0x3f;
 
                         let status = if GroupId::try_from(group_id).is_ok() {
-                            StatusCode::UciStatusUnknownOid
+                            uci::Status::UnknownOid
                         } else {
-                            StatusCode::UciStatusUnknownGid
+                            uci::Status::UnknownGid
                         };
                         // The PDL generated code cannot be used to generate
                         // responses with invalid group identifiers.
@@ -1035,7 +1020,7 @@ impl Device {
 
                     // Parsing success, ignore non command packets.
                     Ok(cmd) => {
-                        let response = self.receive_command(cmd.try_into().unwrap());
+                        let response = self.receive_command(cmd);
                         self.send_control(response)
                     }
                 }

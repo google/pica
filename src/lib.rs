@@ -24,8 +24,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 pub mod packets;
 mod pcapng;
 
-use packets::uci::StatusCode as UciStatusCode;
-use packets::uci::*;
+use packets::uci::{self, *};
 
 mod device;
 use device::{Device, MAX_DEVICE, MAX_SESSION};
@@ -162,7 +161,7 @@ fn make_measurement(
     if let MacAddress::Short(address) = mac_address {
         ShortAddressTwoWayRangingMeasurement {
             mac_address: u16::from_le_bytes(*address),
-            status: UciStatusCode::UciStatusOk,
+            status: uci::Status::Ok,
             nlos: 0, // in Line Of Sight
             distance: local.range,
             aoa_azimuth: local.azimuth as u16,
@@ -469,7 +468,7 @@ impl Pica {
                         pbf: PacketBoundaryFlag::Complete,
                         session_handle: session_id,
                         source_address: device.mac_address.into(),
-                        status: UciStatusCode::UciStatusOk,
+                        status: uci::Status::Ok,
                     }
                     .build()
                     .into(),

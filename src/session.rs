@@ -130,13 +130,13 @@ impl Session {
         }
     }
 
-    pub fn data_message_snd(&mut self, data: DataMessageSnd) -> SessionControlNotification {
+    pub fn data_message_snd(&mut self, data: DataMessageSnd) -> ControlPacket {
         log::debug!("[{}] data_message_snd", self.device_handle);
         let session_token = data.get_session_handle();
         let uci_sequence_number = data.get_data_sequence_number() as u8;
 
         if self.session_type != SessionType::FiraRangingAndInBandDataSession {
-            return DataTransferStatusNtfBuilder {
+            return SessionDataTransferStatusNtfBuilder {
                 session_token,
                 status: DataTransferNtfStatusCode::UciDataTransferStatusSessionTypeNotSupported,
                 tx_count: 1, // TODO: support for retries?
@@ -150,7 +150,7 @@ impl Session {
 
         self.data.extend_from_slice(data.get_application_data());
 
-        DataCreditNtfBuilder {
+        SessionDataCreditNtfBuilder {
             credit_availability: CreditAvailability::CreditAvailable,
             session_token,
         }
