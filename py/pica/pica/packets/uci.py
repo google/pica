@@ -351,7 +351,7 @@ class AppConfigTlvType(enum.IntEnum):
     STS_CONFIG = 0x2
     MULTI_NODE_MODE = 0x3
     CHANNEL_NUMBER = 0x4
-    NO_OF_CONTROLEE = 0x5
+    NUMBER_OF_CONTROLEES = 0x5
     DEVICE_MAC_ADDRESS = 0x6
     DST_MAC_ADDRESS = 0x7
     SLOT_DURATION = 0x8
@@ -360,9 +360,9 @@ class AppConfigTlvType(enum.IntEnum):
     MAC_FCS_TYPE = 0xb
     RANGING_ROUND_CONTROL = 0xc
     AOA_RESULT_REQ = 0xd
-    RNG_DATA_NTF = 0xe
-    RNG_DATA_NTF_PROXIMITY_NEAR = 0xf
-    RNG_DATA_NTF_PROXIMITY_FAR = 0x10
+    SESSION_INFO_NTF_CONFIG = 0xe
+    NEAR_PROXIMITY_CONFIG = 0xf
+    FAR_PROXIMITY_CONFIG = 0x10
     DEVICE_ROLE = 0x11
     RFRAME_CONFIG = 0x12
     RSSI_REPORTING = 0x13
@@ -374,13 +374,11 @@ class AppConfigTlvType(enum.IntEnum):
     DATA_REPETITION_COUNT = 0x19
     RANGING_TIME_STRUCT = 0x1a
     SLOTS_PER_RR = 0x1b
-    TX_ADAPTIVE_PAYLOAD_POWER = 0x1c
-    RNG_DATA_NTF_AOA_BOUND = 0x1d
-    RESPONDER_SLOT_INDEX = 0x1e
+    AOA_BOUND_CONFIG = 0x1d
     PRF_MODE = 0x1f
     CAP_SIZE_RANGE = 0x20
     TX_JITTER_WINDOW_SIZE = 0x21
-    SCHEDULED_MODE = 0x22
+    SCHEDULE_MODE = 0x22
     KEY_ROTATION = 0x23
     KEY_ROTATION_RATE = 0x24
     SESSION_PRIORITY = 0x25
@@ -397,13 +395,7 @@ class AppConfigTlvType(enum.IntEnum):
     SUB_SESSION_ID = 0x30
     BPRF_PHR_DATA_RATE = 0x31
     MAX_NUMBER_OF_MEASUREMENTS = 0x32
-    UL_TDOA_TX_INTERVAL = 0x33
-    UL_TDOA_RANDOM_WINDOW = 0x34
     STS_LENGTH = 0x35
-    SUSPEND_RANGING_ROUNDS = 0x36
-    UL_TDOA_NTF_REPORT_CONFIG = 0x37
-    UL_TDOA_DEVICE_ID = 0x38
-    UL_TDOA_TX_TIMESTAMP = 0x39
     MIN_FRAMES_PER_RR = 0x3a
     MTU_SIZE = 0x3b
     INTER_FRAME_INTERVAL = 0x3c
@@ -413,10 +405,10 @@ class AppConfigTlvType(enum.IntEnum):
     DL_TDOA_ANCHOR_CFO = 0x40
     DL_TDOA_ANCHOR_LOCATION = 0x41
     DL_TDOA_TX_ACTIVE_RANGING_ROUNDS = 0x42
-    DL_TDOA_BLOCK_STRIDING = 0x43
+    DL_TDOA_BLOCK_SKIPPING = 0x43
     DL_TDOA_TIME_REFERENCE_ANCHOR = 0x44
     SESSION_KEY = 0x45
-    SUBSESSION_KEY = 0x46
+    SUB_SESSION_KEY = 0x46
     SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG = 0x47
     SESSION_TIME_BASE = 0x48
     DL_TDOA_RESPONDER_TOF = 0x49
@@ -433,15 +425,434 @@ class AppConfigTlvType(enum.IntEnum):
             return v
 
 
-class FrameReportTlvType(enum.IntEnum):
-    RSSI = 0x0
-    AOA = 0x1
-    CIR = 0x2
+class DeviceType(enum.IntEnum):
+    CONTROLEE = 0x0
+    CONTROLLER = 0x1
 
     @staticmethod
-    def from_int(v: int) -> Union[int, 'FrameReportTlvType']:
+    def from_int(v: int) -> Union[int, 'DeviceType']:
         try:
-            return FrameReportTlvType(v)
+            return DeviceType(v)
+        except ValueError as exn:
+            raise exn
+
+
+class RangingRoundUsage(enum.IntEnum):
+    SS_TWR_DEFERRED_MODE = 0x1
+    DS_TWR_DEFERRED_MODE = 0x2
+    SS_TWR_NON_DEFERRED_MODE = 0x3
+    DS_TWR_NON_DEFERRED_MODE = 0x4
+    ON_WAY_RANGING_DL_TDOA = 0x5
+    OWR_AOA_MEASUREMENT = 0x6
+    ESS_TWR_NON_DEFERRED = 0x7
+    ADS_TWR_NON_DEFERRED = 0x8
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'RangingRoundUsage']:
+        try:
+            return RangingRoundUsage(v)
+        except ValueError as exn:
+            raise exn
+
+
+class StsConfig(enum.IntEnum):
+    STATIC = 0x0
+    DYNAMIC = 0x1
+    DYNAMIC_FOR_RESPONDER_SUB_SESSION_KEY = 0x2
+    PROVISIONED = 0x3
+    PROVISIONED_FOR_RESPONDER_SUB_SESSION_KEY = 0x4
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'StsConfig']:
+        try:
+            return StsConfig(v)
+        except ValueError as exn:
+            raise exn
+
+
+class MultiNodeMode(enum.IntEnum):
+    ONE_TO_ONE = 0x0
+    ONE_TO_MANY = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'MultiNodeMode']:
+        try:
+            return MultiNodeMode(v)
+        except ValueError as exn:
+            raise exn
+
+
+class ChannelNumber(enum.IntEnum):
+    CHANNEL_NUMBER_5 = 0x5
+    CHANNEL_NUMBER_6 = 0x6
+    CHANNEL_NUMBER_8 = 0x8
+    CHANNEL_NUMBER_9 = 0x9
+    CHANNEL_NUMBER_10 = 0xa
+    CHANNEL_NUMBER_12 = 0xc
+    CHANNEL_NUMBER_13 = 0xd
+    CHANNEL_NUMBER_14 = 0xe
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'ChannelNumber']:
+        try:
+            return ChannelNumber(v)
+        except ValueError as exn:
+            raise exn
+
+
+class MacFcsType(enum.IntEnum):
+    CRC_16 = 0x0
+    CRC_32 = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'MacFcsType']:
+        try:
+            return MacFcsType(v)
+        except ValueError as exn:
+            raise exn
+
+
+@dataclass
+class RangingRoundControl(Packet):
+    rrrm: int = field(kw_only=True, default=0)
+    rcp: int = field(kw_only=True, default=0)
+    mrp: int = field(kw_only=True, default=0)
+    mrm: int = field(kw_only=True, default=0)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['RangingRoundControl', bytes]:
+        fields = {'payload': None}
+        if len(span) < 1:
+            raise Exception('Invalid packet size')
+        fields['rrrm'] = (span[0] >> 0) & 0x1
+        if (span[0] >> 1) & 0x1 != 0x1:
+            raise Exception('Unexpected fixed field value')
+        fields['rcp'] = (span[0] >> 2) & 0x1
+        fields['mrp'] = (span[0] >> 6) & 0x1
+        fields['mrm'] = (span[0] >> 7) & 0x1
+        span = span[1:]
+        return RangingRoundControl(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        if self.rrrm > 1:
+            print(f"Invalid value for field RangingRoundControl::rrrm: {self.rrrm} > 1; the value will be truncated")
+            self.rrrm &= 1
+        if self.rcp > 1:
+            print(f"Invalid value for field RangingRoundControl::rcp: {self.rcp} > 1; the value will be truncated")
+            self.rcp &= 1
+        if self.mrp > 1:
+            print(f"Invalid value for field RangingRoundControl::mrp: {self.mrp} > 1; the value will be truncated")
+            self.mrp &= 1
+        if self.mrm > 1:
+            print(f"Invalid value for field RangingRoundControl::mrm: {self.mrm} > 1; the value will be truncated")
+            self.mrm &= 1
+        _value = (
+            (self.rrrm << 0) |
+            (1 << 1) |
+            (self.rcp << 2) |
+            (self.mrp << 6) |
+            (self.mrm << 7)
+        )
+        _span.append(_value)
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return 1
+
+class AoaResultReq(enum.IntEnum):
+    AOA_DISABLED = 0x0
+    AOA_ENABLED = 0x1
+    AOA_ENABLED_AZIMUTH_ONLY = 0x2
+    AOA_ENABLED_ELEVATION_ONLY = 0x3
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'AoaResultReq']:
+        try:
+            return AoaResultReq(v)
+        except ValueError as exn:
+            raise exn
+
+
+class SessionInfoNtfConfig(enum.IntEnum):
+    DISABLE = 0x0
+    ENABLE = 0x1
+    ENABLE_PROXIMITY_TRIGGER = 0x2
+    ENABLE_AOA_TRIGGER = 0x3
+    ENABLE_PROXIMITY_AOA_TRIGGER = 0x4
+    ENABLE_PROXIMITY_EDGE_TRIGGER = 0x5
+    ENABLE_AOA_EDGE_TRIGGER = 0x6
+    ENABLE_PROXIMITY_AOA_EDGE_TRIGGER = 0x7
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'SessionInfoNtfConfig']:
+        try:
+            return SessionInfoNtfConfig(v)
+        except ValueError as exn:
+            raise exn
+
+
+class DeviceRole(enum.IntEnum):
+    RESPONDER = 0x0
+    INITIATOR = 0x1
+    ADVERTISER = 0x5
+    OBSERVER = 0x6
+    DT_ANCHOR = 0x7
+    DT_TAG = 0x8
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DeviceRole']:
+        try:
+            return DeviceRole(v)
+        except ValueError as exn:
+            raise exn
+
+
+class RframeConfig(enum.IntEnum):
+    SP0 = 0x0
+    SP1 = 0x1
+    SP3 = 0x3
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'RframeConfig']:
+        try:
+            return RframeConfig(v)
+        except ValueError as exn:
+            raise exn
+
+
+class RssiReporting(enum.IntEnum):
+    DISABLE = 0x0
+    ENABLE = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'RssiReporting']:
+        try:
+            return RssiReporting(v)
+        except ValueError as exn:
+            raise exn
+
+
+class PsduDataRate(enum.IntEnum):
+    DATA_RATE_6M81 = 0x0
+    DATA_RATE_7M80 = 0x1
+    DATA_RATE_27M2 = 0x2
+    DATA_RATE_31M2 = 0x3
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'PsduDataRate']:
+        try:
+            return PsduDataRate(v)
+        except ValueError as exn:
+            raise exn
+
+
+class PreambleDuration(enum.IntEnum):
+    DURATION_32_SYMBOLS = 0x0
+    DURATION_64_SYMBOLS = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'PreambleDuration']:
+        try:
+            return PreambleDuration(v)
+        except ValueError as exn:
+            raise exn
+
+
+class LinkLayerMode(enum.IntEnum):
+    BYPASS_MODE = 0x0
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'LinkLayerMode']:
+        try:
+            return LinkLayerMode(v)
+        except ValueError as exn:
+            raise exn
+
+
+class RangingTimeStruct(enum.IntEnum):
+    BLOCK_BASED_SCHEDULING = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'RangingTimeStruct']:
+        try:
+            return RangingTimeStruct(v)
+        except ValueError as exn:
+            raise exn
+
+
+class PrfMode(enum.IntEnum):
+    BPRF_MODE = 0x0
+    HPRF_MODE_124M8 = 0x1
+    HPRF_MODE_249M6 = 0x2
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'PrfMode']:
+        try:
+            return PrfMode(v)
+        except ValueError as exn:
+            raise exn
+
+
+class ScheduleMode(enum.IntEnum):
+    CONTENTION_BASED = 0x0
+    TIME_SCHEDULED = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'ScheduleMode']:
+        try:
+            return ScheduleMode(v)
+        except ValueError as exn:
+            raise exn
+
+
+class KeyRotation(enum.IntEnum):
+    DISABLE = 0x0
+    ENABLE = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'KeyRotation']:
+        try:
+            return KeyRotation(v)
+        except ValueError as exn:
+            raise exn
+
+
+class MacAddressMode(enum.IntEnum):
+    MODE_0 = 0x0
+    MODE_1 = 0x1
+    MODE_2 = 0x2
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'MacAddressMode']:
+        try:
+            return MacAddressMode(v)
+        except ValueError as exn:
+            raise exn
+
+
+class HoppingMode(enum.IntEnum):
+    DISABLE = 0x0
+    ENABLE = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'HoppingMode']:
+        try:
+            return HoppingMode(v)
+        except ValueError as exn:
+            raise exn
+
+
+@dataclass
+class ResultReportConfig(Packet):
+    tof: int = field(kw_only=True, default=0)
+    aoa_azimuth: int = field(kw_only=True, default=0)
+    aoa_elevation: int = field(kw_only=True, default=0)
+    aoa_fom: int = field(kw_only=True, default=0)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['ResultReportConfig', bytes]:
+        fields = {'payload': None}
+        if len(span) < 1:
+            raise Exception('Invalid packet size')
+        fields['tof'] = (span[0] >> 0) & 0x1
+        fields['aoa_azimuth'] = (span[0] >> 1) & 0x1
+        fields['aoa_elevation'] = (span[0] >> 2) & 0x1
+        fields['aoa_fom'] = (span[0] >> 3) & 0x1
+        span = span[1:]
+        return ResultReportConfig(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        if self.tof > 1:
+            print(f"Invalid value for field ResultReportConfig::tof: {self.tof} > 1; the value will be truncated")
+            self.tof &= 1
+        if self.aoa_azimuth > 1:
+            print(f"Invalid value for field ResultReportConfig::aoa_azimuth: {self.aoa_azimuth} > 1; the value will be truncated")
+            self.aoa_azimuth &= 1
+        if self.aoa_elevation > 1:
+            print(f"Invalid value for field ResultReportConfig::aoa_elevation: {self.aoa_elevation} > 1; the value will be truncated")
+            self.aoa_elevation &= 1
+        if self.aoa_fom > 1:
+            print(f"Invalid value for field ResultReportConfig::aoa_fom: {self.aoa_fom} > 1; the value will be truncated")
+            self.aoa_fom &= 1
+        _value = (
+            (self.tof << 0) |
+            (self.aoa_azimuth << 1) |
+            (self.aoa_elevation << 2) |
+            (self.aoa_fom << 3)
+        )
+        _span.append(_value)
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return 1
+
+class BprfPhrDataRate(enum.IntEnum):
+    DATA_RATE_850K = 0x0
+    DATA_RATE_6M81 = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'BprfPhrDataRate']:
+        try:
+            return BprfPhrDataRate(v)
+        except ValueError as exn:
+            raise exn
+
+
+class StsLength(enum.IntEnum):
+    LENGTH_32_SYMBOLS = 0x0
+    LENGTH_64_SYMBOLS = 0x1
+    LENGTH_128_SYMBOLS = 0x2
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'StsLength']:
+        try:
+            return StsLength(v)
+        except ValueError as exn:
+            raise exn
+
+
+class DlTdoaRangingMethod(enum.IntEnum):
+    SS_TWR = 0x0
+    DS_TWR = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DlTdoaRangingMethod']:
+        try:
+            return DlTdoaRangingMethod(v)
+        except ValueError as exn:
+            raise exn
+
+
+class DlTdoaAnchorCfo(enum.IntEnum):
+    ANCHOR_CFO_NOT_INCLUDED = 0x0
+    ANCHOR_CFO_INCLUDED = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'DlTdoaAnchorCfo']:
+        try:
+            return DlTdoaAnchorCfo(v)
+        except ValueError as exn:
+            raise exn
+
+
+class SessionDataTransferStatusNtfConfig(enum.IntEnum):
+    DISABLE = 0x0
+    ENABLE = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'SessionDataTransferStatusNtfConfig']:
+        try:
+            return SessionDataTransferStatusNtfConfig(v)
         except ValueError as exn:
             raise exn
 
@@ -2875,7 +3286,7 @@ class SessionSetAppConfigRsp(SessionConfigResponse):
 @dataclass
 class SessionGetAppConfigCmd(SessionConfigCommand):
     session_token: int = field(kw_only=True, default=0)
-    app_cfg: bytearray = field(kw_only=True, default_factory=bytearray)
+    app_cfg: List[AppConfigTlvType] = field(kw_only=True, default_factory=list)
 
     def __post_init__(self):
         self.opcode = 4
@@ -2894,7 +3305,10 @@ class SessionGetAppConfigCmd(SessionConfigCommand):
         span = span[5:]
         if len(span) < app_cfg_count:
             raise Exception('Invalid packet size')
-        fields['app_cfg'] = list(span[:app_cfg_count])
+        app_cfg = []
+        for n in range(app_cfg_count):
+            app_cfg.append(AppConfigTlvType(int.from_bytes(span[n:n + 1], byteorder='little')))
+        fields['app_cfg'] = app_cfg
         span = span[app_cfg_count:]
         return SessionGetAppConfigCmd(**fields), span
 
@@ -2908,12 +3322,13 @@ class SessionGetAppConfigCmd(SessionConfigCommand):
             print(f"Invalid length for field SessionGetAppConfigCmd::app_cfg:  {len(self.app_cfg)} > 255; the array will be truncated")
             del self.app_cfg[255:]
         _span.append((len(self.app_cfg) << 0))
-        _span.extend(self.app_cfg)
+        for _elt in self.app_cfg:
+            _span.append(_elt)
         return SessionConfigCommand.serialize(self, payload = bytes(_span))
 
     @property
     def size(self) -> int:
-        return len(self.app_cfg) * 1 + 5
+        return len(self.app_cfg) * 8 + 5
 
 @dataclass
 class SessionGetAppConfigRsp(SessionConfigResponse):
@@ -3279,7 +3694,7 @@ class UpdateMulticastListAction(enum.IntEnum):
     ADD_CONTROLEE = 0x0
     REMOVE_CONTROLEE = 0x1
     ADD_CONTROLEE_WITH_SHORT_SUB_SESSION_KEY = 0x2
-    ADD_CONTROLEE_WITH_LONG_SUB_SESSION_KEY = 0x3
+    ADD_CONTROLEE_WITH_EXTENDED_SUB_SESSION_KEY = 0x3
 
     @staticmethod
     def from_int(v: int) -> Union[int, 'UpdateMulticastListAction']:
@@ -4907,6 +5322,19 @@ class AndroidSetCountryCodeRsp(AndroidResponse):
     @property
     def size(self) -> int:
         return 1
+
+class FrameReportTlvType(enum.IntEnum):
+    RSSI = 0x0
+    AOA = 0x1
+    CIR = 0x2
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'FrameReportTlvType']:
+        try:
+            return FrameReportTlvType(v)
+        except ValueError as exn:
+            raise exn
+
 
 @dataclass
 class FrameReportTlv(Packet):

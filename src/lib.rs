@@ -36,7 +36,8 @@ use session::MAX_SESSION;
 mod mac_address;
 pub use mac_address::MacAddress;
 
-use crate::session::RangeDataNtfConfig;
+mod app_config;
+pub use app_config::AppConfig;
 
 pub type UciPacket = Vec<u8>;
 pub type UciStream = Pin<Box<dyn futures::stream::Stream<Item = Vec<u8>> + Send>>;
@@ -412,7 +413,7 @@ impl Pica {
         let mut measurements = Vec::new();
 
         // Look for compatible anchors.
-        for mac_address in session.get_dst_mac_addresses() {
+        for mac_address in session.get_dst_mac_address() {
             if let Some(other) = self.anchors.get(mac_address) {
                 let local = self
                     .ranging_estimator
@@ -437,7 +438,8 @@ impl Pica {
                     .session(session_id)
                     .unwrap()
                     .app_config
-                    .device_mac_address;
+                    .device_mac_address
+                    .unwrap();
                 let local = self
                     .ranging_estimator
                     .estimate(&device.handle, &peer_device.handle)
@@ -475,7 +477,7 @@ impl Pica {
                 )
                 .unwrap();
         }
-        if session.is_ranging_data_ntf_enabled() != RangeDataNtfConfig::Disable {
+        if session.is_session_info_ntf_enabled() {
             device
                 .tx
                 .send(
@@ -554,7 +556,7 @@ impl Pica {
                 continue;
             };
 
-            if &session.app_config.device_mac_address != mac_address {
+            if session.app_config.device_mac_address != Some(*mac_address) {
                 continue;
             }
 
