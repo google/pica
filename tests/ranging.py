@@ -42,32 +42,45 @@ async def controller(host: Host, peer: Host):
         )
     )
 
-    mac_address_mode = 0x0
+    ranging_round_usage = 0x06
     ranging_duration = int(1000).to_bytes(4, byteorder="little")
-    device_role_initiator = bytes([0])
-    device_type_controller = bytes([1])
+
     host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=0,
             tlvs=[
                 uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE, v=device_role_initiator
+                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                    v=bytes([uci.DeviceRole.INITIATOR]),
                 ),
                 uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE, v=device_type_controller
+                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                    v=bytes([uci.DeviceType.CONTROLLER]),
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS, v=host.mac_address
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
-                    v=bytes([mac_address_mode]),
+                    v=bytes([uci.MacAddressMode.MODE_0]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                    v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                    v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    v=bytes([ranging_round_usage]),
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.RANGING_DURATION, v=ranging_duration
                 ),
                 uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.NO_OF_CONTROLEE, v=bytes([1])
+                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES, v=bytes([1])
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS, v=peer.mac_address
@@ -148,32 +161,45 @@ async def controlee(host: Host, peer: Host):
         )
     )
 
-    mac_address_mode = 0x0
+    ranging_round_usage = 0x06
     ranging_duration = int(1000).to_bytes(4, byteorder="little")
-    device_role_responder = bytes([1])
-    device_type_controlee = bytes([0])
+
     host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=0,
             tlvs=[
                 uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE, v=device_role_responder
+                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                    v=bytes([uci.DeviceRole.RESPONDER]),
                 ),
                 uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE, v=device_type_controlee
+                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                    v=bytes([uci.DeviceType.CONTROLEE]),
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS, v=host.mac_address
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
-                    v=bytes([mac_address_mode]),
+                    v=bytes([uci.MacAddressMode.MODE_0]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                    v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                    v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    v=bytes([ranging_round_usage]),
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.RANGING_DURATION, v=ranging_duration
                 ),
                 uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.NO_OF_CONTROLEE, v=bytes([1])
+                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES, v=bytes([1])
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS, v=peer.mac_address

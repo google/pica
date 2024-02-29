@@ -199,13 +199,14 @@ enum DeviceConfigId : 8 {
     LOW_POWER_MODE = 0x01,
 }
 
+// [UCI] Table 45: APP Configuration Parameters IDs
 enum AppConfigTlvType : 8 {
     DEVICE_TYPE = 0x00,
     RANGING_ROUND_USAGE = 0x01,
     STS_CONFIG = 0x02,
     MULTI_NODE_MODE = 0x03,
     CHANNEL_NUMBER = 0x04,
-    NO_OF_CONTROLEE = 0x05,
+    NUMBER_OF_CONTROLEES = 0x05,
     DEVICE_MAC_ADDRESS = 0x06,
     DST_MAC_ADDRESS = 0x07,
     SLOT_DURATION = 0x08,
@@ -214,9 +215,9 @@ enum AppConfigTlvType : 8 {
     MAC_FCS_TYPE = 0x0B,
     RANGING_ROUND_CONTROL = 0x0C,
     AOA_RESULT_REQ = 0x0D,
-    RNG_DATA_NTF = 0x0E,
-    RNG_DATA_NTF_PROXIMITY_NEAR = 0x0F,
-    RNG_DATA_NTF_PROXIMITY_FAR = 0x10,
+    SESSION_INFO_NTF_CONFIG = 0x0E,
+    NEAR_PROXIMITY_CONFIG = 0x0F,
+    FAR_PROXIMITY_CONFIG = 0x10,
     DEVICE_ROLE = 0x11,
     RFRAME_CONFIG = 0x12,
     RSSI_REPORTING = 0x13,
@@ -228,14 +229,11 @@ enum AppConfigTlvType : 8 {
     DATA_REPETITION_COUNT = 0x19,
     RANGING_TIME_STRUCT = 0x1A,
     SLOTS_PER_RR = 0x1B,
-    TX_ADAPTIVE_PAYLOAD_POWER = 0x1C,
-    // TODO: Ensure this value is correct in the final 2.0 specification.
-    RNG_DATA_NTF_AOA_BOUND = 0x1D,
-    RESPONDER_SLOT_INDEX = 0x1E,
+    AOA_BOUND_CONFIG = 0x1D,
     PRF_MODE = 0x1F,
     CAP_SIZE_RANGE = 0x20,
     TX_JITTER_WINDOW_SIZE = 0x21,
-    SCHEDULED_MODE = 0x22,
+    SCHEDULE_MODE = 0x22,
     KEY_ROTATION = 0x23,
     KEY_ROTATION_RATE = 0x24,
     SESSION_PRIORITY = 0x25,
@@ -252,13 +250,7 @@ enum AppConfigTlvType : 8 {
     SUB_SESSION_ID = 0x30,
     BPRF_PHR_DATA_RATE = 0x31,
     MAX_NUMBER_OF_MEASUREMENTS = 0x32,
-    UL_TDOA_TX_INTERVAL = 0x33,
-    UL_TDOA_RANDOM_WINDOW = 0x34,
     STS_LENGTH = 0x35,
-    SUSPEND_RANGING_ROUNDS = 0x36,
-    UL_TDOA_NTF_REPORT_CONFIG = 0x37,
-    UL_TDOA_DEVICE_ID = 0x38,
-    UL_TDOA_TX_TIMESTAMP = 0x39,
     MIN_FRAMES_PER_RR = 0x3A,
     MTU_SIZE = 0x3B,
     INTER_FRAME_INTERVAL = 0x3C,
@@ -268,10 +260,10 @@ enum AppConfigTlvType : 8 {
     DL_TDOA_ANCHOR_CFO = 0x40,
     DL_TDOA_ANCHOR_LOCATION = 0x41,
     DL_TDOA_TX_ACTIVE_RANGING_ROUNDS = 0x42,
-    DL_TDOA_BLOCK_STRIDING = 0x43,
+    DL_TDOA_BLOCK_SKIPPING = 0x43,
     DL_TDOA_TIME_REFERENCE_ANCHOR = 0x44,
     SESSION_KEY = 0x45,
-    SUBSESSION_KEY = 0x46,
+    SUB_SESSION_KEY = 0x46,
     SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG = 0x47,
     SESSION_TIME_BASE = 0x48,
     DL_TDOA_RESPONDER_TOF = 0x49,
@@ -279,9 +271,9 @@ enum AppConfigTlvType : 8 {
     SECURE_RANGING_CSW_LENGTH = 0x4B,
     APPLICATION_DATA_ENDPOINT = 0x4C,
     OWR_AOA_MEASUREMENT_NTF_PERIOD = 0x4D,
-    RFU_APP_CFG_TLV_TYPE_RANGE = 0x4E..0x9F,
+    RFU = 0x4E..0x9F,
 
-    VENDOR_SPECIFIC_APP_CFG_TLV_TYPE_RANGE_1 = 0xA0..0xDF {
+    VENDOR_SPECIFIC_1 = 0xA0..0xDF {
         // CCC specific
         CCC_HOP_MODE_KEY = 0xA0,
         CCC_UWB_TIME0 = 0xA1,
@@ -293,9 +285,10 @@ enum AppConfigTlvType : 8 {
     },
 
     // Reserved for extension IDs.
-    RFU_APP_CFG_TLV_TYPE_RANGE_3 = 0xE0..0xE2,
+    // ID is 2 Octets in length. Refer section 8.1 for details
+    ID_EXTENSION = 0xE0..0xE2,
 
-    VENDOR_SPECIFIC_APP_CFG_TLV_TYPE_RANGE_2 = 0xE3..0xFF {
+    VENDOR_SPECIFIC_2 = 0xE3..0xFF {
         // Interleaving ratio if AOA_RESULT_REQ is set to 0xF0.
         NB_OF_RANGE_MEASUREMENTS = 0xE3,
         NB_OF_AZIMUTH_MEASUREMENTS = 0xE4,
@@ -305,10 +298,189 @@ enum AppConfigTlvType : 8 {
     },
 }
 
-enum FrameReportTlvType : 8 {
-    RSSI = 0x0,
-    AOA = 0x1,
-    CIR = 0x2,
+enum DeviceType : 8 {
+    // [MAC] 5.1.2
+    // Device utilizing the ranging features set through Control Messages
+    CONTROLEE = 0x00,
+    // [MAC] 5.1.1
+    // Device controlling the ranging features through Control Messages
+    CONTROLLER = 0x01,
+}
+
+enum RangingRoundUsage : 8 {
+    SS_TWR_DEFERRED_MODE = 0x01,
+    DS_TWR_DEFERRED_MODE = 0x02,
+    SS_TWR_NON_DEFERRED_MODE = 0x03,
+    DS_TWR_NON_DEFERRED_MODE = 0x04,
+    ON_WAY_RANGING_DL_TDOA = 0x05,
+    OWR_AOA_MEASUREMENT = 0x06,
+    ESS_TWR_NON_DEFERRED = 0x07,
+    ADS_TWR_NON_DEFERRED = 0x08,
+}
+
+enum StsConfig : 8 {
+    STATIC = 0x00, // Default
+    DYNAMIC = 0x01,
+    DYNAMIC_FOR_RESPONDER_SUB_SESSION_KEY = 0x02,
+    PROVISIONED = 0x03,
+    PROVISIONED_FOR_RESPONDER_SUB_SESSION_KEY = 0x04,
+}
+
+enum MultiNodeMode : 8 {
+    ONE_TO_ONE = 0x00,
+    ONE_TO_MANY = 0x01,
+}
+
+enum ChannelNumber : 8 {
+    CHANNEL_NUMBER_5 = 0x05,
+    CHANNEL_NUMBER_6 = 0x06,
+    CHANNEL_NUMBER_8 = 0x08,
+    CHANNEL_NUMBER_9 = 0x09, // Default
+    CHANNEL_NUMBER_10 = 0x0a,
+    CHANNEL_NUMBER_12 = 0x0c,
+    CHANNEL_NUMBER_13 = 0x0d,
+    CHANNEL_NUMBER_14 = 0x0e,
+}
+
+enum MacFcsType : 8 {
+    CRC_16 = 0x00, // Default
+    CRC_32 = 0x01,
+}
+
+struct RangingRoundControl {
+    rrrm : 1, // Default 1
+    _fixed_ = 1 : 1,
+    rcp : 1, // Default 0
+    _reserved_ : 3,
+    mrp : 1, // Default 0
+    mrm : 1, // Default 0
+}
+
+enum AoaResultReq : 8 {
+    AOA_DISABLED = 0x00,
+    AOA_ENABLED = 0x01, // Default
+    AOA_ENABLED_AZIMUTH_ONLY = 0x02,
+    AOA_ENABLED_ELEVATION_ONLY = 0x03,
+}
+
+enum SessionInfoNtfConfig : 8 {
+    DISABLE = 0x00,
+    ENABLE = 0x01, // Default
+    ENABLE_PROXIMITY_TRIGGER = 0x02,
+    ENABLE_AOA_TRIGGER = 0x03,
+    ENABLE_PROXIMITY_AOA_TRIGGER = 0x04,
+    ENABLE_PROXIMITY_EDGE_TRIGGER = 0x05,
+    ENABLE_AOA_EDGE_TRIGGER = 0x06,
+    ENABLE_PROXIMITY_AOA_EDGE_TRIGGER = 0x07,
+}
+
+enum DeviceRole : 8 {
+    // [MAC] 5.1.3
+    // Device initiating a ranging exchange with a ranging initiation message
+    RESPONDER = 0x00,
+    // [MAC] 5.1.4
+    // Device responding to ranging initiation messages
+    INITIATOR = 0x01,
+    ADVERTISER = 0x05,
+    OBSERVER = 0x06,
+    DT_ANCHOR = 0x07,
+    DT_TAG = 0x08,
+}
+
+enum RframeConfig : 8 {
+    SP0 = 0x00,
+    SP1 = 0x01,
+    SP3 = 0x03, // Default
+}
+
+enum RssiReporting : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
+}
+
+enum PsduDataRate : 8 {
+    DATA_RATE_6M81 = 0x00,
+    DATA_RATE_7M80 = 0x01,
+    DATA_RATE_27M2 = 0x02,
+    DATA_RATE_31M2 = 0x03,
+}
+
+enum PreambleDuration : 8 {
+    DURATION_32_SYMBOLS = 0x00,
+    DURATION_64_SYMBOLS = 0x01, // Default
+}
+
+enum LinkLayerMode : 8 {
+    BYPASS_MODE = 0x00, // Default
+}
+
+enum RangingTimeStruct : 8 {
+    BLOCK_BASED_SCHEDULING = 0x01, // Default
+}
+
+enum PrfMode : 8 {
+    BPRF_MODE = 0x00, // Default
+    HPRF_MODE_124M8 = 0x01,
+    HPRF_MODE_249M6 = 0x02,
+}
+
+enum ScheduleMode : 8 {
+    CONTENTION_BASED = 0x00,
+    TIME_SCHEDULED = 0x01,
+}
+
+enum KeyRotation : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
+}
+
+enum MacAddressMode : 8 {
+    // MAC address is 2 bytes and 2 bytes to be used in MAC header
+    MODE_0 = 0x00, // Default
+    // MAC address is 8 bytes and 2 bytes to be used in MAC header
+    // (Not supported).
+    MODE_1 = 0x01,
+    // MAC address is 8 bytes and 8 bytes to be used in MAC header
+    MODE_2 = 0x02,
+}
+
+enum HoppingMode : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
+}
+
+struct ResultReportConfig {
+    tof : 1, // Default 1
+    aoa_azimuth : 1,
+    aoa_elevation : 1,
+    aoa_fom : 1,
+    _reserved_ : 4,
+}
+
+enum BprfPhrDataRate : 8 {
+    DATA_RATE_850K = 0x00, // Default
+    DATA_RATE_6M81 = 0x01
+}
+
+enum StsLength : 8 {
+    LENGTH_32_SYMBOLS = 0x00, // Default
+    LENGTH_64_SYMBOLS = 0x01,
+    LENGTH_128_SYMBOLS = 0x02,
+}
+
+enum DlTdoaRangingMethod : 8 {
+    SS_TWR = 0x00,
+    DS_TWR = 0x01, // Default
+}
+
+enum DlTdoaAnchorCfo : 8 {
+    ANCHOR_CFO_NOT_INCLUDED = 0x00,
+    ANCHOR_CFO_INCLUDED = 0x01, // Default
+}
+
+enum SessionDataTransferStatusNtfConfig : 8 {
+    DISABLE = 0x00, // Default
+    ENABLE = 0x01,
 }
 
 enum CapTlvType : 8 {
@@ -706,7 +878,7 @@ test SetConfigRsp {
 
 packet GetConfigCmd : CoreCommand (opcode = 0x5) { //CORE_GET_CONFIG
     _count_(cfg_id): 8,
-    cfg_id: 8[], // DeviceConfigId (Infra does not allow array of enums)
+    cfg_id: 8[], // DeviceConfigId
 }
 
 test GetConfigCmd {
@@ -839,7 +1011,7 @@ test SessionSetAppConfigRsp {
 packet SessionGetAppConfigCmd : SessionConfigCommand (opcode = 0x4) { //SESSION_GET_APP_CONFIG
     session_token: 32, // Session ID or Session Handle (based on UWBS version)
     _count_(app_cfg): 8,
-    app_cfg: 8[], // AppConfigTlvType (Infra does not allow array of enums)
+    app_cfg: AppConfigTlvType[],
 }
 
 test SessionGetAppConfigCmd {
@@ -926,11 +1098,12 @@ struct Controlee_V2_0_32_Byte_Version {
     subsession_key: 8[32],
 }
 
+/// cf. [UCI] 7.7
 enum UpdateMulticastListAction: 8 {
     ADD_CONTROLEE = 0x00,
     REMOVE_CONTROLEE = 0x01,
     ADD_CONTROLEE_WITH_SHORT_SUB_SESSION_KEY = 0x02,
-    ADD_CONTROLEE_WITH_LONG_SUB_SESSION_KEY = 0x03,
+    ADD_CONTROLEE_WITH_EXTENDED_SUB_SESSION_KEY = 0x03,
 }
 
 packet SessionUpdateControllerMulticastListCmd : SessionConfigCommand (opcode = 0x7) { //SESSION_UPDATE_CONTROLLER_MULTICAST_LIST
@@ -1260,6 +1433,12 @@ packet AndroidSetCountryCodeRsp : AndroidResponse (opcode = 0x1) { //ANDROID_SET
 
 test AndroidSetCountryCodeRsp {
     "\x4c\x01\x00\x01\x00\x00\x00\x00",
+}
+
+enum FrameReportTlvType : 8 {
+    RSSI = 0x0,
+    AOA = 0x1,
+    CIR = 0x2,
 }
 
 struct FrameReportTlv {

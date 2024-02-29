@@ -52,6 +52,21 @@ impl From<MacAddress> for u64 {
     }
 }
 
+impl From<&MacAddress> for Vec<u8> {
+    fn from(mac_address: &MacAddress) -> Self {
+        match mac_address {
+            MacAddress::Short(addr) => addr.to_vec(),
+            MacAddress::Extended(addr) => addr.to_vec(),
+        }
+    }
+}
+
+impl From<MacAddress> for Vec<u8> {
+    fn from(mac_address: MacAddress) -> Self {
+        Vec::<u8>::from(&mac_address)
+    }
+}
+
 impl TryFrom<String> for MacAddress {
     type Error = Error;
     fn try_from(mac_address: String) -> std::result::Result<Self, Error> {
