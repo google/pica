@@ -227,18 +227,6 @@ impl Pica {
         }
     }
 
-    fn get_device_mut_by_mac(&mut self, mac_address: &MacAddress) -> Option<&mut Device> {
-        self.devices
-            .values_mut()
-            .find(|d| d.mac_address == *mac_address)
-    }
-
-    fn get_device_by_mac(&self, mac_address: &MacAddress) -> Option<&Device> {
-        self.devices
-            .values()
-            .find(|d| d.mac_address == *mac_address)
-    }
-
     fn send_event(&self, event: PicaEvent) {
         // An error here means that we have
         // no receivers, so ignore it
@@ -418,47 +406,57 @@ impl Pica {
         let device = self.get_device(device_handle).unwrap();
         let session = device.session(session_id).unwrap();
 
+        let mut data_transfer = Vec::new();
         let mut measurements = Vec::new();
-        let mut peer_device_data_transfer = Vec::new();
-        session
-            .get_dst_mac_addresses()
-            .iter()
-            .for_each(|mac_address| {
-                if let Some(other) = self.anchors.get(mac_address) {
-                    let local = self
-                        .ranging_estimator
-                        .estimate(&device.handle, &other.handle)
-                        .unwrap_or(Default::default());
-                    let remote = self
-                        .ranging_estimator
-                        .estimate(&other.handle, &device.handle)
-                        .unwrap_or(Default::default());
-                    measurements.push(make_measurement(mac_address, local, remote));
-                }
 
-                if let Some(other) = self.get_device_by_mac(mac_address) {
-                    if other.can_start_ranging(session, session_id) {
-                        let local = self
-                            .ranging_estimator
-                            .estimate(&device.handle, &other.handle)
-                            .unwrap_or(Default::default());
-                        let remote = self
-                            .ranging_estimator
-                            .estimate(&other.handle, &device.handle)
-                            .unwrap_or(Default::default());
-                        measurements.push(make_measurement(mac_address, local, remote));
-                    }
-                    if device.can_start_data_transfer(session_id)
-                        && other.can_receive_data_transfer(session_id)
-                    {
-                        peer_device_data_transfer.push(other);
-                    }
-                }
-            });
+        // Look for compatible anchors.
+        for mac_address in session.get_dst_mac_addresses() {
+            if let Some(other) = self.anchors.get(mac_address) {
+                let local = self
+                    .ranging_estimator
+                    .estimate(&device.handle, &other.handle)
+                    .unwrap_or(Default::default());
+                let remote = self
+                    .ranging_estimator
+                    .estimate(&other.handle, &device.handle)
+                    .unwrap_or(Default::default());
+                measurements.push(make_measurement(mac_address, local, remote));
+            }
+        }
+
+        // Look for compatible ranging sessions in other devices.
+        for peer_device in self.devices.values() {
+            if peer_device.handle == device_handle {
+                continue;
+            }
+
+            if peer_device.can_start_ranging(session, session_id) {
+                let peer_mac_address = peer_device
+                    .session(session_id)
+                    .unwrap()
+                    .app_config
+                    .device_mac_address;
+                let local = self
+                    .ranging_estimator
+                    .estimate(&device.handle, &peer_device.handle)
+                    .unwrap_or(Default::default());
+                let remote = self
+                    .ranging_estimator
+                    .estimate(&peer_device.handle, &device.handle)
+                    .unwrap_or(Default::default());
+                measurements.push(make_measurement(&peer_mac_address, local, remote));
+            }
+
+            if device.can_start_data_transfer(session_id)
+                && peer_device.can_receive_data_transfer(session_id)
+            {
+                data_transfer.push(peer_device);
+            }
+        }
 
         // TODO: Data transfer should be limited in size for
         // each round of ranging
-        for peer_device in peer_device_data_transfer.iter() {
+        for peer_device in data_transfer.iter() {
             peer_device
                 .tx
                 .send(
@@ -547,21 +545,27 @@ impl Pica {
     // Handle the in-band StopRanging command sent from controller to the controlee with
     // corresponding mac_address and session_id.
     fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
-        if let Some(device) = self.get_device_mut_by_mac(mac_address) {
-            if let Some(session) = device.session_mut(session_id) {
-                if session.session_state() == SessionState::SessionStateActive {
-                    session.stop_ranging_task();
-                    session.set_state(
-                        SessionState::SessionStateIdle,
-                        ReasonCode::SessionStoppedDueToInbandSignal,
-                    );
-                    device.n_active_sessions = device.n_active_sessions.saturating_sub(1);
-                    if device.n_active_sessions == 0 {
-                        device.set_state(DeviceState::DeviceStateReady);
-                    }
-                } else {
-                    log::warn!("stop_controlee_ranging: session is not active !");
+        for device in self.devices.values_mut() {
+            let Some(session) = device.session_mut(session_id) else {
+                continue;
+            };
+
+            if &session.app_config.device_mac_address != mac_address {
+                continue;
+            }
+
+            if session.session_state() == SessionState::SessionStateActive {
+                session.stop_ranging_task();
+                session.set_state(
+                    SessionState::SessionStateIdle,
+                    ReasonCode::SessionStoppedDueToInbandSignal,
+                );
+                device.n_active_sessions = device.n_active_sessions.saturating_sub(1);
+                if device.n_active_sessions == 0 {
+                    device.set_state(DeviceState::DeviceStateReady);
                 }
+            } else {
+                log::warn!("stop_controlee_ranging: session is not active !");
             }
         }
     }
