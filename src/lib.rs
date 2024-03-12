@@ -58,7 +58,7 @@ pub struct RangingMeasurement {
 /// Trait matching the capabilities of a ranging estimator.
 /// The estimator manages the position of the devices, and chooses
 /// the algorithm used to generate the ranging measurements.
-pub trait RangingEstimator {
+pub trait RangingEstimator: Send + Sync {
     /// Evaluate the ranging measurement for the two input devices
     /// identified by their respective handle. The result is a triplet
     /// containing the range, azimuth, and elevation of the right device
@@ -341,7 +341,7 @@ impl Pica {
         }
     }
 
-    fn connect(&mut self, stream: UciStream, sink: UciSink) {
+    pub fn add_device(&mut self, stream: UciStream, sink: UciSink) -> Result<Handle> {
         let (packet_tx, packet_rx) = mpsc::unbounded_channel();
         let pica_tx = self.command_tx.clone();
         let disconnect_tx = self.command_tx.clone();
@@ -385,6 +385,8 @@ impl Pica {
                 .await
                 .unwrap()
         });
+
+        Ok(handle)
     }
 
     fn disconnect(&mut self, device_handle: usize) {
@@ -514,7 +516,9 @@ impl Pica {
     fn pica_command(&mut self, command: PicaCommand) {
         use PicaCommand::*;
         match command {
-            Connect(stream, sink) => self.connect(stream, sink),
+            Connect(stream, sink) => {
+                let _ = self.add_device(stream, sink);
+            }
             Disconnect(device_handle) => self.disconnect(device_handle),
             Ranging(device_handle, session_id) => self.ranging(device_handle, session_id),
             StopRanging(mac_address, session_id) => {
@@ -626,7 +630,7 @@ impl Pica {
 /// Run the internal pica event loop.
 /// As opposed to Pica::run, the context is passed under a mutex, which
 /// allows synchronous access to the context for device creation.
-pub async fn run(this: std::sync::Mutex<Pica>) -> Result<()> {
+pub async fn run(this: &std::sync::Mutex<Pica>) -> Result<()> {
     // Extract the mpsc receiver from the Pica context.
     // The receiver cannot be cloned.
     let Some(mut command_rx) = this.lock().unwrap().command_rx.take() else {
