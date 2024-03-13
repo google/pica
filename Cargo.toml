@@ -1,6 +1,6 @@
 [package]
 name = "pica"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "Pica is a virtual UWB Controller implementing the FiRa UCI specification."
 repository = "https://github.com/google/pica"
