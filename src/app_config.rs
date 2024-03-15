@@ -2,6 +2,16 @@ use crate::packets::uci;
 use crate::MacAddress;
 
 /// [UCI] 8.3 Application Configuration Parameters.
+/// Sub-session Key provided for Provisioned STS for Responder specific Key mode
+/// (STS_CONFIG equal to 0x04).
+#[derive(Clone, PartialEq, Eq)]
+pub enum SubSessionKey {
+    None,
+    Short([u8; 16]),
+    Extended([u8; 32]),
+}
+
+/// [UCI] 8.3 Application Configuration Parameters.
 /// The configuration is initially filled with default values from the
 /// specification.
 /// See [UCI] Table 45: APP Configuration Parameters IDs
@@ -75,7 +85,7 @@ pub struct AppConfig {
     mtu_size: u16,
     inter_frame_interval: u8,
     session_key: Vec<u8>,
-    sub_session_key: Vec<u8>,
+    sub_session_key: SubSessionKey,
     pub session_data_transfer_status_ntf_config: uci::SessionDataTransferStatusNtfConfig,
     session_time_base: [u8; 9],
     application_data_endpoint: u8,
@@ -141,7 +151,7 @@ impl Default for AppConfig {
             mtu_size: 0, // XX
             inter_frame_interval: 1,
             session_key: vec![],
-            sub_session_key: vec![],
+            sub_session_key: SubSessionKey::None,
             session_data_transfer_status_ntf_config:
                 uci::SessionDataTransferStatusNtfConfig::Disable,
             session_time_base: [0; 9],
@@ -314,7 +324,13 @@ impl AppConfig {
                 self.inter_frame_interval = try_parse_u8(value)?
             }
             uci::AppConfigTlvType::SessionKey => self.session_key = value.to_vec(),
-            uci::AppConfigTlvType::SubSessionKey => self.sub_session_key = value.to_vec(),
+            uci::AppConfigTlvType::SubSessionKey => {
+                self.sub_session_key = match value.len() {
+                    16 => SubSessionKey::Short(value.try_into().unwrap()),
+                    32 => SubSessionKey::Extended(value.try_into().unwrap()),
+                    _ => anyhow::bail!("invalid sub-session key size {}", value.len()),
+                }
+            }
             uci::AppConfigTlvType::SessionDataTransferStatusNtfConfig => {
                 self.session_data_transfer_status_ntf_config = try_parse(value)?
             }
@@ -445,7 +461,11 @@ impl AppConfig {
             uci::AppConfigTlvType::MtuSize => Ok(self.mtu_size.to_le_bytes().to_vec()),
             uci::AppConfigTlvType::InterFrameInterval => Ok(vec![self.inter_frame_interval]),
             uci::AppConfigTlvType::SessionKey => Ok(self.session_key.clone()),
-            uci::AppConfigTlvType::SubSessionKey => Ok(self.sub_session_key.clone()),
+            uci::AppConfigTlvType::SubSessionKey => Ok(match self.sub_session_key {
+                SubSessionKey::None => vec![],
+                SubSessionKey::Short(key) => key.to_vec(),
+                SubSessionKey::Extended(key) => key.to_vec(),
+            }),
             uci::AppConfigTlvType::SessionDataTransferStatusNtfConfig => {
                 Ok(vec![self.session_data_transfer_status_ntf_config.into()])
             }
