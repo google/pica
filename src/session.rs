@@ -24,17 +24,12 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time;
 
+use super::app_config::SubSessionKey;
 use super::UciPacket;
 
 pub const MAX_SESSION: usize = 255;
 /// cf. [UCI] 8.3 Table 29
 pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
-
-enum SubSessionKey {
-    None,
-    Short([u8; 16]),
-    Extended([u8; 32]),
-}
 
 struct Controlee {
     short_address: MacAddress,
