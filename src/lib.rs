@@ -28,10 +28,9 @@ use packets::uci::StatusCode as UciStatusCode;
 use packets::uci::*;
 
 mod device;
-use device::{Device, MAX_DEVICE};
+use device::{Device, MAX_DEVICE, MAX_SESSION};
 
 mod session;
-use session::MAX_SESSION;
 
 mod mac_address;
 pub use mac_address::MacAddress;

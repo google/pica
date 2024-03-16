@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::packets::uci::*;
+use crate::packets::uci::{self, *};
 use crate::MacAddress;
 use crate::PicaCommand;
 
@@ -23,15 +23,20 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
 
-use super::session::{Session, MAX_SESSION};
+use super::app_config::SubSessionKey;
+use super::session::Session;
 use super::UciPacket;
 
 pub const MAX_DEVICE: usize = 4;
+pub const MAX_SESSION: usize = 255;
 
 const UCI_VERSION: u16 = 0x0002; // Version 2.0
 const MAC_VERSION: u16 = 0x3001; // Version 1.3.0
 const PHY_VERSION: u16 = 0x3001; // Version 1.3.0
 const TEST_VERSION: u16 = 0x1001; // Version 1.1
+
+/// cf. [UCI] 8.3 Table 29
+pub const MAX_NUMBER_OF_CONTROLEES: usize = 8;
 
 // Capabilities are vendor defined
 // Android compliant: FIRA-287 UCI_Generic_Specification controlee capabilities_r4
@@ -363,6 +368,375 @@ impl Device {
         .build()
     }
 
+    fn command_session_set_app_config(
+        &mut self,
+        cmd: SessionSetAppConfigCmd,
+    ) -> SessionSetAppConfigRsp {
+        let session_handle = cmd.get_session_token();
+
+        log::debug!(
+            "[{}:0x{:x}] Session Set App Config",
+            self.handle,
+            session_handle
+        );
+
+        let Some(session) = self.sessions.get_mut(&session_handle) else {
+            return SessionSetAppConfigRspBuilder {
+                cfg_status: Vec::new(),
+                status: StatusCode::UciStatusSessionNotExist,
+            }
+            .build();
+        };
+
+        assert!(
+            session.session_type == SessionType::FiraRangingSession
+                || session.session_type == SessionType::FiraRangingAndInBandDataSession
+        );
+
+        if session.state == SessionState::SessionStateActive {
+            const IMMUTABLE_PARAMETERS: &[AppConfigTlvType] = &[AppConfigTlvType::AoaResultReq];
+            if cmd
+                .get_tlvs()
+                .iter()
+                .any(|cfg| IMMUTABLE_PARAMETERS.contains(&cfg.cfg_id))
+            {
+                return SessionSetAppConfigRspBuilder {
+                    status: StatusCode::UciStatusSessionActive,
+                    cfg_status: vec![],
+                }
+                .build();
+            }
+        }
+
+        let (status, invalid_parameters) = if session.state != SessionState::SessionStateInit
+            && session.state != SessionState::SessionStateActive
+        {
+            (StatusCode::UciStatusRejected, Vec::new())
+        } else {
+            let mut app_config = session.app_config.clone();
+            let mut invalid_parameters = vec![];
+            for cfg in cmd.get_tlvs() {
+                match app_config.set(cfg.cfg_id, &cfg.v) {
+                    Ok(_) => (),
+                    Err(_) => invalid_parameters.push(AppConfigStatus {
+                        cfg_id: cfg.cfg_id,
+                        status: uci::StatusCode::UciStatusInvalidParam,
+                    }),
+                }
+            }
+
+            // [UCI] 7.5.1 Configuration of a Session
+            // This section defines the mandatory APP Configuration Parameters to be applied
+            // by the Host for FiRa defined UWB Session types. The Host shall apply these
+            // mandatory configurations to move the Session State from SESSION_STATE_INIT
+            // to SESSION_STATE_IDLE.
+            //
+            // - DEVICE_ROLE
+            // - MULTI_NODE_MODE
+            // - RANGING_ROUND_USAGE
+            // - DEVICE_MAC_ADDRESS
+            // - DEVICE_TYPE (see Note1)
+            // - SCHEDULE_MODE
+            if app_config.device_role.is_none()
+                || app_config.multi_node_mode.is_none()
+                || app_config.ranging_round_usage.is_none()
+                || app_config.device_mac_address.is_none()
+                || app_config.schedule_mode.is_none()
+            {
+                log::error!(
+                    "[{}:0x{:x}] missing mandatory APP config parameters",
+                    self.handle,
+                    session_handle
+                );
+                return SessionSetAppConfigRspBuilder {
+                    status: uci::StatusCode::UciStatusRejected,
+                    cfg_status: vec![],
+                }
+                .build();
+            }
+
+            if invalid_parameters.is_empty() {
+                session.app_config = app_config;
+                if session.state == SessionState::SessionStateInit {
+                    session.set_state(
+                        SessionState::SessionStateIdle,
+                        ReasonCode::StateChangeWithSessionManagementCommands,
+                    );
+                }
+                (StatusCode::UciStatusOk, invalid_parameters)
+            } else {
+                (StatusCode::UciStatusInvalidParam, invalid_parameters)
+            }
+        };
+
+        SessionSetAppConfigRspBuilder {
+            status,
+            cfg_status: invalid_parameters,
+        }
+        .build()
+    }
+
+    fn command_session_get_app_config(
+        &self,
+        cmd: SessionGetAppConfigCmd,
+    ) -> SessionGetAppConfigRsp {
+        let session_handle = cmd.get_session_token();
+
+        log::debug!(
+            "[{}:0x{:x}] Session Get App Config",
+            self.handle,
+            session_handle
+        );
+
+        let Some(session) = self.sessions.get(&session_handle) else {
+            return SessionGetAppConfigRspBuilder {
+                tlvs: vec![],
+                status: StatusCode::UciStatusSessionNotExist,
+            }
+            .build();
+        };
+
+        let (status, valid_parameters) = {
+            let mut valid_parameters = vec![];
+            let mut invalid_parameters = vec![];
+            for id in cmd.get_app_cfg() {
+                match session.app_config.get(*id) {
+                    Ok(value) => valid_parameters.push(AppConfigTlv {
+                        cfg_id: *id,
+                        v: value,
+                    }),
+                    Err(_) => invalid_parameters.push(AppConfigTlv {
+                        cfg_id: *id,
+                        v: vec![],
+                    }),
+                }
+            }
+
+            if invalid_parameters.is_empty() {
+                (StatusCode::UciStatusOk, valid_parameters)
+            } else {
+                (StatusCode::UciStatusFailed, Vec::new())
+            }
+        };
+
+        SessionGetAppConfigRspBuilder {
+            status,
+            tlvs: valid_parameters,
+        }
+        .build()
+    }
+
+    fn command_session_get_state(&self, cmd: SessionGetStateCmd) -> SessionGetStateRsp {
+        let session_handle = cmd.get_session_token();
+
+        log::debug!("[{}:0x{:x}] Session Get State", self.handle, session_handle);
+
+        let Some(session) = self.sessions.get(&session_handle) else {
+            return SessionGetStateRspBuilder {
+                session_state: SessionState::SessionStateInit,
+                status: StatusCode::UciStatusSessionNotExist,
+            }
+            .build();
+        };
+
+        SessionGetStateRspBuilder {
+            status: StatusCode::UciStatusOk,
+            session_state: session.state,
+        }
+        .build()
+    }
+
+    fn command_session_update_controller_multicast_list(
+        &mut self,
+        cmd: SessionUpdateControllerMulticastListCmd,
+    ) -> SessionUpdateControllerMulticastListRsp {
+        let session_handle = cmd.get_session_token();
+
+        log::debug!(
+            "[{}:0x{:x}] Session Update Controller Multicast List",
+            self.handle,
+            session_handle
+        );
+
+        let Some(session) = self.sessions.get_mut(&session_handle) else {
+            return SessionUpdateControllerMulticastListRspBuilder {
+                status: StatusCode::UciStatusSessionNotExist,
+            }
+            .build();
+        };
+
+        if (session.state != SessionState::SessionStateActive
+            && session.state != SessionState::SessionStateIdle)
+            || session.app_config.device_type != Some(DeviceType::Controller)
+            || session.app_config.multi_node_mode != Some(MultiNodeMode::OneToMany)
+        {
+            return SessionUpdateControllerMulticastListRspBuilder {
+                status: StatusCode::UciStatusRejected,
+            }
+            .build();
+        }
+        let action = cmd.get_action();
+        let mut dst_addresses = session.app_config.dst_mac_address.clone();
+        let new_controlees: Vec<Controlee> = match action {
+            UpdateMulticastListAction::AddControlee
+            | UpdateMulticastListAction::RemoveControlee => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmdPayload::parse(cmd.get_payload())
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.into())
+                        .collect()
+                } else {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+            }
+            UpdateMulticastListAction::AddControleeWithShortSubSessionKey => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload::parse(
+                        cmd.get_payload(),
+                    )
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.into())
+                        .collect()
+                } else {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+            }
+            UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
+                if let Ok(packet) =
+                    SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload::parse(
+                        cmd.get_payload(),
+                    )
+                {
+                    packet
+                        .controlees
+                        .iter()
+                        .map(|controlee| controlee.into())
+                        .collect()
+                } else {
+                    return SessionUpdateControllerMulticastListRspBuilder {
+                        status: StatusCode::UciStatusSyntaxError,
+                    }
+                    .build();
+                }
+            }
+        };
+        let mut controlee_status = Vec::new();
+        let mut status = StatusCode::UciStatusOk;
+
+        match action {
+            UpdateMulticastListAction::AddControlee
+            | UpdateMulticastListAction::AddControleeWithShortSubSessionKey
+            | UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
+                new_controlees.iter().for_each(|controlee| {
+                    let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
+                    if !dst_addresses.contains(&controlee.short_address) {
+                        if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
+                            status = StatusCode::UciStatusMulticastListFull;
+                            update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
+                        } else if (action
+                            == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
+                            || action
+                                == UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey)
+                            && session.app_config.sts_config
+                                != uci::StsConfig::ProvisionedForResponderSubSessionKey
+                        {
+                            // If Action is 0x02 or 0x03 for STS_CONFIG values other than
+                            // 0x04, the UWBS shall return SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF
+                            // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
+                            // Controlee in the Controlee List.
+                            status = StatusCode::UciStatusFailed;
+                            update_status =
+                                MulticastUpdateStatusCode::StatusErrorSubSessionKeyNotApplicable;
+                        } else {
+                            dst_addresses.push(controlee.short_address);
+                        };
+                    }
+                    controlee_status.push(ControleeStatus {
+                        mac_address: match controlee.short_address {
+                            MacAddress::Short(address) => address,
+                            MacAddress::Extended(_) => panic!("Extended address is not supported!"),
+                        },
+                        subsession_id: controlee.sub_session_id,
+                        status: update_status,
+                    });
+                });
+            }
+            UpdateMulticastListAction::RemoveControlee => {
+                new_controlees.iter().for_each(|controlee: &Controlee| {
+                    let pica_tx = self.pica_tx.clone();
+                    let address = controlee.short_address;
+                    let attempt_count = session.app_config.in_band_termination_attempt_count;
+                    let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
+                    if !dst_addresses.contains(&address) {
+                        status = StatusCode::UciStatusAddressNotFound;
+                        update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
+                    } else {
+                        dst_addresses.retain(|value| *value != address);
+                        // If IN_BAND_TERMINATION_ATTEMPT_COUNT is not equal to 0x00, then the
+                        // UWBS shall transmit the RCM with the “Stop Ranging” bit set to ‘1’
+                        // for IN_BAND_TERMINATION_ATTEMPT_COUNT times to the corresponding
+                        // Controlee.
+                        if attempt_count != 0 {
+                            tokio::spawn(async move {
+                                for _ in 0..attempt_count {
+                                    pica_tx
+                                        .send(PicaCommand::StopRanging(address, session_handle))
+                                        .await
+                                        .unwrap()
+                                }
+                            });
+                        }
+                    }
+                    controlee_status.push(ControleeStatus {
+                        mac_address: match address {
+                            MacAddress::Short(addr) => addr,
+                            MacAddress::Extended(_) => panic!("Extended address is not supported!"),
+                        },
+                        subsession_id: controlee.sub_session_id,
+                        status: update_status,
+                    });
+                });
+            }
+        }
+        session.app_config.number_of_controlees = dst_addresses.len() as u8;
+        session.app_config.dst_mac_address = dst_addresses.clone();
+        // If the multicast list becomes empty, the UWBS shall move the session to
+        // SESSION_STATE_IDLE by sending the SESSION_STATUS_NTF with Reason Code
+        // set to ERROR_INVALID_NUM_OF_CONTROLEES.
+        if session.app_config.dst_mac_address.is_empty() {
+            session.set_state(
+                SessionState::SessionStateIdle,
+                ReasonCode::ErrorInvalidNumOfControlees,
+            )
+        }
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            tx.send(
+                SessionUpdateControllerMulticastListNtfBuilder {
+                    controlee_status,
+                    remaining_multicast_list_size: dst_addresses.len() as u8,
+                    session_token: session_handle,
+                }
+                .build()
+                .into(),
+            )
+            .unwrap()
+        });
+        SessionUpdateControllerMulticastListRspBuilder { status }.build()
+    }
+
     fn command_set_country_code(
         &mut self,
         cmd: AndroidSetCountryCodeCmd,
@@ -448,79 +822,27 @@ impl Device {
             UciCommandChild::SessionConfigCommand(session_command) => {
                 match session_command.specialize() {
                     SessionConfigCommandChild::SessionInitCmd(cmd) => {
-                        return self.command_session_init(cmd).into();
+                        self.command_session_init(cmd).into()
                     }
                     SessionConfigCommandChild::SessionDeinitCmd(cmd) => {
-                        return self.command_session_deinit(cmd).into();
+                        self.command_session_deinit(cmd).into()
                     }
                     SessionConfigCommandChild::SessionGetCountCmd(cmd) => {
-                        return self.command_session_get_count(cmd).into();
+                        self.command_session_get_count(cmd).into()
                     }
-                    _ => {}
-                }
-
-                // Common code for retrieving the session_id in the command
-                let session_id = match session_command.specialize() {
                     SessionConfigCommandChild::SessionSetAppConfigCmd(cmd) => {
-                        cmd.get_session_token()
+                        self.command_session_set_app_config(cmd).into()
                     }
                     SessionConfigCommandChild::SessionGetAppConfigCmd(cmd) => {
-                        cmd.get_session_token()
+                        self.command_session_get_app_config(cmd).into()
                     }
-                    SessionConfigCommandChild::SessionGetStateCmd(cmd) => cmd.get_session_token(),
-                    SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => {
-                        cmd.get_session_token()
+                    SessionConfigCommandChild::SessionGetStateCmd(cmd) => {
+                        self.command_session_get_state(cmd).into()
                     }
-                    _ => panic!("Unsupported session command type"),
-                };
-
-                if let Some(session) = self.session_mut(session_id) {
-                    // There is a session matching the session_id in the command
-                    // Pass the command through
-                    match session_command.specialize() {
-                        SessionConfigCommandChild::SessionSetAppConfigCmd(_)
-                        | SessionConfigCommandChild::SessionGetAppConfigCmd(_)
-                        | SessionConfigCommandChild::SessionGetStateCmd(_)
-                        | SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(_) => {
-                            session.session_command(session_command).into()
-                        }
-                        _ => panic!("Unsupported session command"),
-                    }
-                } else {
-                    // There is no session matching the session_id in the command
-                    let status = StatusCode::UciStatusSessionNotExist;
-                    match session_command.specialize() {
-                        SessionConfigCommandChild::SessionSetAppConfigCmd(_) => {
-                            SessionSetAppConfigRspBuilder {
-                                cfg_status: Vec::new(),
-                                status,
-                            }
-                            .build()
-                            .into()
-                        }
-                        SessionConfigCommandChild::SessionGetAppConfigCmd(_) => {
-                            SessionGetAppConfigRspBuilder {
-                                status,
-                                tlvs: Vec::new(),
-                            }
-                            .build()
-                            .into()
-                        }
-                        SessionConfigCommandChild::SessionGetStateCmd(_) => {
-                            SessionGetStateRspBuilder {
-                                status,
-                                session_state: SessionState::SessionStateDeinit,
-                            }
-                            .build()
-                            .into()
-                        }
-                        SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(_) => {
-                            SessionUpdateControllerMulticastListRspBuilder { status }
-                                .build()
-                                .into()
-                        }
-                        _ => panic!("Unsupported session command"),
-                    }
+                    SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => self
+                        .command_session_update_controller_multicast_list(cmd)
+                        .into(),
+                    _ => panic!("Unsupported session command"),
                 }
             }
             UciCommandChild::SessionControlCommand(ranging_command) => {
@@ -669,6 +991,43 @@ impl Device {
             // Message types for notifications and responses ignored
             // by the controller.
             _ => log::warn!("received unexpected packet of MT {:?}", mt),
+        }
+    }
+}
+
+struct Controlee {
+    short_address: MacAddress,
+    sub_session_id: u32,
+    #[allow(dead_code)]
+    session_key: SubSessionKey,
+}
+
+impl From<&uci::Controlee> for Controlee {
+    fn from(value: &uci::Controlee) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::None,
+        }
+    }
+}
+
+impl From<&uci::Controlee_V2_0_16_Byte_Version> for Controlee {
+    fn from(value: &uci::Controlee_V2_0_16_Byte_Version) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::Short(value.subsession_key),
+        }
+    }
+}
+
+impl From<&uci::Controlee_V2_0_32_Byte_Version> for Controlee {
+    fn from(value: &uci::Controlee_V2_0_32_Byte_Version) -> Self {
+        Controlee {
+            short_address: MacAddress::Short(value.short_address),
+            sub_session_id: value.subsession_id,
+            session_key: SubSessionKey::Extended(value.subsession_key),
         }
     }
 }
