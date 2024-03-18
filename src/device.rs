@@ -914,90 +914,71 @@ impl Device {
     }
 
     fn receive_command(&mut self, cmd: UciCommand) -> UciResponse {
+        use AndroidCommandChild::*;
+        use CoreCommandChild::*;
+        use SessionConfigCommandChild::*;
+        use SessionControlCommandChild::*;
+        use UciCommandChild::*;
+
         match cmd.specialize() {
-            // Handle commands for this device
-            UciCommandChild::CoreCommand(cmd) => match cmd.specialize() {
-                CoreCommandChild::DeviceResetCmd(cmd) => self.command_device_reset(cmd).into(),
-                CoreCommandChild::GetDeviceInfoCmd(cmd) => self.command_get_device_info(cmd).into(),
-                CoreCommandChild::GetCapsInfoCmd(cmd) => self.command_get_caps_info(cmd).into(),
-                CoreCommandChild::SetConfigCmd(cmd) => self.command_set_config(cmd).into(),
-                CoreCommandChild::GetConfigCmd(cmd) => self.command_get_config(cmd).into(),
-                _ => panic!("Unsupported core command"),
+            CoreCommand(cmd) => match cmd.specialize() {
+                DeviceResetCmd(cmd) => self.command_device_reset(cmd).into(),
+                GetDeviceInfoCmd(cmd) => self.command_get_device_info(cmd).into(),
+                GetCapsInfoCmd(cmd) => self.command_get_caps_info(cmd).into(),
+                SetConfigCmd(cmd) => self.command_set_config(cmd).into(),
+                GetConfigCmd(cmd) => self.command_get_config(cmd).into(),
+                _ => panic!("Unsupported Core command"),
             },
-            // Handle commands for session management
-            UciCommandChild::SessionConfigCommand(cmd) => match cmd.specialize() {
-                SessionConfigCommandChild::SessionInitCmd(cmd) => {
-                    self.command_session_init(cmd).into()
-                }
-                SessionConfigCommandChild::SessionDeinitCmd(cmd) => {
-                    self.command_session_deinit(cmd).into()
-                }
-                SessionConfigCommandChild::SessionGetCountCmd(cmd) => {
-                    self.command_session_get_count(cmd).into()
-                }
-                SessionConfigCommandChild::SessionSetAppConfigCmd(cmd) => {
-                    self.command_session_set_app_config(cmd).into()
-                }
-                SessionConfigCommandChild::SessionGetAppConfigCmd(cmd) => {
-                    self.command_session_get_app_config(cmd).into()
-                }
-                SessionConfigCommandChild::SessionGetStateCmd(cmd) => {
-                    self.command_session_get_state(cmd).into()
-                }
-                SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => self
+            SessionConfigCommand(cmd) => match cmd.specialize() {
+                SessionInitCmd(cmd) => self.command_session_init(cmd).into(),
+                SessionDeinitCmd(cmd) => self.command_session_deinit(cmd).into(),
+                SessionGetCountCmd(cmd) => self.command_session_get_count(cmd).into(),
+                SessionSetAppConfigCmd(cmd) => self.command_session_set_app_config(cmd).into(),
+                SessionGetAppConfigCmd(cmd) => self.command_session_get_app_config(cmd).into(),
+                SessionGetStateCmd(cmd) => self.command_session_get_state(cmd).into(),
+                SessionUpdateControllerMulticastListCmd(cmd) => self
                     .command_session_update_controller_multicast_list(cmd)
                     .into(),
-                _ => panic!("Unsupported session config command"),
+                _ => panic!("Unsupported Session Config command"),
             },
-            UciCommandChild::SessionControlCommand(cmd) => match cmd.specialize() {
-                SessionControlCommandChild::SessionStartCmd(cmd) => {
-                    self.command_session_start(cmd).into()
-                }
-                SessionControlCommandChild::SessionStopCmd(cmd) => {
-                    self.command_session_stop(cmd).into()
-                }
-                SessionControlCommandChild::SessionGetRangingCountCmd(cmd) => {
+            SessionControlCommand(cmd) => match cmd.specialize() {
+                SessionStartCmd(cmd) => self.command_session_start(cmd).into(),
+                SessionStopCmd(cmd) => self.command_session_stop(cmd).into(),
+                SessionGetRangingCountCmd(cmd) => {
                     self.command_session_get_ranging_count(cmd).into()
                 }
-                _ => panic!("Unsupported session control command"),
+                _ => panic!("Unsupported Session Control command"),
             },
-
-            UciCommandChild::AndroidCommand(android_command) => {
-                match android_command.specialize() {
-                    AndroidCommandChild::AndroidSetCountryCodeCmd(cmd) => {
-                        self.command_set_country_code(cmd).into()
-                    }
-                    AndroidCommandChild::AndroidGetPowerStatsCmd(cmd) => {
-                        self.command_get_power_stats(cmd).into()
-                    }
-                    _ => panic!("Unsupported Android command"),
-                }
-            }
-            UciCommandChild::UciVendor_9_Command(vendor_command) => UciVendor_9_ResponseBuilder {
+            AndroidCommand(cmd) => match cmd.specialize() {
+                AndroidSetCountryCodeCmd(cmd) => self.command_set_country_code(cmd).into(),
+                AndroidGetPowerStatsCmd(cmd) => self.command_get_power_stats(cmd).into(),
+                _ => panic!("Unsupported Android command"),
+            },
+            UciVendor_9_Command(vendor_command) => UciVendor_9_ResponseBuilder {
                 opcode: vendor_command.get_opcode(),
                 payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
             }
             .build()
             .into(),
-            UciCommandChild::UciVendor_A_Command(vendor_command) => UciVendor_A_ResponseBuilder {
+            UciVendor_A_Command(vendor_command) => UciVendor_A_ResponseBuilder {
                 opcode: vendor_command.get_opcode(),
                 payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
             }
             .build()
             .into(),
-            UciCommandChild::UciVendor_B_Command(vendor_command) => UciVendor_B_ResponseBuilder {
+            UciVendor_B_Command(vendor_command) => UciVendor_B_ResponseBuilder {
                 opcode: vendor_command.get_opcode(),
                 payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
             }
             .build()
             .into(),
-            UciCommandChild::UciVendor_E_Command(vendor_command) => UciVendor_E_ResponseBuilder {
+            UciVendor_E_Command(vendor_command) => UciVendor_E_ResponseBuilder {
                 opcode: vendor_command.get_opcode(),
                 payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
             }
             .build()
             .into(),
-            UciCommandChild::UciVendor_F_Command(vendor_command) => UciVendor_F_ResponseBuilder {
+            UciVendor_F_Command(vendor_command) => UciVendor_F_ResponseBuilder {
                 opcode: vendor_command.get_opcode(),
                 payload: Some(vec![u8::from(StatusCode::UciStatusRejected)].into()),
             }
@@ -1007,7 +988,7 @@ impl Device {
             _ => UciResponseBuilder {
                 gid: GroupId::Core,
                 opcode: 0,
-                payload: None,
+                payload: Option::None,
             }
             .build(),
         }
