@@ -17,7 +17,7 @@
 //! - [UCI] FiRa Consortium UWB Command Interface Generic Technical specification
 
 use crate::packets::uci::{self, *};
-use crate::{AppConfig, MacAddress, PicaCommand};
+use crate::{AppConfig, MacAddress};
 use bytes::BytesMut;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -37,9 +37,8 @@ pub struct Session {
     pub session_type: SessionType,
     pub sequence_number: u32,
     pub app_config: AppConfig,
-    ranging_task: Option<JoinHandle<()>>,
+    pub ranging_task: Option<JoinHandle<()>>,
     tx: mpsc::UnboundedSender<UciPacket>,
-    pica_tx: mpsc::Sender<PicaCommand>,
 }
 
 impl Session {
@@ -48,7 +47,6 @@ impl Session {
         session_type: SessionType,
         device_handle: usize,
         tx: mpsc::UnboundedSender<UciPacket>,
-        pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         Self {
             state: SessionState::SessionStateDeinit,
@@ -60,7 +58,6 @@ impl Session {
             app_config: AppConfig::default(),
             ranging_task: None,
             tx,
-            pica_tx,
         }
     }
 
@@ -126,89 +123,10 @@ impl Session {
         );
     }
 
-    fn command_range_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
-        log::debug!("[{}:0x{:x}] Range Start", self.device_handle, self.id);
-        assert_eq!(self.id, cmd.get_session_id());
-
-        let status = if self.state != SessionState::SessionStateIdle {
-            StatusCode::UciStatusSessionNotConfigured
-        } else {
-            assert!(self.ranging_task.is_none());
-            assert_eq!(self.state, SessionState::SessionStateIdle);
-
-            let session_id = self.id;
-            let ranging_interval =
-                time::Duration::from_millis(self.app_config.ranging_duration as u64);
-            let device_handle = self.device_handle;
-            let tx = self.pica_tx.clone();
-            self.ranging_task = Some(tokio::spawn(async move {
-                loop {
-                    time::sleep(ranging_interval).await;
-                    tx.send(PicaCommand::Ranging(device_handle, session_id))
-                        .await
-                        .unwrap();
-                }
-            }));
-            self.set_state(
-                SessionState::SessionStateActive,
-                ReasonCode::StateChangeWithSessionManagementCommands,
-            );
-            StatusCode::UciStatusOk
-        };
-        SessionStartRspBuilder { status }.build()
-    }
-
     pub fn stop_ranging_task(&mut self) {
         if let Some(handle) = &self.ranging_task {
             handle.abort();
             self.ranging_task = None;
-        }
-    }
-    fn command_range_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
-        log::debug!("[{}:0x{:x}] Range Stop", self.device_handle, self.id);
-        assert_eq!(self.id, cmd.get_session_id());
-
-        let status = if self.state != SessionState::SessionStateActive {
-            StatusCode::UciStatusSessionActive
-        } else {
-            self.stop_ranging_task();
-            self.set_state(
-                SessionState::SessionStateIdle,
-                ReasonCode::StateChangeWithSessionManagementCommands,
-            );
-            StatusCode::UciStatusOk
-        };
-        SessionStopRspBuilder { status }.build()
-    }
-
-    fn command_get_ranging_count(
-        &self,
-        cmd: SessionGetRangingCountCmd,
-    ) -> SessionGetRangingCountRsp {
-        log::debug!(
-            "[{}:0x{:x}] Range Get Ranging Count",
-            self.device_handle,
-            self.id
-        );
-        assert_eq!(self.id, cmd.get_session_id());
-
-        SessionGetRangingCountRspBuilder {
-            status: StatusCode::UciStatusOk,
-            count: self.sequence_number,
-        }
-        .build()
-    }
-
-    pub fn ranging_command(&mut self, cmd: SessionControlCommand) -> SessionControlResponse {
-        match cmd.specialize() {
-            SessionControlCommandChild::SessionStartCmd(cmd) => {
-                self.command_range_start(cmd).into()
-            }
-            SessionControlCommandChild::SessionStopCmd(cmd) => self.command_range_stop(cmd).into(),
-            SessionControlCommandChild::SessionGetRangingCountCmd(cmd) => {
-                self.command_get_ranging_count(cmd).into()
-            }
-            _ => panic!("Unsupported ranging command"),
         }
     }
 
