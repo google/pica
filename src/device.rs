@@ -180,7 +180,7 @@ impl Device {
 
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
-    fn command_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
+    fn core_device_reset(&mut self, cmd: DeviceResetCmd) -> DeviceResetRsp {
         let reset_config = cmd.get_reset_config();
         log::debug!("[{}] DeviceReset", self.handle);
         log::debug!("  reset_config={:?}", reset_config);
@@ -199,7 +199,7 @@ impl Device {
         DeviceResetRspBuilder { status }.build()
     }
 
-    fn command_get_device_info(&self, _cmd: GetDeviceInfoCmd) -> GetDeviceInfoRsp {
+    fn core_get_device_info(&self, _cmd: GetDeviceInfoCmd) -> GetDeviceInfoRsp {
         // TODO: Implement a fancy build time state machine instead of crash at runtime
         log::debug!("[{}] GetDeviceInfo", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady);
@@ -214,7 +214,7 @@ impl Device {
         .build()
     }
 
-    pub fn command_get_caps_info(&self, _cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
+    pub fn core_get_caps_info(&self, _cmd: GetCapsInfoCmd) -> GetCapsInfoRsp {
         log::debug!("[{}] GetCapsInfo", self.handle);
 
         let caps = DEFAULT_CAPS_INFO
@@ -232,7 +232,7 @@ impl Device {
         .build()
     }
 
-    pub fn command_set_config(&mut self, cmd: SetConfigCmd) -> SetConfigRsp {
+    pub fn core_set_config(&mut self, cmd: SetConfigCmd) -> SetConfigRsp {
         log::debug!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
 
@@ -260,7 +260,7 @@ impl Device {
         .build()
     }
 
-    pub fn command_get_config(&self, cmd: GetConfigCmd) -> GetConfigRsp {
+    pub fn core_get_config(&self, cmd: GetConfigCmd) -> GetConfigRsp {
         log::debug!("[{}] GetConfig", self.handle);
 
         // TODO: do this config shall be set on device reset
@@ -304,7 +304,7 @@ impl Device {
         .build()
     }
 
-    fn command_session_init(&mut self, cmd: SessionInitCmd) -> SessionInitRsp {
+    fn session_init(&mut self, cmd: SessionInitCmd) -> SessionInitRsp {
         let session_id = cmd.get_session_id();
         let session_type = cmd.get_session_type();
 
@@ -331,7 +331,7 @@ impl Device {
         SessionInitRspBuilder { status }.build()
     }
 
-    fn command_session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
+    fn session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
         let session_id = cmd.get_session_token();
         log::debug!("[{}] Session deinit", self.handle);
         log::debug!("  session_id=0x{:x}", session_id);
@@ -352,7 +352,7 @@ impl Device {
         SessionDeinitRspBuilder { status }.build()
     }
 
-    fn command_session_get_count(&self, _cmd: SessionGetCountCmd) -> SessionGetCountRsp {
+    fn session_get_count(&self, _cmd: SessionGetCountCmd) -> SessionGetCountRsp {
         log::debug!("[{}] Session get count", self.handle);
 
         SessionGetCountRspBuilder {
@@ -362,10 +362,7 @@ impl Device {
         .build()
     }
 
-    fn command_session_set_app_config(
-        &mut self,
-        cmd: SessionSetAppConfigCmd,
-    ) -> SessionSetAppConfigRsp {
+    fn session_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> SessionSetAppConfigRsp {
         let session_handle = cmd.get_session_token();
 
         log::debug!(
@@ -470,10 +467,7 @@ impl Device {
         .build()
     }
 
-    fn command_session_get_app_config(
-        &self,
-        cmd: SessionGetAppConfigCmd,
-    ) -> SessionGetAppConfigRsp {
+    fn session_get_app_config(&self, cmd: SessionGetAppConfigCmd) -> SessionGetAppConfigRsp {
         let session_handle = cmd.get_session_token();
 
         log::debug!(
@@ -520,7 +514,7 @@ impl Device {
         .build()
     }
 
-    fn command_session_get_state(&self, cmd: SessionGetStateCmd) -> SessionGetStateRsp {
+    fn session_get_state(&self, cmd: SessionGetStateCmd) -> SessionGetStateRsp {
         let session_handle = cmd.get_session_token();
 
         log::debug!("[{}:0x{:x}] Session Get State", self.handle, session_handle);
@@ -540,7 +534,7 @@ impl Device {
         .build()
     }
 
-    fn command_session_update_controller_multicast_list(
+    fn session_update_controller_multicast_list(
         &mut self,
         cmd: SessionUpdateControllerMulticastListCmd,
     ) -> SessionUpdateControllerMulticastListRsp {
@@ -731,7 +725,7 @@ impl Device {
         SessionUpdateControllerMulticastListRspBuilder { status }.build()
     }
 
-    fn command_session_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
+    fn session_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
         let session_id = cmd.get_session_id();
 
         log::debug!("[{}:0x{:x}] Session Start", self.handle, session_id);
@@ -780,7 +774,7 @@ impl Device {
         .build()
     }
 
-    fn command_session_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
+    fn session_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
         let session_id = cmd.get_session_id();
 
         log::debug!("[{}:0x{:x}] Session Stop", self.handle, session_id);
@@ -816,7 +810,7 @@ impl Device {
         .build()
     }
 
-    fn command_session_get_ranging_count(
+    fn session_get_ranging_count(
         &self,
         cmd: SessionGetRangingCountCmd,
     ) -> SessionGetRangingCountRsp {
@@ -843,7 +837,7 @@ impl Device {
         .build()
     }
 
-    fn command_set_country_code(
+    fn android_set_country_code(
         &mut self,
         cmd: AndroidSetCountryCodeCmd,
     ) -> AndroidSetCountryCodeRsp {
@@ -858,7 +852,7 @@ impl Device {
         .build()
     }
 
-    fn command_get_power_stats(
+    fn android_get_power_stats(
         &mut self,
         _cmd: AndroidGetPowerStatsCmd,
     ) -> AndroidGetPowerStatsRsp {
@@ -922,37 +916,41 @@ impl Device {
 
         match cmd.specialize() {
             CoreCommand(cmd) => match cmd.specialize() {
-                DeviceResetCmd(cmd) => self.command_device_reset(cmd).into(),
-                GetDeviceInfoCmd(cmd) => self.command_get_device_info(cmd).into(),
-                GetCapsInfoCmd(cmd) => self.command_get_caps_info(cmd).into(),
-                SetConfigCmd(cmd) => self.command_set_config(cmd).into(),
-                GetConfigCmd(cmd) => self.command_get_config(cmd).into(),
-                _ => panic!("Unsupported Core command"),
+                DeviceResetCmd(cmd) => self.core_device_reset(cmd).into(),
+                GetDeviceInfoCmd(cmd) => self.core_get_device_info(cmd).into(),
+                GetCapsInfoCmd(cmd) => self.core_get_caps_info(cmd).into(),
+                SetConfigCmd(cmd) => self.core_set_config(cmd).into(),
+                GetConfigCmd(cmd) => self.core_get_config(cmd).into(),
+                _ => panic!("Unsupported Core command 0x{:02x}", cmd.get_opcode()),
             },
             SessionConfigCommand(cmd) => match cmd.specialize() {
-                SessionInitCmd(cmd) => self.command_session_init(cmd).into(),
-                SessionDeinitCmd(cmd) => self.command_session_deinit(cmd).into(),
-                SessionGetCountCmd(cmd) => self.command_session_get_count(cmd).into(),
-                SessionSetAppConfigCmd(cmd) => self.command_session_set_app_config(cmd).into(),
-                SessionGetAppConfigCmd(cmd) => self.command_session_get_app_config(cmd).into(),
-                SessionGetStateCmd(cmd) => self.command_session_get_state(cmd).into(),
-                SessionUpdateControllerMulticastListCmd(cmd) => self
-                    .command_session_update_controller_multicast_list(cmd)
-                    .into(),
-                _ => panic!("Unsupported Session Config command"),
+                SessionInitCmd(cmd) => self.session_init(cmd).into(),
+                SessionDeinitCmd(cmd) => self.session_deinit(cmd).into(),
+                SessionGetCountCmd(cmd) => self.session_get_count(cmd).into(),
+                SessionSetAppConfigCmd(cmd) => self.session_set_app_config(cmd).into(),
+                SessionGetAppConfigCmd(cmd) => self.session_get_app_config(cmd).into(),
+                SessionGetStateCmd(cmd) => self.session_get_state(cmd).into(),
+                SessionUpdateControllerMulticastListCmd(cmd) => {
+                    self.session_update_controller_multicast_list(cmd).into()
+                }
+                _ => panic!(
+                    "Unsupported Session Config command 0x{:02x}",
+                    cmd.get_opcode()
+                ),
             },
             SessionControlCommand(cmd) => match cmd.specialize() {
-                SessionStartCmd(cmd) => self.command_session_start(cmd).into(),
-                SessionStopCmd(cmd) => self.command_session_stop(cmd).into(),
-                SessionGetRangingCountCmd(cmd) => {
-                    self.command_session_get_ranging_count(cmd).into()
-                }
-                _ => panic!("Unsupported Session Control command"),
+                SessionStartCmd(cmd) => self.session_start(cmd).into(),
+                SessionStopCmd(cmd) => self.session_stop(cmd).into(),
+                SessionGetRangingCountCmd(cmd) => self.session_get_ranging_count(cmd).into(),
+                _ => panic!(
+                    "Unsupported Session Control command 0x{:02x}",
+                    cmd.get_opcode()
+                ),
             },
             AndroidCommand(cmd) => match cmd.specialize() {
-                AndroidSetCountryCodeCmd(cmd) => self.command_set_country_code(cmd).into(),
-                AndroidGetPowerStatsCmd(cmd) => self.command_get_power_stats(cmd).into(),
-                _ => panic!("Unsupported Android command"),
+                AndroidSetCountryCodeCmd(cmd) => self.android_set_country_code(cmd).into(),
+                AndroidGetPowerStatsCmd(cmd) => self.android_get_power_stats(cmd).into(),
+                _ => panic!("Unsupported Android command 0x{:02x}", cmd.get_opcode()),
             },
             UciVendor_9_Command(vendor_command) => UciVendor_9_ResponseBuilder {
                 opcode: vendor_command.get_opcode(),
