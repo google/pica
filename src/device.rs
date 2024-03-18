@@ -317,13 +317,7 @@ impl Device {
         } else {
             match self.sessions.insert(
                 session_id,
-                Session::new(
-                    session_id,
-                    session_type,
-                    self.handle,
-                    self.tx.clone(),
-                    self.pica_tx.clone(),
-                ),
+                Session::new(session_id, session_type, self.handle, self.tx.clone()),
             ) {
                 Some(_) => StatusCode::UciStatusSessionDuplicate,
                 None => {
@@ -737,6 +731,118 @@ impl Device {
         SessionUpdateControllerMulticastListRspBuilder { status }.build()
     }
 
+    fn command_session_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
+        let session_id = cmd.get_session_id();
+
+        log::debug!("[{}:0x{:x}] Session Start", self.handle, session_id);
+
+        let Some(session) = self.sessions.get_mut(&session_id) else {
+            return SessionStartRspBuilder {
+                status: StatusCode::UciStatusSessionNotExist,
+            }
+            .build();
+        };
+
+        if session.state != SessionState::SessionStateIdle {
+            return SessionStartRspBuilder {
+                status: StatusCode::UciStatusSessionNotConfigured,
+            }
+            .build();
+        }
+
+        assert!(session.ranging_task.is_none());
+
+        let ranging_interval =
+            time::Duration::from_millis(session.app_config.ranging_duration as u64);
+
+        let tx = self.pica_tx.clone();
+        let handle = self.handle;
+        session.ranging_task = Some(tokio::spawn(async move {
+            loop {
+                time::sleep(ranging_interval).await;
+                tx.send(PicaCommand::Ranging(handle, session_id))
+                    .await
+                    .unwrap();
+            }
+        }));
+
+        session.set_state(
+            SessionState::SessionStateActive,
+            ReasonCode::StateChangeWithSessionManagementCommands,
+        );
+
+        self.n_active_sessions += 1;
+        self.set_state(DeviceState::DeviceStateActive);
+
+        SessionStartRspBuilder {
+            status: StatusCode::UciStatusOk,
+        }
+        .build()
+    }
+
+    fn command_session_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
+        let session_id = cmd.get_session_id();
+
+        log::debug!("[{}:0x{:x}] Session Stop", self.handle, session_id);
+
+        let Some(session) = self.sessions.get_mut(&session_id) else {
+            return SessionStopRspBuilder {
+                status: StatusCode::UciStatusSessionNotExist,
+            }
+            .build();
+        };
+
+        if session.state != SessionState::SessionStateActive {
+            return SessionStopRspBuilder {
+                status: StatusCode::UciStatusSessionActive,
+            }
+            .build();
+        }
+
+        session.stop_ranging_task();
+        session.set_state(
+            SessionState::SessionStateIdle,
+            ReasonCode::StateChangeWithSessionManagementCommands,
+        );
+
+        self.n_active_sessions -= 1;
+        if self.n_active_sessions == 0 {
+            self.set_state(DeviceState::DeviceStateReady);
+        }
+
+        SessionStopRspBuilder {
+            status: StatusCode::UciStatusOk,
+        }
+        .build()
+    }
+
+    fn command_session_get_ranging_count(
+        &self,
+        cmd: SessionGetRangingCountCmd,
+    ) -> SessionGetRangingCountRsp {
+        let session_id = cmd.get_session_id();
+
+        log::debug!(
+            "[{}:0x{:x}] Session Get Ranging Count",
+            self.handle,
+            session_id
+        );
+
+        let Some(session) = self.sessions.get(&session_id) else {
+            return SessionGetRangingCountRspBuilder {
+                status: StatusCode::UciStatusSessionNotExist,
+                count: 0,
+            }
+            .build();
+        };
+
+        SessionGetRangingCountRspBuilder {
+            status: StatusCode::UciStatusOk,
+            count: session.sequence_number,
+        }
+        .build()
+    }
+
     fn command_set_country_code(
         &mut self,
         cmd: AndroidSetCountryCodeCmd,
@@ -810,7 +916,7 @@ impl Device {
     fn receive_command(&mut self, cmd: UciCommand) -> UciResponse {
         match cmd.specialize() {
             // Handle commands for this device
-            UciCommandChild::CoreCommand(core_command) => match core_command.specialize() {
+            UciCommandChild::CoreCommand(cmd) => match cmd.specialize() {
                 CoreCommandChild::DeviceResetCmd(cmd) => self.command_device_reset(cmd).into(),
                 CoreCommandChild::GetDeviceInfoCmd(cmd) => self.command_get_device_info(cmd).into(),
                 CoreCommandChild::GetCapsInfoCmd(cmd) => self.command_get_caps_info(cmd).into(),
@@ -819,74 +925,42 @@ impl Device {
                 _ => panic!("Unsupported core command"),
             },
             // Handle commands for session management
-            UciCommandChild::SessionConfigCommand(session_command) => {
-                match session_command.specialize() {
-                    SessionConfigCommandChild::SessionInitCmd(cmd) => {
-                        self.command_session_init(cmd).into()
-                    }
-                    SessionConfigCommandChild::SessionDeinitCmd(cmd) => {
-                        self.command_session_deinit(cmd).into()
-                    }
-                    SessionConfigCommandChild::SessionGetCountCmd(cmd) => {
-                        self.command_session_get_count(cmd).into()
-                    }
-                    SessionConfigCommandChild::SessionSetAppConfigCmd(cmd) => {
-                        self.command_session_set_app_config(cmd).into()
-                    }
-                    SessionConfigCommandChild::SessionGetAppConfigCmd(cmd) => {
-                        self.command_session_get_app_config(cmd).into()
-                    }
-                    SessionConfigCommandChild::SessionGetStateCmd(cmd) => {
-                        self.command_session_get_state(cmd).into()
-                    }
-                    SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => self
-                        .command_session_update_controller_multicast_list(cmd)
-                        .into(),
-                    _ => panic!("Unsupported session command"),
+            UciCommandChild::SessionConfigCommand(cmd) => match cmd.specialize() {
+                SessionConfigCommandChild::SessionInitCmd(cmd) => {
+                    self.command_session_init(cmd).into()
                 }
-            }
-            UciCommandChild::SessionControlCommand(ranging_command) => {
-                let session_id = ranging_command.get_session_id();
-                if let Some(session) = self.session_mut(session_id) {
-                    // Forward to the proper session
-                    let response = session.ranging_command(ranging_command);
-                    match response.specialize() {
-                        SessionControlResponseChild::SessionStartRsp(rsp)
-                            if rsp.get_status() == StatusCode::UciStatusOk =>
-                        {
-                            self.n_active_sessions += 1;
-                            self.set_state(DeviceState::DeviceStateActive);
-                        }
-                        SessionControlResponseChild::SessionStopRsp(rsp)
-                            if rsp.get_status() == StatusCode::UciStatusOk =>
-                        {
-                            assert!(self.n_active_sessions > 0);
-                            self.n_active_sessions -= 1;
-                            if self.n_active_sessions == 0 {
-                                self.set_state(DeviceState::DeviceStateReady);
-                            }
-                        }
-                        _ => {}
-                    }
-                    response.into()
-                } else {
-                    let status = StatusCode::UciStatusSessionNotExist;
-                    match ranging_command.specialize() {
-                        SessionControlCommandChild::SessionStartCmd(_) => {
-                            SessionStartRspBuilder { status }.build().into()
-                        }
-                        SessionControlCommandChild::SessionStopCmd(_) => {
-                            SessionStopRspBuilder { status }.build().into()
-                        }
-                        SessionControlCommandChild::SessionGetRangingCountCmd(_) => {
-                            SessionGetRangingCountRspBuilder { status, count: 0 }
-                                .build()
-                                .into()
-                        }
-                        _ => panic!("Unsupported ranging command"),
-                    }
+                SessionConfigCommandChild::SessionDeinitCmd(cmd) => {
+                    self.command_session_deinit(cmd).into()
                 }
-            }
+                SessionConfigCommandChild::SessionGetCountCmd(cmd) => {
+                    self.command_session_get_count(cmd).into()
+                }
+                SessionConfigCommandChild::SessionSetAppConfigCmd(cmd) => {
+                    self.command_session_set_app_config(cmd).into()
+                }
+                SessionConfigCommandChild::SessionGetAppConfigCmd(cmd) => {
+                    self.command_session_get_app_config(cmd).into()
+                }
+                SessionConfigCommandChild::SessionGetStateCmd(cmd) => {
+                    self.command_session_get_state(cmd).into()
+                }
+                SessionConfigCommandChild::SessionUpdateControllerMulticastListCmd(cmd) => self
+                    .command_session_update_controller_multicast_list(cmd)
+                    .into(),
+                _ => panic!("Unsupported session config command"),
+            },
+            UciCommandChild::SessionControlCommand(cmd) => match cmd.specialize() {
+                SessionControlCommandChild::SessionStartCmd(cmd) => {
+                    self.command_session_start(cmd).into()
+                }
+                SessionControlCommandChild::SessionStopCmd(cmd) => {
+                    self.command_session_stop(cmd).into()
+                }
+                SessionControlCommandChild::SessionGetRangingCountCmd(cmd) => {
+                    self.command_session_get_ranging_count(cmd).into()
+                }
+                _ => panic!("Unsupported session control command"),
+            },
 
             UciCommandChild::AndroidCommand(android_command) => {
                 match android_command.specialize() {
