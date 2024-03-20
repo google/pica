@@ -585,15 +585,17 @@ enum ReasonCode : 8 {
     VENDOR_SPECIFIC_REASON_CODE_2 = 0xFF,
 }
 
-enum MulticastUpdateStatusCode : 8 {
-    STATUS_OK_MULTICAST_LIST_UPDATE = 0x00,
-    STATUS_ERROR_MULTICAST_LIST_FULL = 0x01,
-    STATUS_ERROR_KEY_FETCH_FAIL = 0x02,
-    STATUS_ERROR_SUB_SESSION_ID_NOT_FOUND = 0x03,
-    STATUS_ERROR_SUB_SESSION_KEY_NOT_FOUND = 0x05,
-    STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE = 0x06,
-    STATUS_ERROR_SESSION_KEY_NOT_FOUND = 0x07,
-    STATUS_ERROR_ADDRESS_ALREADY_PRESENT = 0x08,
+/// [UCI] Table 40: Multicast list update status codes
+enum MulticastUpdateStatus : 8 {
+    OK_MULTICAST_LIST_UPDATE = 0x00,
+    ERROR_MULTICAST_LIST_FULL = 0x01,
+    ERROR_KEY_FETCH_FAIL = 0x02,
+    ERROR_SUB_SESSION_ID_NOT_FOUND = 0x03,
+    ERROR_SUB_SESSION_KEY_NOT_FOUND = 0x04,
+    ERROR_SUB_SESSION_KEY_NOT_APPLICABLE = 0x05,
+    ERROR_SESSION_KEY_NOT_FOUND = 0x06,
+    ERROR_ADDRESS_NOT_FOUND = 0x07,
+    ERROR_ADDRESS_ALREADY_PRESENT = 0x08,
 }
 
 enum MacAddressIndicator : 8 {
@@ -1075,7 +1077,7 @@ test SessionUpdateControllerMulticastListRsp {
 struct ControleeStatus {
     mac_address: 8[2],
     subsession_id: 32,
-    status: MulticastUpdateStatusCode,
+    status: MulticastUpdateStatus,
 }
 
 packet SessionUpdateControllerMulticastListNtf : SessionConfigPacket (mt = NOTIFICATION, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {

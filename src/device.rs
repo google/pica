@@ -628,11 +628,11 @@ impl Device {
             | UpdateMulticastListAction::AddControleeWithShortSubSessionKey
             | UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
                 new_controlees.iter().for_each(|controlee| {
-                    let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
+                    let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
                     if !dst_addresses.contains(&controlee.short_address) {
                         if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
                             status = uci::Status::ErrorMulticastListFull;
-                            update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
+                            update_status = MulticastUpdateStatus::ErrorMulticastListFull;
                         } else if (action
                             == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
                             || action
@@ -645,8 +645,7 @@ impl Device {
                             // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
                             // Controlee in the Controlee List.
                             status = uci::Status::Failed;
-                            update_status =
-                                MulticastUpdateStatusCode::StatusErrorSubSessionKeyNotApplicable;
+                            update_status = MulticastUpdateStatus::ErrorSubSessionKeyNotApplicable;
                         } else {
                             dst_addresses.push(controlee.short_address);
                         };
@@ -666,10 +665,10 @@ impl Device {
                     let pica_tx = self.pica_tx.clone();
                     let address = controlee.short_address;
                     let attempt_count = session.app_config.in_band_termination_attempt_count;
-                    let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
+                    let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
                     if !dst_addresses.contains(&address) {
                         status = uci::Status::Failed;
-                        update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
+                        update_status = MulticastUpdateStatus::ErrorKeyFetchFail;
                     } else {
                         dst_addresses.retain(|value| *value != address);
                         // If IN_BAND_TERMINATION_ATTEMPT_COUNT is not equal to 0x00, then the
