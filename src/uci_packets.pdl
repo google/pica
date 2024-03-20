@@ -84,6 +84,7 @@ enum AndroidOpcodeId : 6 {
     FIRA_RANGE_DIAGNOSTICS = 0x02,
 }
 
+/// [UCI] 8.5 Status Codes
 enum Status : 8 {
     // Generic Status Codes
     OK = 0x00,
@@ -92,28 +93,24 @@ enum Status : 8 {
     SYNTAX_ERROR = 0x03,
     INVALID_PARAM = 0x04,
     INVALID_RANGE = 0x05,
-    INVALID_MSG_SIZE = 0x06,
+    INVALID_MESSAGE_SIZE = 0x06,
     UNKNOWN_GID = 0x07,
     UNKNOWN_OID = 0x08,
     READ_ONLY = 0x09,
-    COMMAND_RETRY = 0x0A,
+    UCI_MESSAGE_RETRY = 0x0A,
     UNKNOWN = 0x0B,
     NOT_APPLICABLE = 0x0C,
-    RFU_STATUS_CODE_RANGE_1 = 0x0D..0x10,
 
     // UWB Session Specific Status Codes
-    SESSION_NOT_EXIST = 0x11,
-    SESSION_DUPLICATE = 0x12,
-    SESSION_ACTIVE = 0x13,
-    MAX_SESSIONS_EXCEEDED = 0x14,
-    SESSION_NOT_CONFIGURED = 0x15,
-    ACTIVE_SESSIONS_ONGOING = 0x16,
-    MULTICAST_LIST_FULL = 0x17,
-    ADDRESS_NOT_FOUND = 0x18,
-    ADDRESS_ALREADY_PRESENT = 0x19,
+    ERROR_SESSION_NOT_EXIST = 0x11,
+    ERROR_SESSION_DUPLICATE = 0x12,
+    ERROR_SESSION_ACTIVE = 0x13,
+    ERROR_MAX_SESSIONS_EXCEEDED = 0x14,
+    ERROR_SESSION_NOT_CONFIGURED = 0x15,
+    ERROR_ACTIVE_SESSIONS_ONGOING = 0x16,
+    ERROR_MULTICAST_LIST_FULL = 0x17,
     ERROR_UWB_INITIATION_TIME_TOO_OLD = 0x1A,
     OK_NEGATIVE_DISTANCE_REPORT = 0x1B,
-    RFU_STATUS_CODE_RANGE_2 = 0x1C..0x1F,
 
     // UWB Ranging Session Specific Status Codes
     RANGING_TX_FAILED = 0x20,
@@ -127,23 +124,17 @@ enum Status : 8 {
     ERROR_ROUND_INDEX_NOT_ACTIVATED = 0x28,
     ERROR_NUMBER_OF_ACTIVE_RANGING_ROUNDS_EXCEEDED = 0x29,
     ERROR_DL_TDOA_DEVICE_ADDRESS_NOT_MATCHING_IN_REPLY_TIME_LIST = 0x2A,
-    RFU_STATUS_CODE_RANGE_3 = 0x2B..0x2F,
-
-    // UWB Data Session Specific Status Codes
-    DATA_MAX_TX_PSDU_SIZE_EXCEEDED = 0x30,
-    DATA_RX_CRC_ERROR = 0x31,
-    RFU_STATUS_CODE_RANGE_4 = 0x32..0x4F,
 
     // Vendor Specific Status Codes
-    VENDOR_SPECIFIC_STATUS_CODE_RANGE_1 = 0x50..0xFE {
+    VENDOR_SPECIFIC = 0x50..0xFF {
         ERROR_CCC_SE_BUSY = 0x50,
         ERROR_CCC_LIFECYCLE = 0x51,
         ERROR_STOPPED_DUE_TO_OTHER_SESSION_CONFLICT = 0x52,
         REGULATION_UWB_OFF = 0x53,
     },
 
-    // For internal usage, we will use 0xFF as default.
-    VENDOR_SPECIFIC_STATUS_CODE_2 = 0xFF,
+    // All others reserved for future use
+    RFU = ..,
 }
 
 // This needs a separate StatusCode as the Status code values in the DATA_RCV packet have

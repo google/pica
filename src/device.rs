@@ -313,13 +313,13 @@ impl Device {
         log::debug!("  session_type={:?}", session_type);
 
         let status = if self.sessions.len() >= MAX_SESSION {
-            uci::Status::MaxSessionsExceeded
+            uci::Status::ErrorMaxSessionsExceeded
         } else {
             match self.sessions.insert(
                 session_id,
                 Session::new(session_id, session_type, self.handle, self.tx.clone()),
             ) {
-                Some(_) => uci::Status::SessionDuplicate,
+                Some(_) => uci::Status::ErrorSessionDuplicate,
                 None => {
                     // Should not fail
                     self.session_mut(session_id).unwrap().init();
@@ -347,7 +347,7 @@ impl Device {
                 self.sessions.remove(&session_id);
                 uci::Status::Ok
             }
-            None => uci::Status::SessionNotExist,
+            None => uci::Status::ErrorSessionNotExist,
         };
         SessionDeinitRspBuilder { status }.build()
     }
@@ -374,7 +374,7 @@ impl Device {
         let Some(session) = self.sessions.get_mut(&session_handle) else {
             return SessionSetAppConfigRspBuilder {
                 cfg_status: Vec::new(),
-                status: uci::Status::SessionNotExist,
+                status: uci::Status::ErrorSessionNotExist,
             }
             .build();
         };
@@ -392,7 +392,7 @@ impl Device {
                 .any(|cfg| IMMUTABLE_PARAMETERS.contains(&cfg.cfg_id))
             {
                 return SessionSetAppConfigRspBuilder {
-                    status: uci::Status::SessionActive,
+                    status: uci::Status::ErrorSessionActive,
                     cfg_status: vec![],
                 }
                 .build();
@@ -479,7 +479,7 @@ impl Device {
         let Some(session) = self.sessions.get(&session_handle) else {
             return SessionGetAppConfigRspBuilder {
                 tlvs: vec![],
-                status: uci::Status::SessionNotExist,
+                status: uci::Status::ErrorSessionNotExist,
             }
             .build();
         };
@@ -522,7 +522,7 @@ impl Device {
         let Some(session) = self.sessions.get(&session_handle) else {
             return SessionGetStateRspBuilder {
                 session_state: SessionState::SessionStateInit,
-                status: uci::Status::SessionNotExist,
+                status: uci::Status::ErrorSessionNotExist,
             }
             .build();
         };
@@ -548,7 +548,7 @@ impl Device {
 
         let Some(session) = self.sessions.get_mut(&session_handle) else {
             return SessionUpdateControllerMulticastListRspBuilder {
-                status: uci::Status::SessionNotExist,
+                status: uci::Status::ErrorSessionNotExist,
             }
             .build();
         };
@@ -631,7 +631,7 @@ impl Device {
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                     if !dst_addresses.contains(&controlee.short_address) {
                         if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
-                            status = uci::Status::MulticastListFull;
+                            status = uci::Status::ErrorMulticastListFull;
                             update_status = MulticastUpdateStatusCode::StatusErrorMulticastListFull;
                         } else if (action
                             == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
@@ -668,7 +668,7 @@ impl Device {
                     let attempt_count = session.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatusCode::StatusOkMulticastListUpdate;
                     if !dst_addresses.contains(&address) {
-                        status = uci::Status::AddressNotFound;
+                        status = uci::Status::Failed;
                         update_status = MulticastUpdateStatusCode::StatusErrorKeyFetchFail;
                     } else {
                         dst_addresses.retain(|value| *value != address);
@@ -732,14 +732,14 @@ impl Device {
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
             return SessionStartRspBuilder {
-                status: uci::Status::SessionNotExist,
+                status: uci::Status::ErrorSessionNotExist,
             }
             .build();
         };
 
         if session.state != SessionState::SessionStateIdle {
             return SessionStartRspBuilder {
-                status: uci::Status::SessionNotConfigured,
+                status: uci::Status::ErrorSessionNotConfigured,
             }
             .build();
         }
@@ -781,14 +781,14 @@ impl Device {
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
             return SessionStopRspBuilder {
-                status: uci::Status::SessionNotExist,
+                status: uci::Status::ErrorSessionNotExist,
             }
             .build();
         };
 
         if session.state != SessionState::SessionStateActive {
             return SessionStopRspBuilder {
-                status: uci::Status::SessionActive,
+                status: uci::Status::ErrorSessionActive,
             }
             .build();
         }
@@ -824,7 +824,7 @@ impl Device {
 
         let Some(session) = self.sessions.get(&session_id) else {
             return SessionGetRangingCountRspBuilder {
-                status: uci::Status::SessionNotExist,
+                status: uci::Status::ErrorSessionNotExist,
                 count: 0,
             }
             .build();
