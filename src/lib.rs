@@ -467,7 +467,7 @@ impl Pica {
                         data_sequence_number: 0x01,
                         pbf: PacketBoundaryFlag::Complete,
                         session_handle: session_id,
-                        source_address: device.mac_address.into(),
+                        source_address: session.app_config.device_mac_address.unwrap().into(),
                         status: uci::Status::Ok,
                     }
                     .build()

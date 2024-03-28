@@ -18,13 +18,13 @@ from pica.packets import uci
 
 async def init(host: Host):
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
 
-    host.send_control(uci.DeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
+    host.send_control(uci.CoreDeviceResetCmd(reset_config=uci.ResetConfig.UWBS_RESET))
 
-    await host.expect_control(uci.DeviceResetRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.CoreDeviceResetRsp(status=uci.Status.OK))
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )

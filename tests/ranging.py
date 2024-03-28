@@ -32,7 +32,7 @@ async def controller(host: Host, peer: Host):
         )
     )
 
-    await host.expect_control(uci.SessionInitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -90,7 +90,7 @@ async def controller(host: Host, peer: Host):
     )
 
     await host.expect_control(
-        uci.SessionSetAppConfigRsp(status=uci.StatusCode.UCI_STATUS_OK, cfg_status=[])
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
     )
 
     await host.expect_control(
@@ -103,7 +103,7 @@ async def controller(host: Host, peer: Host):
 
     host.send_control(uci.SessionStartCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStartRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -114,7 +114,7 @@ async def controller(host: Host, peer: Host):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
     for _ in range(1, 3):
@@ -123,7 +123,7 @@ async def controller(host: Host, peer: Host):
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStopRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -134,12 +134,12 @@ async def controller(host: Host, peer: Host):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
 
     host.send_control(uci.SessionDeinitCmd(session_token=0))
 
-    await host.expect_control(uci.SessionDeinitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
 
 async def controlee(host: Host, peer: Host):
@@ -151,7 +151,7 @@ async def controlee(host: Host, peer: Host):
         )
     )
 
-    await host.expect_control(uci.SessionInitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -209,7 +209,7 @@ async def controlee(host: Host, peer: Host):
     )
 
     await host.expect_control(
-        uci.SessionSetAppConfigRsp(status=uci.StatusCode.UCI_STATUS_OK, cfg_status=[])
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
     )
 
     await host.expect_control(
@@ -222,7 +222,7 @@ async def controlee(host: Host, peer: Host):
 
     host.send_control(uci.SessionStartCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStartRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -233,7 +233,7 @@ async def controlee(host: Host, peer: Host):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
     for _ in range(1, 3):
@@ -242,7 +242,7 @@ async def controlee(host: Host, peer: Host):
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStopRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -253,12 +253,12 @@ async def controlee(host: Host, peer: Host):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
 
     host.send_control(uci.SessionDeinitCmd(session_token=0))
 
-    await host.expect_control(uci.SessionDeinitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
 
 async def run(address: str, uci_port: int):
