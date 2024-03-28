@@ -17,7 +17,6 @@ use crate::MacAddress;
 use crate::PicaCommand;
 
 use std::collections::HashMap;
-use std::iter::Extend;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -77,15 +76,36 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     ),
 ];
 
+/// [UCI] 8.2 Device Configuration Parameters
+pub struct DeviceConfig {
+    device_state: DeviceState,
+    // This config is used to enable/disable the low power mode.
+    //   0x00 = Disable low power mode
+    //   0x01 = Enable low power mode (default)
+    low_power_mode: bool,
+}
+
+// [UCI] 6.3.1 Setting the Configuration
+// All device configuration parameters within the UWBS are set to
+// default values at Table 44 [..].
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        DeviceConfig {
+            device_state: DeviceState::DeviceStateError,
+            low_power_mode: true,
+        }
+    }
+}
+
 pub struct Device {
     pub handle: usize,
     pub mac_address: MacAddress,
+    config: DeviceConfig,
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
     pub tx: mpsc::UnboundedSender<UciPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
-    config: HashMap<DeviceConfigId, Vec<u8>>,
     country_code: [u8; 2],
 
     pub n_active_sessions: usize,
@@ -101,11 +121,11 @@ impl Device {
         Device {
             handle,
             mac_address,
+            config: Default::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
             tx,
             pica_tx,
-            config: HashMap::new(),
             country_code: Default::default(),
             n_active_sessions: 0,
         }
@@ -236,26 +256,41 @@ impl Device {
         log::debug!("[{}] SetConfig", self.handle);
         assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
 
-        let (valid_parameters, invalid_config_status) = cmd.get_tlvs().iter().fold(
-            (HashMap::new(), Vec::new()),
-            |(mut valid_parameters, invalid_config_status), param| {
-                // TODO: DeviceState is a read only parameter
-                valid_parameters.insert(param.cfg_id, param.v.clone());
-
-                (valid_parameters, invalid_config_status)
-            },
-        );
-
-        let (status, parameters) = if invalid_config_status.is_empty() {
-            self.config.extend(valid_parameters);
-            (uci::Status::Ok, Vec::new())
-        } else {
-            (uci::Status::InvalidParam, invalid_config_status)
-        };
+        // [UCI] 6.3.1 Setting the Configuration
+        // The UWBS shall respond with CORE_SET_CONFIG_RSP setting the Status
+        // field of STATUS_INVALID_PARAM and including one or more invalid
+        // Parameter ID(s) If the Host tries to set a parameter that is not
+        // available in the UWBS. All other configuration parameters should
+        // have been set to the new values within the UWBS.
+        let mut invalid_parameters = vec![];
+        for parameter in cmd.get_parameters() {
+            match parameter.id {
+                uci::ConfigParameterId::DeviceState => {
+                    invalid_parameters.push(uci::ConfigParameterStatus {
+                        id: parameter.id,
+                        status: uci::Status::ReadOnly,
+                    })
+                }
+                uci::ConfigParameterId::LowPowerMode => {
+                    self.config.low_power_mode = parameter.value.first().copied().unwrap_or(1) != 0;
+                }
+                uci::ConfigParameterId::Rfu(id) => {
+                    log::warn!("unknown config parameter id 0x{:02x}", *id);
+                    invalid_parameters.push(uci::ConfigParameterStatus {
+                        id: parameter.id,
+                        status: uci::Status::InvalidParam,
+                    })
+                }
+            }
+        }
 
         CoreSetConfigRspBuilder {
-            cfg_status: parameters,
-            status,
+            status: if invalid_parameters.is_empty() {
+                uci::Status::Ok
+            } else {
+                uci::Status::InvalidParam
+            },
+            parameters: invalid_parameters,
         }
         .build()
     }
@@ -263,45 +298,45 @@ impl Device {
     pub fn core_get_config(&self, cmd: CoreGetConfigCmd) -> CoreGetConfigRsp {
         log::debug!("[{}] GetConfig", self.handle);
 
-        // TODO: do this config shall be set on device reset
-        let ids = cmd.get_cfg_id();
-        let (valid_parameters, invalid_parameters) = ids.iter().fold(
-            (Vec::new(), Vec::new()),
-            |(mut valid_parameters, mut invalid_parameters), id| {
-                // UCI Core Section 6.3.2 Table 8
-                // UCI Core Section 6.3.2 - Return the Configuration
-                // If the status code is ok, return the params
-                // If there is at least one invalid param, return the list of invalid params
-                // If the ID is not present in our config, return the Type with length = 0
-                match DeviceConfigId::try_from(*id) {
-                    Ok(cfg_id) => match self.config.get(&cfg_id) {
-                        Some(value) => valid_parameters.push(DeviceConfigTlv {
-                            cfg_id,
-                            v: value.clone(),
-                        }),
-                        None => invalid_parameters.push(DeviceConfigTlv {
-                            cfg_id,
-                            v: Vec::new(),
-                        }),
-                    },
-                    Err(_) => log::error!("Failed to parse config id: {:?}", id),
-                }
-
-                (valid_parameters, invalid_parameters)
-            },
-        );
-
-        let (status, parameters) = if invalid_parameters.is_empty() {
-            (uci::Status::Ok, valid_parameters)
-        } else {
-            (uci::Status::InvalidParam, invalid_parameters)
-        };
-
-        CoreGetConfigRspBuilder {
-            status,
-            tlvs: parameters,
+        // [UCI] 6.3.2 Retrieve the Configuration
+        // If the Host tries to retrieve any Parameter(s) that are not available
+        // in the UWBS, the UWBS shall respond with a CORE_GET_CONFIG_RSP with
+        // a Status field of STATUS_INVALID_PARAM, containing each unavailable
+        // Device Configuration Parameter Type with Length field is zero. In
+        // this case, the CORE_GET_CONFIG_RSP shall not include any parameter(s)
+        // that are available in the UWBS.
+        let mut valid_parameters = vec![];
+        let mut invalid_parameters = vec![];
+        for id in cmd.get_parameter_ids() {
+            match id {
+                ConfigParameterId::DeviceState => valid_parameters.push(ConfigParameter {
+                    id: *id,
+                    value: vec![self.config.device_state.into()],
+                }),
+                ConfigParameterId::LowPowerMode => valid_parameters.push(ConfigParameter {
+                    id: *id,
+                    value: vec![self.config.low_power_mode.into()],
+                }),
+                ConfigParameterId::Rfu(_) => invalid_parameters.push(ConfigParameter {
+                    id: *id,
+                    value: vec![],
+                }),
+            }
         }
-        .build()
+
+        if invalid_parameters.is_empty() {
+            CoreGetConfigRspBuilder {
+                status: uci::Status::Ok,
+                parameters: valid_parameters,
+            }
+            .build()
+        } else {
+            CoreGetConfigRspBuilder {
+                status: uci::Status::InvalidParam,
+                parameters: invalid_parameters,
+            }
+            .build()
+        }
     }
 
     fn session_init(&mut self, cmd: SessionInitCmd) -> SessionInitRsp {
