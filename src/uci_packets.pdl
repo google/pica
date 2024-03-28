@@ -166,11 +166,6 @@ enum ResetConfig : 8 {
     UWBS_RESET = 0x00,
 }
 
-enum DeviceConfigId : 8 {
-    DEVICE_STATE = 0x00,
-    LOW_POWER_MODE = 0x01,
-}
-
 // [UCI] Table 45: APP Configuration Parameters IDs
 enum AppConfigTlvType : 8 {
     DEVICE_TYPE = 0x00,
@@ -774,30 +769,37 @@ test CoreGetCapsInfoRsp {
     "\x40\x03\x00\x05\x00\x00\x00\x00\x01\x00\x01\x01",
 }
 
-struct DeviceConfigTlv {
-    cfg_id: DeviceConfigId,
-    _count_(v): 8,
-    v: 8[],
+// [UCI] Table 44: Device Configuration Parameters
+enum ConfigParameterId : 8 {
+    DEVICE_STATE = 0x00,
+    LOW_POWER_MODE = 0x01,
+    RFU = ..,
+}
+
+struct ConfigParameter {
+    id: ConfigParameterId,
+    _size_(value): 8,
+    value: 8[],
 }
 
 packet CoreSetConfigCmd : CorePacket (mt = COMMAND, oid = SET_CONFIG) {
-    _count_(tlvs): 8,
-    tlvs: DeviceConfigTlv[],
+    _count_(parameters): 8,
+    parameters: ConfigParameter[],
 }
 
 test CoreSetConfigCmd {
     "\x20\x04\x00\x03\x00\x00\x00\x01\x01\x00",
 }
 
-struct DeviceConfigStatus {
-    cfg_id: DeviceConfigId,
+struct ConfigParameterStatus {
+    id: ConfigParameterId,
     status: Status,
 }
 
 packet CoreSetConfigRsp : CorePacket (mt = RESPONSE, oid = SET_CONFIG) {
     status: Status,
-    _count_(cfg_status): 8,
-    cfg_status: DeviceConfigStatus[],
+    _count_(parameters): 8,
+    parameters: ConfigParameterStatus[],
 }
 
 test CoreSetConfigRsp {
@@ -806,8 +808,8 @@ test CoreSetConfigRsp {
 }
 
 packet CoreGetConfigCmd : CorePacket (mt = COMMAND, oid = GET_CONFIG) {
-    _count_(cfg_id): 8,
-    cfg_id: 8[], // DeviceConfigId
+    _count_(parameter_ids): 8,
+    parameter_ids: ConfigParameterId[],
 }
 
 test CoreGetConfigCmd {
@@ -816,8 +818,8 @@ test CoreGetConfigCmd {
 
 packet CoreGetConfigRsp : CorePacket (mt = RESPONSE, oid = GET_CONFIG) {
     status: Status,
-    _count_(tlvs): 8,
-    tlvs: DeviceConfigTlv[]
+    _count_(parameters): 8,
+    parameters: ConfigParameter[]
 }
 
 test CoreGetConfigRsp {

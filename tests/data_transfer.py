@@ -35,7 +35,7 @@ async def controller(host: Host, peer: Host, file: Path):
         )
     )
 
-    await host.expect_control(uci.SessionInitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -93,7 +93,7 @@ async def controller(host: Host, peer: Host, file: Path):
     )
 
     await host.expect_control(
-        uci.SessionSetAppConfigRsp(status=uci.StatusCode.UCI_STATUS_OK, cfg_status=[])
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
     )
 
     await host.expect_control(
@@ -109,7 +109,7 @@ async def controller(host: Host, peer: Host, file: Path):
     # START SESSION CMD
     host.send_control(uci.SessionStartCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStartRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -120,7 +120,7 @@ async def controller(host: Host, peer: Host, file: Path):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
     event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
@@ -132,7 +132,7 @@ async def controller(host: Host, peer: Host, file: Path):
     # STOP SESSION
     host.send_control(uci.SessionStopCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStopRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -143,13 +143,13 @@ async def controller(host: Host, peer: Host, file: Path):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
 
     # DEINIT
     host.send_control(uci.SessionDeinitCmd(session_token=0))
 
-    await host.expect_control(uci.SessionDeinitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
 
 async def controlee(host: Host, peer: Host, file: Path):
@@ -162,7 +162,7 @@ async def controlee(host: Host, peer: Host, file: Path):
         )
     )
 
-    await host.expect_control(uci.SessionInitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -220,7 +220,7 @@ async def controlee(host: Host, peer: Host, file: Path):
     )
 
     await host.expect_control(
-        uci.SessionSetAppConfigRsp(status=uci.StatusCode.UCI_STATUS_OK, cfg_status=[])
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
     )
 
     await host.expect_control(
@@ -233,7 +233,7 @@ async def controlee(host: Host, peer: Host, file: Path):
 
     host.send_control(uci.SessionStartCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStartRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -244,7 +244,7 @@ async def controlee(host: Host, peer: Host, file: Path):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
     with file.open("rb") as f:
@@ -252,8 +252,8 @@ async def controlee(host: Host, peer: Host, file: Path):
         event = await host.expect_data(
             uci.DataMessageRcv(
                 session_handle=0,
-                status=uci.StatusCode.UCI_STATUS_OK,
-                source_address=int.from_bytes(peer.mac_address, "big"),
+                status=uci.Status.OK,
+                source_address=int.from_bytes(peer.mac_address, "little"),
                 data_sequence_number=0x01,
                 application_data=application_data,
             ),
@@ -266,7 +266,7 @@ async def controlee(host: Host, peer: Host, file: Path):
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
-    await host.expect_control(uci.SessionStopRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -277,12 +277,12 @@ async def controlee(host: Host, peer: Host, file: Path):
     )
 
     await host.expect_control(
-        uci.DeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
 
     host.send_control(uci.SessionDeinitCmd(session_token=0))
 
-    await host.expect_control(uci.SessionDeinitRsp(status=uci.StatusCode.UCI_STATUS_OK))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
 
 async def data_transfer(
@@ -322,7 +322,7 @@ async def data_transfer(
                         seq_num = 0
 
                     event = await host.expect_control(
-                        uci.DataCreditNtf(
+                        uci.SessionDataCreditNtf(
                             session_token=int(session_id),
                             credit_availability=uci.CreditAvailability.CREDIT_AVAILABLE,
                         )
@@ -338,7 +338,7 @@ async def data_transfer(
                     )
                 )
                 event = await host.expect_control(
-                    uci.DataCreditNtf(
+                    uci.SessionDataCreditNtf(
                         session_token=int(session_id),
                         credit_availability=uci.CreditAvailability.CREDIT_AVAILABLE,
                     )
@@ -351,8 +351,8 @@ async def data_transfer(
 
 async def run(address: str, uci_port: int, file: Path):
     try:
-        host0 = await Host.connect(address, uci_port, bytes([0, 0]))
-        host1 = await Host.connect(address, uci_port, bytes([0, 1]))
+        host0 = await Host.connect(address, uci_port, bytes([0x34, 0x12]))
+        host1 = await Host.connect(address, uci_port, bytes([0x78, 0x56]))
     except Exception as e:
         raise Exception(
             f"Failed to connect to Pica server at address {address}:{uci_port}\n"
