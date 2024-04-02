@@ -1078,13 +1078,11 @@ test SessionUpdateControllerMulticastListRsp {
 
 struct ControleeStatus {
     mac_address: 8[2],
-    subsession_id: 32,
     status: MulticastUpdateStatus,
 }
 
 packet SessionUpdateControllerMulticastListNtf : SessionConfigPacket (mt = NOTIFICATION, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
     session_token: 32, // Session ID or Session Handle (based on UWBS version)
-    remaining_multicast_list_size: 8,
     _count_(controlee_status): 8,
     controlee_status: ControleeStatus[],
 }

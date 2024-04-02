@@ -690,7 +690,6 @@ impl Device {
                             MacAddress::Short(address) => address,
                             MacAddress::Extended(_) => panic!("Extended address is not supported!"),
                         },
-                        subsession_id: controlee.sub_session_id,
                         status: update_status,
                     });
                 });
@@ -726,7 +725,6 @@ impl Device {
                             MacAddress::Short(addr) => addr,
                             MacAddress::Extended(_) => panic!("Extended address is not supported!"),
                         },
-                        subsession_id: controlee.sub_session_id,
                         status: update_status,
                     });
                 });
@@ -745,10 +743,13 @@ impl Device {
         }
         let tx = self.tx.clone();
         tokio::spawn(async move {
+            // Sleep for 5ms to make sure the notification is not being
+            // sent before the response.
+            // TODO(#84) remove the sleep.
+            time::sleep(Duration::from_millis(5)).await;
             tx.send(
                 SessionUpdateControllerMulticastListNtfBuilder {
                     controlee_status,
-                    remaining_multicast_list_size: dst_addresses.len() as u8,
                     session_token: session_handle,
                 }
                 .build()
@@ -1069,6 +1070,7 @@ impl Device {
 
 struct Controlee {
     short_address: MacAddress,
+    #[allow(dead_code)]
     sub_session_id: u32,
     #[allow(dead_code)]
     session_key: SubSessionKey,
