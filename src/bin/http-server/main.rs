@@ -356,21 +356,12 @@ impl pica::RangingEstimator for Context {
         &self,
         left: &pica::Handle,
         right: &pica::Handle,
-    ) -> anyhow::Result<pica::RangingMeasurement> {
-        let devices = self
-            .devices
-            .lock()
-            .map_err(|_| anyhow::anyhow!("cannot take lock"))?;
-        let left_pos = devices
-            .get(left)
-            .ok_or(anyhow::anyhow!("unknown position"))?
-            .position;
-        let right_pos = devices
-            .get(right)
-            .ok_or(anyhow::anyhow!("unknown position"))?
-            .position;
+    ) -> Option<pica::RangingMeasurement> {
+        let devices = self.devices.lock().ok()?;
+        let left_pos = devices.get(left)?.position;
+        let right_pos = devices.get(right)?.position;
         let (range, azimuth, elevation) = left_pos.compute_range_azimuth_elevation(&right_pos);
-        Ok(pica::RangingMeasurement {
+        Some(pica::RangingMeasurement {
             range,
             azimuth,
             elevation,
