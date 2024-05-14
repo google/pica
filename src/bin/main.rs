@@ -67,8 +67,8 @@ impl pica::RangingEstimator for MockRangingEstimator {
         &self,
         _left: &pica::Handle,
         _right: &pica::Handle,
-    ) -> Result<pica::RangingMeasurement> {
-        Err(anyhow::anyhow!("position not available"))
+    ) -> Option<pica::RangingMeasurement> {
+        Some(Default::default())
     }
 }
 
