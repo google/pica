@@ -19,6 +19,7 @@
 use crate::packets::uci::{self, *};
 use crate::{AppConfig, MacAddress};
 use bytes::BytesMut;
+use pdl_runtime::Packet;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -80,7 +81,8 @@ impl Session {
                     reason_code: reason_code.into(),
                 }
                 .build()
-                .into(),
+                .encode_to_vec()
+                .unwrap(),
             )
             .unwrap()
         });

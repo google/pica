@@ -19,6 +19,7 @@ use crate::PicaCommand;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use pdl_runtime::Packet;
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -142,8 +143,13 @@ impl Device {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(5)).await;
-            tx.send(CoreDeviceStatusNtfBuilder { device_state }.build().into())
-                .unwrap()
+            tx.send(
+                CoreDeviceStatusNtfBuilder { device_state }
+                    .build()
+                    .encode_to_vec()
+                    .unwrap(),
+            )
+            .unwrap()
         });
     }
 
@@ -194,8 +200,13 @@ impl Device {
     }
 
     // Send a response or notification to the Host.
-    fn send_control(&mut self, packet: impl Into<Vec<u8>>) {
-        let _ = self.tx.send(packet.into());
+    fn send_raw_control(&mut self, packet: Vec<u8>) {
+        let _ = self.tx.send(packet);
+    }
+
+    // Send a response or notification to the Host.
+    fn send_control(&mut self, packet: impl Packet) {
+        self.send_raw_control(packet.encode_to_vec().unwrap());
     }
 
     // The fira norm specify to send a response, then reset, then
@@ -753,7 +764,8 @@ impl Device {
                     session_token: session_handle,
                 }
                 .build()
-                .into(),
+                .encode_to_vec()
+                .unwrap(),
             )
             .unwrap()
         });
@@ -1050,7 +1062,7 @@ impl Device {
                             1,
                             status.into(),
                         ];
-                        self.send_control(response)
+                        self.send_raw_control(response)
                     }
 
                     // Parsing success, ignore non command packets.

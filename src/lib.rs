@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use anyhow::Result;
+use pdl_runtime::Packet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -477,7 +478,8 @@ impl Pica {
                         status: uci::Status::Ok,
                     }
                     .build()
-                    .into(),
+                    .encode_to_vec()
+                    .unwrap(),
                 )
                 .unwrap();
         }
@@ -495,7 +497,8 @@ impl Pica {
                         vendor_data: vec![],
                     }
                     .build()
-                    .into(),
+                    .encode_to_vec()
+                    .unwrap(),
                 )
                 .unwrap();
 
