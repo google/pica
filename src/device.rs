@@ -739,6 +739,23 @@ impl Device {
                         status: update_status,
                     });
                 });
+                let tx = self.tx.clone();
+                tokio::spawn(async move {
+                    // Sleep for 5ms to make sure the notification is not being
+                    // sent before the response.
+                    // TODO(#84) remove the sleep.
+                    time::sleep(Duration::from_millis(5)).await;
+                    tx.send(
+                        SessionUpdateControllerMulticastListNtfBuilder {
+                            controlee_status,
+                            session_token: session_handle,
+                        }
+                        .build()
+                        .encode_to_vec()
+                        .unwrap(),
+                    )
+                    .unwrap()
+                });
             }
         }
         session.app_config.number_of_controlees = dst_addresses.len() as u8;
@@ -752,23 +769,6 @@ impl Device {
                 ReasonCode::ErrorInvalidNumOfControlees,
             )
         }
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            // Sleep for 5ms to make sure the notification is not being
-            // sent before the response.
-            // TODO(#84) remove the sleep.
-            time::sleep(Duration::from_millis(5)).await;
-            tx.send(
-                SessionUpdateControllerMulticastListNtfBuilder {
-                    controlee_status,
-                    session_token: session_handle,
-                }
-                .build()
-                .encode_to_vec()
-                .unwrap(),
-            )
-            .unwrap()
-        });
         SessionUpdateControllerMulticastListRspBuilder { status }.build()
     }
 
