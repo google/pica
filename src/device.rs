@@ -99,6 +99,11 @@ impl Default for DeviceConfig {
 }
 
 pub struct Device {
+    /// Flag set when the device has received the Core Device Reset command.
+    /// The first command received by the device is expected to be Core Device
+    /// Reset, receiving any other command before this is indicative of a
+    /// bad host state.
+    is_reset: bool,
     pub handle: usize,
     pub mac_address: MacAddress,
     config: DeviceConfig,
@@ -108,7 +113,6 @@ pub struct Device {
     pub tx: mpsc::UnboundedSender<UciPacket>,
     pica_tx: mpsc::Sender<PicaCommand>,
     country_code: [u8; 2],
-
     pub n_active_sessions: usize,
 }
 
@@ -122,6 +126,7 @@ impl Device {
         Device {
             handle,
             mac_address,
+            is_reset: false,
             config: Default::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
@@ -216,18 +221,19 @@ impl Device {
         log::debug!("[{}] DeviceReset", self.handle);
         log::debug!("  reset_config={:?}", reset_config);
 
-        let status = match reset_config {
-            ResetConfig::UwbsReset => uci::Status::Ok,
-        };
         *self = Device::new(
             self.handle,
             self.mac_address,
             self.tx.clone(),
             self.pica_tx.clone(),
         );
+        self.is_reset = true;
         self.init();
 
-        CoreDeviceResetRspBuilder { status }.build()
+        CoreDeviceResetRspBuilder {
+            status: uci::Status::Ok,
+        }
+        .build()
     }
 
     fn core_get_device_info(&self, _cmd: CoreGetDeviceInfoCmd) -> CoreGetDeviceInfoRsp {
@@ -960,6 +966,17 @@ impl Device {
         use CorePacketChild::*;
         use SessionConfigPacketChild::*;
         use SessionControlPacketChild::*;
+
+        // Check whether the first command received is the Core Device
+        // Reset command. The controller responds with Device Status
+        // Notification with DEVICE_STATE_ERROR otherwise.
+        if !self.is_reset && !cmd.is_core_device_reset_cmd() {
+            return CoreDeviceStatusNtfBuilder {
+                device_state: DeviceState::DeviceStateError,
+            }
+            .build()
+            .into();
+        }
 
         match cmd.specialize() {
             CorePacket(cmd) => match cmd.specialize() {
