@@ -25,6 +25,18 @@ pub mod uci {
 
     include!(concat!(env!("OUT_DIR"), "/uci_packets.rs"));
 
+    impl ControlPacket {
+        pub fn is_core_device_reset_cmd(&self) -> bool {
+            matches!(
+                self.controlpacket.child,
+                ControlPacketDataChild::CorePacket(CorePacketData {
+                    child: CorePacketDataChild::CoreDeviceResetCmd(_),
+                    ..
+                })
+            )
+        }
+    }
+
     /// Size of common UCI packet header.
     pub const COMMON_HEADER_SIZE: usize = 1;
     /// Size of UCI packet headers.
