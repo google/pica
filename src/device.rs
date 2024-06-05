@@ -741,9 +741,9 @@ impl Device {
                 });
                 // Following requirements are applicable when the action is set to Delete (Action field set to 0x01):
                 // When the command is received while the Session State is SESSION_STATE_ACTIVE,
-                // For requested Controlees present in the multicast list, 
+                // For requested Controlees present in the multicast list,
                 // UWBS shall send the SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF and the
-                // corresponding Controlee status shall be set to STATUS_OK_MULTICAST_LIST_UPDATE 
+                // corresponding Controlee status shall be set to STATUS_OK_MULTICAST_LIST_UPDATE
                 // in the Status List of SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF.
                 if session.state == SessionState::SessionStateActive {
                     let tx = self.tx.clone();
