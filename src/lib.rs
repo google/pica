@@ -158,25 +158,49 @@ struct Anchor {
 
 fn make_measurement(
     mac_address: &MacAddress,
-    local: RangingMeasurement,
-    remote: RangingMeasurement,
+    local: Option<RangingMeasurement>,
+    remote: Option<RangingMeasurement>,
 ) -> ShortAddressTwoWayRangingMeasurement {
     if let MacAddress::Short(address) = mac_address {
-        ShortAddressTwoWayRangingMeasurement {
-            mac_address: u16::from_le_bytes(*address),
-            status: uci::Status::Ok,
-            nlos: 0, // in Line Of Sight
-            distance: local.range,
-            aoa_azimuth: local.azimuth as u16,
-            aoa_azimuth_fom: 100, // Yup, pretty sure about this
-            aoa_elevation: local.elevation as u16,
-            aoa_elevation_fom: 100, // Yup, pretty sure about this
-            aoa_destination_azimuth: remote.azimuth as u16,
-            aoa_destination_azimuth_fom: 100,
-            aoa_destination_elevation: remote.elevation as u16,
-            aoa_destination_elevation_fom: 100,
-            slot_index: 0,
-            rssi: u8::MAX,
+        match (local, remote) {
+            (Some(l), Some(r)) => {
+                ShortAddressTwoWayRangingMeasurement {
+                    mac_address: u16::from_le_bytes(*address),
+                    status: uci::Status::Ok,
+                    nlos: 0, // in Line Of Sight
+                    distance: l.range,
+                    aoa_azimuth: l.azimuth as u16,
+                    aoa_azimuth_fom: 100, // Yup, pretty sure about this
+                    aoa_elevation: l.elevation as u16,
+                    aoa_elevation_fom: 100, // Yup, pretty sure about this
+                    aoa_destination_azimuth: r.azimuth as u16,
+                    aoa_destination_azimuth_fom: 100,
+                    aoa_destination_elevation: r.elevation as u16,
+                    aoa_destination_elevation_fom: 100,
+                    slot_index: 0,
+                    rssi: u8::MAX,
+                }
+            }
+            // If a controlee drops out due to out of range or power off etc, send
+            // ranging measurement with status 33.
+            (None, _) | (_, None) => {
+                ShortAddressTwoWayRangingMeasurement {
+                    mac_address: u16::from_le_bytes(*address),
+                    status: uci::Status::RangingRxTimeout,
+                    nlos: 0, // in Line Of Sight
+                    distance: 0,
+                    aoa_azimuth: 0,
+                    aoa_azimuth_fom: 100, // Yup, pretty sure about this
+                    aoa_elevation: 0,
+                    aoa_elevation_fom: 100, // Yup, pretty sure about this
+                    aoa_destination_azimuth: 0,
+                    aoa_destination_azimuth_fom: 100,
+                    aoa_destination_elevation: 0,
+                    aoa_destination_elevation_fom: 100,
+                    slot_index: 0,
+                    rssi: u8::MAX,
+                }
+            }
         }
     } else {
         panic!("Extended address is not supported.")
@@ -416,19 +440,15 @@ impl Pica {
         // Look for compatible anchors.
         for mac_address in session.get_dst_mac_address() {
             if let Some(other) = self.anchors.get(mac_address) {
-                let Some(local) = self
+                let local = self
                     .ranging_estimator
-                    .estimate(&device.handle, &other.handle)
-                else {
-                    continue;
-                };
-                let Some(remote) = self
+                    .estimate(&device.handle, &other.handle);
+                let remote = self
                     .ranging_estimator
-                    .estimate(&other.handle, &device.handle)
-                else {
-                    continue;
-                };
+                    .estimate(&other.handle, &device.handle);
                 measurements.push(make_measurement(mac_address, local, remote));
+            } else {
+                measurements.push(make_measurement(mac_address, None, None));
             }
         }
 
@@ -438,7 +458,7 @@ impl Pica {
                 continue;
             }
 
-            if peer_device.can_start_ranging(session, session_id) {
+            if peer_device.is_compatible_for_ranging(session, session_id) {
                 let peer_mac_address = peer_device
                     .session(session_id)
                     .unwrap()
@@ -453,7 +473,15 @@ impl Pica {
                     .ranging_estimator
                     .estimate(&peer_device.handle, &device.handle)
                     .unwrap_or(Default::default());
-                measurements.push(make_measurement(&peer_mac_address, local, remote));
+                if peer_device.can_start_ranging(session, session_id) {
+                    measurements.push(make_measurement(
+                        &peer_mac_address,
+                        Some(local),
+                        Some(remote),
+                    ));
+                } else {
+                    measurements.push(make_measurement(&peer_mac_address, None, None));
+                }
             }
 
             if device.can_start_data_transfer(session_id)
@@ -483,7 +511,7 @@ impl Pica {
                 )
                 .unwrap();
         }
-        if session.is_session_info_ntf_enabled() {
+        if session.is_session_info_ntf_enabled() && measurements.len() > 0 {
             device
                 .tx
                 .send(

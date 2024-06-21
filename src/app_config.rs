@@ -499,12 +499,16 @@ impl AppConfig {
     pub fn is_compatible_for_ranging(&self, peer_config: &Self) -> bool {
         self.device_role != peer_config.device_role
             && self.device_type != peer_config.device_type
-            && peer_config
-                .dst_mac_address
-                .contains(&self.device_mac_address.unwrap())
             && self
                 .dst_mac_address
                 .contains(&peer_config.device_mac_address.unwrap())
+    }
+
+    pub fn can_start_ranging(&self, peer_config: &Self) -> bool {
+        self.is_compatible_for_ranging(&peer_config)
+            && peer_config
+                .dst_mac_address
+                .contains(&self.device_mac_address.unwrap())
     }
 
     pub fn can_start_data_transfer(&self) -> bool {
