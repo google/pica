@@ -445,14 +445,18 @@ impl Pica {
                     .app_config
                     .device_mac_address
                     .unwrap();
-                let local = self
+                let Some(local) = self
                     .ranging_estimator
                     .estimate(&device.handle, &peer_device.handle)
-                    .unwrap_or(Default::default());
-                let remote = self
+                else {
+                    continue;
+                };
+                let Some(remote) = self
                     .ranging_estimator
                     .estimate(&peer_device.handle, &device.handle)
-                    .unwrap_or(Default::default());
+                else {
+                    continue;
+                };
                 measurements.push(make_measurement(&peer_mac_address, local, remote));
             }
 
