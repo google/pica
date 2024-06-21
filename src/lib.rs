@@ -511,7 +511,7 @@ impl Pica {
                 )
                 .unwrap();
         }
-        if session.is_session_info_ntf_enabled() && measurements.len() > 0 {
+        if session.is_session_info_ntf_enabled() && !measurements.is_empty() {
             device
                 .tx
                 .send(
