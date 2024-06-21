@@ -170,13 +170,23 @@ impl Device {
         self.sessions.get_mut(&session_id)
     }
 
+    pub fn is_compatible_for_ranging(&self, peer_session: &Session, session_id: u32) -> bool {
+        if let Some(session) = self.session(session_id) {
+            session
+                .app_config
+                .is_compatible_for_ranging(&peer_session.app_config)
+        } else {
+            false
+        }
+    }
+
     pub fn can_start_ranging(&self, peer_session: &Session, session_id: u32) -> bool {
         match self.session(session_id) {
             Some(session) => {
                 session.session_state() == SessionState::SessionStateActive
                     && session
                         .app_config
-                        .is_compatible_for_ranging(&peer_session.app_config)
+                        .can_start_ranging(&peer_session.app_config)
             }
             None => false,
         }
