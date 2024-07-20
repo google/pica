@@ -75,12 +75,11 @@ impl Session {
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(1)).await;
             tx.send(
-                SessionStatusNtfBuilder {
+                SessionStatusNtf {
                     session_token: session_id,
                     session_state,
                     reason_code: reason_code.into(),
                 }
-                .build()
                 .encode_to_vec()
                 .unwrap(),
             )
@@ -134,30 +133,30 @@ impl Session {
 
     pub fn data_message_snd(&mut self, data: DataMessageSnd) -> ControlPacket {
         log::debug!("[{}] data_message_snd", self.device_handle);
-        let session_token = data.get_session_handle();
-        let uci_sequence_number = data.get_data_sequence_number() as u8;
+        let session_token = data.session_handle;
+        let uci_sequence_number = data.data_sequence_number as u8;
 
         if self.session_type != SessionType::FiraRangingAndInBandDataSession {
-            return SessionDataTransferStatusNtfBuilder {
+            return SessionDataTransferStatusNtf {
                 session_token,
                 status: DataTransferNtfStatusCode::UciDataTransferStatusSessionTypeNotSupported,
                 tx_count: 1, // TODO: support for retries?
                 uci_sequence_number,
             }
-            .build()
-            .into();
+            .try_into()
+            .unwrap();
         }
 
         assert_eq!(self.id, session_token);
 
-        self.data.extend_from_slice(data.get_application_data());
+        self.data.extend_from_slice(&data.application_data);
 
-        SessionDataCreditNtfBuilder {
+        SessionDataCreditNtf {
             credit_availability: CreditAvailability::CreditAvailable,
             session_token,
         }
-        .build()
-        .into()
+        .try_into()
+        .unwrap()
     }
 }
 
