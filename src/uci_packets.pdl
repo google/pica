@@ -1210,6 +1210,60 @@ struct ExtendedAddressOwrAoaRangingMeasurement {
     aoa_elevation_fom: 8,
 }
 
+struct Wgs84Location {
+    data: 8[12],
+}
+
+struct RelativeLocation {
+    x: 28,
+    y: 28,
+    z: 24,
+}
+
+struct DlTdoaRangingMeasurement {
+    status: Status,
+    message_type: 8,
+    tx_timestamp_type : 1,
+    tx_timestamp_length : 1,
+    _reserved_ : 1,
+    rx_timestamp_length : 1,
+    _reserved_ : 1,
+    _count_(wgs84_location) : 1,
+    _count_(relative_location) : 1,
+    _count_(active_ranging_rounds) : 4,
+    _reserved_ : 5,
+    block_index: 16,
+    round_index: 8,
+    nlos: 8,
+    aoa_azimuth: 16,
+    aoa_azimuth_fom: 8,
+    aoa_elevation: 16,
+    aoa_elevation_fom: 8,
+    rssi: 8,
+    tx_timestamp_40: 40 if tx_timestamp_length = 0,
+    tx_timestamp_64: 64 if tx_timestamp_length = 1,
+    rx_timestamp_40: 40 if rx_timestamp_length = 0,
+    rx_timestamp_64: 64 if rx_timestamp_length = 1,
+    anchor_cfo: 16,
+    cfo: 16,
+    initiator_reply_time: 32,
+    responder_reply_time: 32,
+    initiator_responder_tof: 16,
+    wgs84_location : Wgs84Location[],
+    relative_location : RelativeLocation[],
+    active_ranging_rounds: 8[],
+}
+
+struct ShortAddressDlTdoaRangingMeasurement {
+    mac_address: 16,
+    measurement: DlTdoaRangingMeasurement,
+}
+
+struct ExtendedAddressDlTdoaRangingMeasurement {
+    mac_address: 64,
+    measurement: DlTdoaRangingMeasurement,
+}
+
 enum RangingMeasurementType : 8 {
     ONE_WAY = 0x0,
     TWO_WAY = 0x1,
@@ -1250,8 +1304,8 @@ test ExtendedMacTwoWaySessionInfoNtf {
 }
 
 packet ShortMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_type = DL_TDOA, mac_address_indicator = SHORT_ADDRESS) {
-    no_of_ranging_measurements : 8,
-    dl_tdoa_measurements : 8[],
+    _count_(dl_tdoa_measurements) : 8,
+    dl_tdoa_measurements : ShortAddressDlTdoaRangingMeasurement[],
 }
 
 test ShortMacDlTDoASessionInfoNtf {
@@ -1259,8 +1313,8 @@ test ShortMacDlTDoASessionInfoNtf {
 }
 
 packet ExtendedMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_type = DL_TDOA, mac_address_indicator = EXTENDED_ADDRESS) {
-    no_of_ranging_measurements : 8,
-    dl_tdoa_measurements : 8[],
+    _count_(dl_tdoa_measurements) : 8,
+    dl_tdoa_measurements : ExtendedAddressDlTdoaRangingMeasurement[],
 }
 
 test ExtendedMacDlTDoASessionInfoNtf {
