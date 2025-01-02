@@ -1120,19 +1120,31 @@ class ControlPacket(Packet):
         span = bytes([])
         fields['payload'] = payload
         try:
-            return CorePacket.parse(fields.copy(), payload)
+            child, remainder = CorePacket.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionConfigPacket.parse(fields.copy(), payload)
+            child, remainder = SessionConfigPacket.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionControlPacket.parse(fields.copy(), payload)
+            child, remainder = SessionControlPacket.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return AndroidPacket.parse(fields.copy(), payload)
+            child, remainder = AndroidPacket.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return ControlPacket(**fields), span
@@ -1174,11 +1186,17 @@ class DataPacket(Packet):
         span = bytes([])
         fields['payload'] = payload
         try:
-            return DataMessageSnd.parse(fields.copy(), payload)
+            child, remainder = DataMessageSnd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return DataMessageRcv.parse(fields.copy(), payload)
+            child, remainder = DataMessageRcv.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return DataPacket(**fields), span
@@ -1331,59 +1349,101 @@ class CorePacket(ControlPacket):
         span = bytes([])
         fields['payload'] = payload
         try:
-            return CoreDeviceResetCmd.parse(fields.copy(), payload)
+            child, remainder = CoreDeviceResetCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreDeviceResetRsp.parse(fields.copy(), payload)
+            child, remainder = CoreDeviceResetRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreDeviceStatusNtf.parse(fields.copy(), payload)
+            child, remainder = CoreDeviceStatusNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreGetDeviceInfoCmd.parse(fields.copy(), payload)
+            child, remainder = CoreGetDeviceInfoCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreGetDeviceInfoRsp.parse(fields.copy(), payload)
+            child, remainder = CoreGetDeviceInfoRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreGetCapsInfoCmd.parse(fields.copy(), payload)
+            child, remainder = CoreGetCapsInfoCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreGetCapsInfoRsp.parse(fields.copy(), payload)
+            child, remainder = CoreGetCapsInfoRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreSetConfigCmd.parse(fields.copy(), payload)
+            child, remainder = CoreSetConfigCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreSetConfigRsp.parse(fields.copy(), payload)
+            child, remainder = CoreSetConfigRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreGetConfigCmd.parse(fields.copy(), payload)
+            child, remainder = CoreGetConfigCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreGetConfigRsp.parse(fields.copy(), payload)
+            child, remainder = CoreGetConfigRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreGenericErrorNtf.parse(fields.copy(), payload)
+            child, remainder = CoreGenericErrorNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreQueryTimeStampCmd.parse(fields.copy(), payload)
+            child, remainder = CoreQueryTimeStampCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return CoreQueryTimeStampRsp.parse(fields.copy(), payload)
+            child, remainder = CoreQueryTimeStampRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return CorePacket(**fields), span
@@ -1419,95 +1479,164 @@ class SessionConfigPacket(ControlPacket):
         span = bytes([])
         fields['payload'] = payload
         try:
-            return SessionInitCmd.parse(fields.copy(), payload)
+            child, remainder = SessionInitCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionInitRsp_V2.parse(fields.copy(), payload)
+            child, remainder = SessionInitRsp_V2.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionInitRsp.parse(fields.copy(), payload)
+            child, remainder = SessionInitRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionDeinitCmd.parse(fields.copy(), payload)
+            child, remainder = SessionDeinitCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionDeinitRsp.parse(fields.copy(), payload)
+            child, remainder = SessionDeinitRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionStatusNtf.parse(fields.copy(), payload)
+            child, remainder = SessionStatusNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionSetAppConfigCmd.parse(fields.copy(), payload)
+            child, remainder = SessionSetAppConfigCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionSetAppConfigRsp.parse(fields.copy(), payload)
+            child, remainder = SessionSetAppConfigRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetAppConfigCmd.parse(fields.copy(), payload)
+            child, remainder = SessionGetAppConfigCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetAppConfigRsp.parse(fields.copy(), payload)
+            child, remainder = SessionGetAppConfigRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetCountCmd.parse(fields.copy(), payload)
+            child, remainder = SessionGetCountCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetCountRsp.parse(fields.copy(), payload)
+            child, remainder = SessionGetCountRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetStateCmd.parse(fields.copy(), payload)
+            child, remainder = SessionGetStateCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetStateRsp.parse(fields.copy(), payload)
+            child, remainder = SessionGetStateRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionUpdateDtAnchorRangingRoundsCmd.parse(fields.copy(), payload)
+            child, remainder = SessionUpdateDtAnchorRangingRoundsCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionUpdateDtAnchorRangingRoundsRsp.parse(fields.copy(), payload)
+            child, remainder = SessionUpdateDtAnchorRangingRoundsRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionUpdateDtTagRangingRoundsCmd.parse(fields.copy(), payload)
+            child, remainder = SessionUpdateDtTagRangingRoundsCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionUpdateDtTagRangingRoundsRsp.parse(fields.copy(), payload)
+            child, remainder = SessionUpdateDtTagRangingRoundsRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionUpdateControllerMulticastListCmd.parse(fields.copy(), payload)
+            child, remainder = SessionUpdateControllerMulticastListCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionUpdateControllerMulticastListRsp.parse(fields.copy(), payload)
+            child, remainder = SessionUpdateControllerMulticastListRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionUpdateControllerMulticastListNtf.parse(fields.copy(), payload)
+            child, remainder = SessionUpdateControllerMulticastListNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionQueryMaxDataSizeInRangingCmd.parse(fields.copy(), payload)
+            child, remainder = SessionQueryMaxDataSizeInRangingCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionQueryMaxDataSizeInRangingRsp.parse(fields.copy(), payload)
+            child, remainder = SessionQueryMaxDataSizeInRangingRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return SessionConfigPacket(**fields), span
@@ -1543,39 +1672,66 @@ class SessionControlPacket(ControlPacket):
         span = bytes([])
         fields['payload'] = payload
         try:
-            return SessionDataCreditNtf.parse(fields.copy(), payload)
+            child, remainder = SessionDataCreditNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionDataTransferStatusNtf.parse(fields.copy(), payload)
+            child, remainder = SessionDataTransferStatusNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionStartCmd.parse(fields.copy(), payload)
+            child, remainder = SessionStartCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionStartRsp.parse(fields.copy(), payload)
+            child, remainder = SessionStartRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionInfoNtf.parse(fields.copy(), payload)
+            child, remainder = SessionInfoNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionStopCmd.parse(fields.copy(), payload)
+            child, remainder = SessionStopCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionStopRsp.parse(fields.copy(), payload)
+            child, remainder = SessionStopRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetRangingCountCmd.parse(fields.copy(), payload)
+            child, remainder = SessionGetRangingCountCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return SessionGetRangingCountRsp.parse(fields.copy(), payload)
+            child, remainder = SessionGetRangingCountRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return SessionControlPacket(**fields), span
@@ -1611,23 +1767,38 @@ class AndroidPacket(ControlPacket):
         span = bytes([])
         fields['payload'] = payload
         try:
-            return AndroidGetPowerStatsCmd.parse(fields.copy(), payload)
+            child, remainder = AndroidGetPowerStatsCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return AndroidGetPowerStatsRsp.parse(fields.copy(), payload)
+            child, remainder = AndroidGetPowerStatsRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return AndroidSetCountryCodeCmd.parse(fields.copy(), payload)
+            child, remainder = AndroidSetCountryCodeCmd.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return AndroidSetCountryCodeRsp.parse(fields.copy(), payload)
+            child, remainder = AndroidSetCountryCodeRsp.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return AndroidRangeDiagnosticsNtf.parse(fields.copy(), payload)
+            child, remainder = AndroidRangeDiagnosticsNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return AndroidPacket(**fields), span
@@ -3237,7 +3408,6 @@ class SessionUpdateControllerMulticastListRsp(SessionConfigPacket):
 @dataclass
 class ControleeStatus(Packet):
     mac_address: bytearray = field(kw_only=True, default_factory=bytearray)
-    subsession_id: int = field(kw_only=True, default=0)
     status: MulticastUpdateStatus = field(kw_only=True, default=MulticastUpdateStatus.OK_MULTICAST_LIST_UPDATE)
 
     def __post_init__(self):
@@ -3250,32 +3420,25 @@ class ControleeStatus(Packet):
             raise Exception('Invalid packet size')
         fields['mac_address'] = list(span[:2])
         span = span[2:]
-        if len(span) < 5:
+        if len(span) < 1:
             raise Exception('Invalid packet size')
-        value_ = int.from_bytes(span[0:4], byteorder='little')
-        fields['subsession_id'] = value_
-        fields['status'] = MulticastUpdateStatus.from_int(span[4])
-        span = span[5:]
+        fields['status'] = MulticastUpdateStatus.from_int(span[0])
+        span = span[1:]
         return ControleeStatus(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
         _span = bytearray()
         _span.extend(self.mac_address)
-        if self.subsession_id > 4294967295:
-            print(f"Invalid value for field ControleeStatus::subsession_id: {self.subsession_id} > 4294967295; the value will be truncated")
-            self.subsession_id &= 4294967295
-        _span.extend(int.to_bytes((self.subsession_id << 0), length=4, byteorder='little'))
         _span.append((self.status << 0))
         return bytes(_span)
 
     @property
     def size(self) -> int:
-        return 7
+        return 3
 
 @dataclass
 class SessionUpdateControllerMulticastListNtf(SessionConfigPacket):
     session_token: int = field(kw_only=True, default=0)
-    remaining_multicast_list_size: int = field(kw_only=True, default=0)
     controlee_status: List[ControleeStatus] = field(kw_only=True, default_factory=list)
 
     def __post_init__(self):
@@ -3287,20 +3450,19 @@ class SessionUpdateControllerMulticastListNtf(SessionConfigPacket):
     def parse(fields: dict, span: bytes) -> Tuple['SessionUpdateControllerMulticastListNtf', bytes]:
         if fields['mt'] != MessageType.NOTIFICATION or fields['oid'] != SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST or fields['gid'] != GroupId.SESSION_CONFIG:
             raise Exception("Invalid constraint field values")
-        if len(span) < 6:
+        if len(span) < 5:
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
-        fields['remaining_multicast_list_size'] = span[4]
-        controlee_status_count = span[5]
-        span = span[6:]
-        if len(span) < controlee_status_count * 7:
+        controlee_status_count = span[4]
+        span = span[5:]
+        if len(span) < controlee_status_count * 3:
             raise Exception('Invalid packet size')
         controlee_status = []
         for n in range(controlee_status_count):
-            controlee_status.append(ControleeStatus.parse_all(span[n * 7:(n + 1) * 7]))
+            controlee_status.append(ControleeStatus.parse_all(span[n * 3:(n + 1) * 3]))
         fields['controlee_status'] = controlee_status
-        span = span[controlee_status_count * 7:]
+        span = span[controlee_status_count * 3:]
         return SessionUpdateControllerMulticastListNtf(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
@@ -3309,10 +3471,6 @@ class SessionUpdateControllerMulticastListNtf(SessionConfigPacket):
             print(f"Invalid value for field SessionUpdateControllerMulticastListNtf::session_token: {self.session_token} > 4294967295; the value will be truncated")
             self.session_token &= 4294967295
         _span.extend(int.to_bytes((self.session_token << 0), length=4, byteorder='little'))
-        if self.remaining_multicast_list_size > 255:
-            print(f"Invalid value for field SessionUpdateControllerMulticastListNtf::remaining_multicast_list_size: {self.remaining_multicast_list_size} > 255; the value will be truncated")
-            self.remaining_multicast_list_size &= 255
-        _span.append((self.remaining_multicast_list_size << 0))
         if len(self.controlee_status) > 255:
             print(f"Invalid length for field SessionUpdateControllerMulticastListNtf::controlee_status:  {len(self.controlee_status)} > 255; the array will be truncated")
             del self.controlee_status[255:]
@@ -3323,7 +3481,7 @@ class SessionUpdateControllerMulticastListNtf(SessionConfigPacket):
 
     @property
     def size(self) -> int:
-        return sum([elt.size for elt in self.controlee_status]) + 6
+        return sum([elt.size for elt in self.controlee_status]) + 5
 
 @dataclass
 class SessionDataCreditNtf(SessionControlPacket):
@@ -3916,6 +4074,365 @@ class ExtendedAddressOwrAoaRangingMeasurement(Packet):
     def size(self) -> int:
         return 19
 
+@dataclass
+class Wgs84Location(Packet):
+    data: bytearray = field(kw_only=True, default_factory=bytearray)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['Wgs84Location', bytes]:
+        fields = {'payload': None}
+        if len(span) < 12:
+            raise Exception('Invalid packet size')
+        fields['data'] = list(span[:12])
+        span = span[12:]
+        return Wgs84Location(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        _span.extend(self.data)
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return 12
+
+@dataclass
+class RelativeLocation(Packet):
+    x: int = field(kw_only=True, default=0)
+    y: int = field(kw_only=True, default=0)
+    z: int = field(kw_only=True, default=0)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['RelativeLocation', bytes]:
+        fields = {'payload': None}
+        if len(span) < 10:
+            raise Exception('Invalid packet size')
+        value_ = int.from_bytes(span[0:7], byteorder='little')
+        fields['x'] = (value_ >> 0) & 0xfffffff
+        fields['y'] = (value_ >> 28) & 0xfffffff
+        value_ = int.from_bytes(span[7:10], byteorder='little')
+        fields['z'] = value_
+        span = span[10:]
+        return RelativeLocation(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        if self.x > 268435455:
+            print(f"Invalid value for field RelativeLocation::x: {self.x} > 268435455; the value will be truncated")
+            self.x &= 268435455
+        if self.y > 268435455:
+            print(f"Invalid value for field RelativeLocation::y: {self.y} > 268435455; the value will be truncated")
+            self.y &= 268435455
+        _value = (
+            (self.x << 0) |
+            (self.y << 28)
+        )
+        _span.extend(int.to_bytes(_value, length=7, byteorder='little'))
+        if self.z > 16777215:
+            print(f"Invalid value for field RelativeLocation::z: {self.z} > 16777215; the value will be truncated")
+            self.z &= 16777215
+        _span.extend(int.to_bytes((self.z << 0), length=3, byteorder='little'))
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return 10
+
+@dataclass
+class DlTdoaRangingMeasurement(Packet):
+    status: Status = field(kw_only=True, default=Status.OK)
+    message_type: int = field(kw_only=True, default=0)
+    tx_timestamp_type: int = field(kw_only=True, default=0)
+    block_index: int = field(kw_only=True, default=0)
+    round_index: int = field(kw_only=True, default=0)
+    nlos: int = field(kw_only=True, default=0)
+    aoa_azimuth: int = field(kw_only=True, default=0)
+    aoa_azimuth_fom: int = field(kw_only=True, default=0)
+    aoa_elevation: int = field(kw_only=True, default=0)
+    aoa_elevation_fom: int = field(kw_only=True, default=0)
+    rssi: int = field(kw_only=True, default=0)
+    tx_timestamp_40: Optional[int] = field(kw_only=True, default=None)
+    tx_timestamp_64: Optional[int] = field(kw_only=True, default=None)
+    rx_timestamp_40: Optional[int] = field(kw_only=True, default=None)
+    rx_timestamp_64: Optional[int] = field(kw_only=True, default=None)
+    anchor_cfo: int = field(kw_only=True, default=0)
+    cfo: int = field(kw_only=True, default=0)
+    initiator_reply_time: int = field(kw_only=True, default=0)
+    responder_reply_time: int = field(kw_only=True, default=0)
+    initiator_responder_tof: int = field(kw_only=True, default=0)
+    wgs84_location: List[Wgs84Location] = field(kw_only=True, default_factory=list)
+    relative_location: List[RelativeLocation] = field(kw_only=True, default_factory=list)
+    active_ranging_rounds: bytearray = field(kw_only=True, default_factory=bytearray)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['DlTdoaRangingMeasurement', bytes]:
+        fields = {'payload': None}
+        if len(span) < 15:
+            raise Exception('Invalid packet size')
+        fields['status'] = Status.from_int(span[0])
+        fields['message_type'] = span[1]
+        value_ = int.from_bytes(span[2:4], byteorder='little')
+        fields['tx_timestamp_type'] = (value_ >> 0) & 0x1
+        tx_timestamp_length = (value_ >> 1) & 0x1
+        rx_timestamp_length = (value_ >> 3) & 0x1
+        wgs84_location_count = (value_ >> 5) & 0x1
+        relative_location_count = (value_ >> 6) & 0x1
+        active_ranging_rounds_count = (value_ >> 7) & 0xf
+        value_ = int.from_bytes(span[4:6], byteorder='little')
+        fields['block_index'] = value_
+        fields['round_index'] = span[6]
+        fields['nlos'] = span[7]
+        value_ = int.from_bytes(span[8:10], byteorder='little')
+        fields['aoa_azimuth'] = value_
+        fields['aoa_azimuth_fom'] = span[10]
+        value_ = int.from_bytes(span[11:13], byteorder='little')
+        fields['aoa_elevation'] = value_
+        fields['aoa_elevation_fom'] = span[13]
+        fields['rssi'] = span[14]
+        span = span[15:]
+        
+        if tx_timestamp_length == 0:
+            if len(span) < 5:
+                raise Exception('Invalid packet size')
+            fields['tx_timestamp_40'] = int.from_bytes(span[:5], byteorder='little')
+            span = span[5:]
+        
+        
+        if tx_timestamp_length == 1:
+            if len(span) < 8:
+                raise Exception('Invalid packet size')
+            fields['tx_timestamp_64'] = int.from_bytes(span[:8], byteorder='little')
+            span = span[8:]
+        
+        
+        if rx_timestamp_length == 0:
+            if len(span) < 5:
+                raise Exception('Invalid packet size')
+            fields['rx_timestamp_40'] = int.from_bytes(span[:5], byteorder='little')
+            span = span[5:]
+        
+        
+        if rx_timestamp_length == 1:
+            if len(span) < 8:
+                raise Exception('Invalid packet size')
+            fields['rx_timestamp_64'] = int.from_bytes(span[:8], byteorder='little')
+            span = span[8:]
+        
+        if len(span) < 14:
+            raise Exception('Invalid packet size')
+        value_ = int.from_bytes(span[0:2], byteorder='little')
+        fields['anchor_cfo'] = value_
+        value_ = int.from_bytes(span[2:4], byteorder='little')
+        fields['cfo'] = value_
+        value_ = int.from_bytes(span[4:8], byteorder='little')
+        fields['initiator_reply_time'] = value_
+        value_ = int.from_bytes(span[8:12], byteorder='little')
+        fields['responder_reply_time'] = value_
+        value_ = int.from_bytes(span[12:14], byteorder='little')
+        fields['initiator_responder_tof'] = value_
+        span = span[14:]
+        if len(span) < wgs84_location_count * 12:
+            raise Exception('Invalid packet size')
+        wgs84_location = []
+        for n in range(wgs84_location_count):
+            wgs84_location.append(Wgs84Location.parse_all(span[n * 12:(n + 1) * 12]))
+        fields['wgs84_location'] = wgs84_location
+        span = span[wgs84_location_count * 12:]
+        if len(span) < relative_location_count * 10:
+            raise Exception('Invalid packet size')
+        relative_location = []
+        for n in range(relative_location_count):
+            relative_location.append(RelativeLocation.parse_all(span[n * 10:(n + 1) * 10]))
+        fields['relative_location'] = relative_location
+        span = span[relative_location_count * 10:]
+        if len(span) < active_ranging_rounds_count:
+            raise Exception('Invalid packet size')
+        fields['active_ranging_rounds'] = list(span[:active_ranging_rounds_count])
+        span = span[active_ranging_rounds_count:]
+        return DlTdoaRangingMeasurement(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        _span.append((self.status << 0))
+        if self.message_type > 255:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::message_type: {self.message_type} > 255; the value will be truncated")
+            self.message_type &= 255
+        _span.append((self.message_type << 0))
+        if self.tx_timestamp_type > 1:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::tx_timestamp_type: {self.tx_timestamp_type} > 1; the value will be truncated")
+            self.tx_timestamp_type &= 1
+        if len(self.wgs84_location) > 1:
+            print(f"Invalid length for field DlTdoaRangingMeasurement::wgs84_location:  {len(self.wgs84_location)} > 1; the array will be truncated")
+            del self.wgs84_location[1:]
+        if len(self.relative_location) > 1:
+            print(f"Invalid length for field DlTdoaRangingMeasurement::relative_location:  {len(self.relative_location)} > 1; the array will be truncated")
+            del self.relative_location[1:]
+        if len(self.active_ranging_rounds) > 15:
+            print(f"Invalid length for field DlTdoaRangingMeasurement::active_ranging_rounds:  {len(self.active_ranging_rounds)} > 15; the array will be truncated")
+            del self.active_ranging_rounds[15:]
+        _value = (
+            (self.tx_timestamp_type << 0) |
+            ((0 if self.tx_timestamp_64 is None else 1) << 1) |
+            ((0 if self.rx_timestamp_64 is None else 1) << 3) |
+            (len(self.wgs84_location) << 5) |
+            (len(self.relative_location) << 6) |
+            (len(self.active_ranging_rounds) << 7)
+        )
+        _span.extend(int.to_bytes(_value, length=2, byteorder='little'))
+        if self.block_index > 65535:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::block_index: {self.block_index} > 65535; the value will be truncated")
+            self.block_index &= 65535
+        _span.extend(int.to_bytes((self.block_index << 0), length=2, byteorder='little'))
+        if self.round_index > 255:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::round_index: {self.round_index} > 255; the value will be truncated")
+            self.round_index &= 255
+        _span.append((self.round_index << 0))
+        if self.nlos > 255:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::nlos: {self.nlos} > 255; the value will be truncated")
+            self.nlos &= 255
+        _span.append((self.nlos << 0))
+        if self.aoa_azimuth > 65535:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::aoa_azimuth: {self.aoa_azimuth} > 65535; the value will be truncated")
+            self.aoa_azimuth &= 65535
+        _span.extend(int.to_bytes((self.aoa_azimuth << 0), length=2, byteorder='little'))
+        if self.aoa_azimuth_fom > 255:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::aoa_azimuth_fom: {self.aoa_azimuth_fom} > 255; the value will be truncated")
+            self.aoa_azimuth_fom &= 255
+        _span.append((self.aoa_azimuth_fom << 0))
+        if self.aoa_elevation > 65535:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::aoa_elevation: {self.aoa_elevation} > 65535; the value will be truncated")
+            self.aoa_elevation &= 65535
+        _span.extend(int.to_bytes((self.aoa_elevation << 0), length=2, byteorder='little'))
+        if self.aoa_elevation_fom > 255:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::aoa_elevation_fom: {self.aoa_elevation_fom} > 255; the value will be truncated")
+            self.aoa_elevation_fom &= 255
+        _span.append((self.aoa_elevation_fom << 0))
+        if self.rssi > 255:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::rssi: {self.rssi} > 255; the value will be truncated")
+            self.rssi &= 255
+        _span.append((self.rssi << 0))
+        
+        if self.tx_timestamp_40 is not None:
+            _span.extend(int.to_bytes(self.tx_timestamp_40, length=5, byteorder='little'))
+        
+        
+        if self.tx_timestamp_64 is not None:
+            _span.extend(int.to_bytes(self.tx_timestamp_64, length=8, byteorder='little'))
+        
+        
+        if self.rx_timestamp_40 is not None:
+            _span.extend(int.to_bytes(self.rx_timestamp_40, length=5, byteorder='little'))
+        
+        
+        if self.rx_timestamp_64 is not None:
+            _span.extend(int.to_bytes(self.rx_timestamp_64, length=8, byteorder='little'))
+        
+        if self.anchor_cfo > 65535:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::anchor_cfo: {self.anchor_cfo} > 65535; the value will be truncated")
+            self.anchor_cfo &= 65535
+        _span.extend(int.to_bytes((self.anchor_cfo << 0), length=2, byteorder='little'))
+        if self.cfo > 65535:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::cfo: {self.cfo} > 65535; the value will be truncated")
+            self.cfo &= 65535
+        _span.extend(int.to_bytes((self.cfo << 0), length=2, byteorder='little'))
+        if self.initiator_reply_time > 4294967295:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::initiator_reply_time: {self.initiator_reply_time} > 4294967295; the value will be truncated")
+            self.initiator_reply_time &= 4294967295
+        _span.extend(int.to_bytes((self.initiator_reply_time << 0), length=4, byteorder='little'))
+        if self.responder_reply_time > 4294967295:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::responder_reply_time: {self.responder_reply_time} > 4294967295; the value will be truncated")
+            self.responder_reply_time &= 4294967295
+        _span.extend(int.to_bytes((self.responder_reply_time << 0), length=4, byteorder='little'))
+        if self.initiator_responder_tof > 65535:
+            print(f"Invalid value for field DlTdoaRangingMeasurement::initiator_responder_tof: {self.initiator_responder_tof} > 65535; the value will be truncated")
+            self.initiator_responder_tof &= 65535
+        _span.extend(int.to_bytes((self.initiator_responder_tof << 0), length=2, byteorder='little'))
+        for _elt in self.wgs84_location:
+            _span.extend(_elt.serialize())
+        for _elt in self.relative_location:
+            _span.extend(_elt.serialize())
+        _span.extend(self.active_ranging_rounds)
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        (0 if self.tx_timestamp_40 is None else 40)
+
+@dataclass
+class ShortAddressDlTdoaRangingMeasurement(Packet):
+    mac_address: int = field(kw_only=True, default=0)
+    measurement: DlTdoaRangingMeasurement = field(kw_only=True, default_factory=DlTdoaRangingMeasurement)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['ShortAddressDlTdoaRangingMeasurement', bytes]:
+        fields = {'payload': None}
+        if len(span) < 2:
+            raise Exception('Invalid packet size')
+        value_ = int.from_bytes(span[0:2], byteorder='little')
+        fields['mac_address'] = value_
+        span = span[2:]
+        measurement, span = DlTdoaRangingMeasurement.parse(span)
+        fields['measurement'] = measurement
+        return ShortAddressDlTdoaRangingMeasurement(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        if self.mac_address > 65535:
+            print(f"Invalid value for field ShortAddressDlTdoaRangingMeasurement::mac_address: {self.mac_address} > 65535; the value will be truncated")
+            self.mac_address &= 65535
+        _span.extend(int.to_bytes((self.mac_address << 0), length=2, byteorder='little'))
+        _span.extend(self.measurement.serialize())
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return self.measurement.size + 2
+
+@dataclass
+class ExtendedAddressDlTdoaRangingMeasurement(Packet):
+    mac_address: int = field(kw_only=True, default=0)
+    measurement: DlTdoaRangingMeasurement = field(kw_only=True, default_factory=DlTdoaRangingMeasurement)
+
+    def __post_init__(self):
+        pass
+
+    @staticmethod
+    def parse(span: bytes) -> Tuple['ExtendedAddressDlTdoaRangingMeasurement', bytes]:
+        fields = {'payload': None}
+        if len(span) < 8:
+            raise Exception('Invalid packet size')
+        value_ = int.from_bytes(span[0:8], byteorder='little')
+        fields['mac_address'] = value_
+        span = span[8:]
+        measurement, span = DlTdoaRangingMeasurement.parse(span)
+        fields['measurement'] = measurement
+        return ExtendedAddressDlTdoaRangingMeasurement(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        if self.mac_address > 18446744073709551615:
+            print(f"Invalid value for field ExtendedAddressDlTdoaRangingMeasurement::mac_address: {self.mac_address} > 18446744073709551615; the value will be truncated")
+            self.mac_address &= 18446744073709551615
+        _span.extend(int.to_bytes((self.mac_address << 0), length=8, byteorder='little'))
+        _span.extend(self.measurement.serialize())
+        return bytes(_span)
+
+    @property
+    def size(self) -> int:
+        return self.measurement.size + 8
+
 class RangingMeasurementType(enum.IntEnum):
     ONE_WAY = 0x0
     TWO_WAY = 0x1
@@ -3965,27 +4482,45 @@ class SessionInfoNtf(SessionControlPacket):
         span = bytes([])
         fields['payload'] = payload
         try:
-            return ShortMacTwoWaySessionInfoNtf.parse(fields.copy(), payload)
+            child, remainder = ShortMacTwoWaySessionInfoNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return ExtendedMacTwoWaySessionInfoNtf.parse(fields.copy(), payload)
+            child, remainder = ExtendedMacTwoWaySessionInfoNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return ShortMacDlTDoASessionInfoNtf.parse(fields.copy(), payload)
+            child, remainder = ShortMacDlTDoASessionInfoNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return ExtendedMacDlTDoASessionInfoNtf.parse(fields.copy(), payload)
+            child, remainder = ExtendedMacDlTDoASessionInfoNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return ShortMacOwrAoaSessionInfoNtf.parse(fields.copy(), payload)
+            child, remainder = ShortMacOwrAoaSessionInfoNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return ExtendedMacOwrAoaSessionInfoNtf.parse(fields.copy(), payload)
+            child, remainder = ExtendedMacOwrAoaSessionInfoNtf.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return SessionInfoNtf(**fields), span
@@ -4119,8 +4654,7 @@ class ExtendedMacTwoWaySessionInfoNtf(SessionInfoNtf):
 
 @dataclass
 class ShortMacDlTDoASessionInfoNtf(SessionInfoNtf):
-    no_of_ranging_measurements: int = field(kw_only=True, default=0)
-    dl_tdoa_measurements: bytearray = field(kw_only=True, default_factory=bytearray)
+    dl_tdoa_measurements: List[ShortAddressDlTdoaRangingMeasurement] = field(kw_only=True, default_factory=list)
 
     def __post_init__(self):
         self.ranging_measurement_type = RangingMeasurementType.DL_TDOA
@@ -4135,29 +4669,32 @@ class ShortMacDlTDoASessionInfoNtf(SessionInfoNtf):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['no_of_ranging_measurements'] = span[0]
+        dl_tdoa_measurements_count = span[0]
         span = span[1:]
-        fields['dl_tdoa_measurements'] = list(span)
-        span = bytes()
+        dl_tdoa_measurements = []
+        for n in range(dl_tdoa_measurements_count):
+            element, span = ShortAddressDlTdoaRangingMeasurement.parse(span)
+            dl_tdoa_measurements.append(element)
+        fields['dl_tdoa_measurements'] = dl_tdoa_measurements
         return ShortMacDlTDoASessionInfoNtf(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
         _span = bytearray()
-        if self.no_of_ranging_measurements > 255:
-            print(f"Invalid value for field ShortMacDlTDoASessionInfoNtf::no_of_ranging_measurements: {self.no_of_ranging_measurements} > 255; the value will be truncated")
-            self.no_of_ranging_measurements &= 255
-        _span.append((self.no_of_ranging_measurements << 0))
-        _span.extend(self.dl_tdoa_measurements)
+        if len(self.dl_tdoa_measurements) > 255:
+            print(f"Invalid length for field ShortMacDlTDoASessionInfoNtf::dl_tdoa_measurements:  {len(self.dl_tdoa_measurements)} > 255; the array will be truncated")
+            del self.dl_tdoa_measurements[255:]
+        _span.append((len(self.dl_tdoa_measurements) << 0))
+        for _elt in self.dl_tdoa_measurements:
+            _span.extend(_elt.serialize())
         return SessionInfoNtf.serialize(self, payload = bytes(_span))
 
     @property
     def size(self) -> int:
-        return len(self.dl_tdoa_measurements) * 1 + 1
+        return sum([elt.size for elt in self.dl_tdoa_measurements]) + 1
 
 @dataclass
 class ExtendedMacDlTDoASessionInfoNtf(SessionInfoNtf):
-    no_of_ranging_measurements: int = field(kw_only=True, default=0)
-    dl_tdoa_measurements: bytearray = field(kw_only=True, default_factory=bytearray)
+    dl_tdoa_measurements: List[ExtendedAddressDlTdoaRangingMeasurement] = field(kw_only=True, default_factory=list)
 
     def __post_init__(self):
         self.ranging_measurement_type = RangingMeasurementType.DL_TDOA
@@ -4172,24 +4709,28 @@ class ExtendedMacDlTDoASessionInfoNtf(SessionInfoNtf):
             raise Exception("Invalid constraint field values")
         if len(span) < 1:
             raise Exception('Invalid packet size')
-        fields['no_of_ranging_measurements'] = span[0]
+        dl_tdoa_measurements_count = span[0]
         span = span[1:]
-        fields['dl_tdoa_measurements'] = list(span)
-        span = bytes()
+        dl_tdoa_measurements = []
+        for n in range(dl_tdoa_measurements_count):
+            element, span = ExtendedAddressDlTdoaRangingMeasurement.parse(span)
+            dl_tdoa_measurements.append(element)
+        fields['dl_tdoa_measurements'] = dl_tdoa_measurements
         return ExtendedMacDlTDoASessionInfoNtf(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
         _span = bytearray()
-        if self.no_of_ranging_measurements > 255:
-            print(f"Invalid value for field ExtendedMacDlTDoASessionInfoNtf::no_of_ranging_measurements: {self.no_of_ranging_measurements} > 255; the value will be truncated")
-            self.no_of_ranging_measurements &= 255
-        _span.append((self.no_of_ranging_measurements << 0))
-        _span.extend(self.dl_tdoa_measurements)
+        if len(self.dl_tdoa_measurements) > 255:
+            print(f"Invalid length for field ExtendedMacDlTDoASessionInfoNtf::dl_tdoa_measurements:  {len(self.dl_tdoa_measurements)} > 255; the array will be truncated")
+            del self.dl_tdoa_measurements[255:]
+        _span.append((len(self.dl_tdoa_measurements) << 0))
+        for _elt in self.dl_tdoa_measurements:
+            _span.extend(_elt.serialize())
         return SessionInfoNtf.serialize(self, payload = bytes(_span))
 
     @property
     def size(self) -> int:
-        return len(self.dl_tdoa_measurements) * 1 + 1
+        return sum([elt.size for elt in self.dl_tdoa_measurements]) + 1
 
 @dataclass
 class ShortMacOwrAoaSessionInfoNtf(SessionInfoNtf):
@@ -4645,15 +5186,24 @@ class FrameReportTlvPacket(Packet):
         span = span[_body__size:]
         fields['payload'] = payload
         try:
-            return Rssi.parse(fields.copy(), payload)
+            child, remainder = Rssi.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return Aoa.parse(fields.copy(), payload)
+            child, remainder = Aoa.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         try:
-            return Cir.parse(fields.copy(), payload)
+            child, remainder = Cir.parse(fields.copy(), payload)
+            if remainder:
+                raise Exception('Unexpected parsing remainder')
+            return child, span
         except Exception as exn:
             pass
         return FrameReportTlvPacket(**fields), span
