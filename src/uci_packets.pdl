@@ -1070,6 +1070,8 @@ struct SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload {
 
 packet SessionUpdateControllerMulticastListRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
     status: Status,
+    _count_(controlee_status): 8,
+    controlee_status: ControleeStatus[],
 }
 
 test SessionUpdateControllerMulticastListRsp {
