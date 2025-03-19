@@ -584,6 +584,7 @@ impl Device {
         let Some(session) = self.sessions.get_mut(&session_handle) else {
             return SessionUpdateControllerMulticastListRsp {
                 status: uci::Status::ErrorSessionNotExist,
+                controlee_status: vec![],
             };
         };
 
@@ -594,6 +595,7 @@ impl Device {
         {
             return SessionUpdateControllerMulticastListRsp {
                 status: uci::Status::Rejected,
+                controlee_status: vec![],
             };
         }
         let action = cmd.action;
@@ -612,6 +614,7 @@ impl Device {
                 } else {
                     return SessionUpdateControllerMulticastListRsp {
                         status: uci::Status::SyntaxError,
+                        controlee_status: vec![],
                     };
                 }
             }
@@ -629,6 +632,7 @@ impl Device {
                 } else {
                     return SessionUpdateControllerMulticastListRsp {
                         status: uci::Status::SyntaxError,
+                        controlee_status: vec![],
                     };
                 }
             }
@@ -646,11 +650,13 @@ impl Device {
                 } else {
                     return SessionUpdateControllerMulticastListRsp {
                         status: uci::Status::SyntaxError,
+                        controlee_status: vec![],
                     };
                 }
             }
         };
-        let mut controlee_status = Vec::new();
+        let mut controlee_status_ntf = Vec::new();
+        let mut controlee_status_rsp = Vec::new();
         let mut status = uci::Status::Ok;
 
         match action {
@@ -659,34 +665,49 @@ impl Device {
             | UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
                 new_controlees.iter().for_each(|controlee| {
                     let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
-                    if !dst_addresses.contains(&controlee.short_address) {
-                        if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
-                            status = uci::Status::ErrorMulticastListFull;
-                            update_status = MulticastUpdateStatus::ErrorMulticastListFull;
-                        } else if (action
-                            == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
-                            || action
-                                == UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey)
-                            && session.app_config.sts_config
-                                != uci::StsConfig::ProvisionedForResponderSubSessionKey
-                        {
-                            // If Action is 0x02 or 0x03 for STS_CONFIG values other than
-                            // 0x04, the UWBS shall return SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF
-                            // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
-                            // Controlee in the Controlee List.
-                            status = uci::Status::Failed;
-                            update_status = MulticastUpdateStatus::ErrorSubSessionKeyNotApplicable;
+                    if (action == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
+                        || action
+                            == UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey)
+                        && session.app_config.sts_config
+                            != uci::StsConfig::ProvisionedForResponderSubSessionKey
+                    {
+                        // If Action is 0x02 or 0x03 for STS_CONFIG values other than
+                        // 0x04, the UWBS shall return SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF
+                        // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
+                        // Controlee in the Controlee List.
+                        status = uci::Status::Failed;
+                        update_status = MulticastUpdateStatus::ErrorSubSessionKeyNotApplicable;
+                        controlee_status_ntf.push(ControleeStatus {
+                            mac_address: match controlee.short_address {
+                                MacAddress::Short(address) => address,
+                                MacAddress::Extended(_) => {
+                                    panic!("Extended address is not supported!")
+                                }
+                            },
+                            status: update_status,
+                        });
+                    } else {
+                        if !dst_addresses.contains(&controlee.short_address) {
+                            if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
+                                status = uci::Status::ErrorMulticastListFull;
+                                update_status = MulticastUpdateStatus::ErrorMulticastListFull;
+                            } else {
+                                dst_addresses.push(controlee.short_address);
+                            };
                         } else {
-                            dst_addresses.push(controlee.short_address);
-                        };
+                            status = uci::Status::Failed;
+                            update_status = MulticastUpdateStatus::ErrorAddressAlreadyPresent;
+                        }
+                        controlee_status_rsp.push(ControleeStatus {
+                            mac_address: match controlee.short_address {
+                                MacAddress::Short(address) => address,
+                                MacAddress::Extended(_) => {
+                                    panic!("Extended address is not supported!")
+                                }
+                            },
+                            status: update_status,
+                        });
                     }
-                    controlee_status.push(ControleeStatus {
-                        mac_address: match controlee.short_address {
-                            MacAddress::Short(address) => address,
-                            MacAddress::Extended(_) => panic!("Extended address is not supported!"),
-                        },
-                        status: update_status,
-                    });
                 });
             }
             UpdateMulticastListAction::RemoveControlee => {
@@ -697,7 +718,7 @@ impl Device {
                     let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
                     if !dst_addresses.contains(&address) {
                         status = uci::Status::Failed;
-                        update_status = MulticastUpdateStatus::ErrorKeyFetchFail;
+                        update_status = MulticastUpdateStatus::ErrorAddressNotFound;
                     } else {
                         dst_addresses.retain(|value| *value != address);
                         // If IN_BAND_TERMINATION_ATTEMPT_COUNT is not equal to 0x00, then the
@@ -714,8 +735,17 @@ impl Device {
                                 }
                             });
                         }
+                        controlee_status_ntf.push(ControleeStatus {
+                            mac_address: match address {
+                                MacAddress::Short(addr) => addr,
+                                MacAddress::Extended(_) => {
+                                    panic!("Extended address is not supported!")
+                                }
+                            },
+                            status: update_status,
+                        });
                     }
-                    controlee_status.push(ControleeStatus {
+                    controlee_status_rsp.push(ControleeStatus {
                         mac_address: match address {
                             MacAddress::Short(addr) => addr,
                             MacAddress::Extended(_) => panic!("Extended address is not supported!"),
@@ -738,7 +768,7 @@ impl Device {
                         time::sleep(Duration::from_millis(5)).await;
                         tx.send(
                             SessionUpdateControllerMulticastListNtf {
-                                controlee_status,
+                                controlee_status: controlee_status_ntf,
                                 session_token: session_handle,
                             }
                             .encode_to_vec()
@@ -760,7 +790,10 @@ impl Device {
                 ReasonCode::ErrorInvalidNumOfControlees,
             )
         }
-        SessionUpdateControllerMulticastListRsp { status }
+        SessionUpdateControllerMulticastListRsp {
+            status,
+            controlee_status: controlee_status_rsp,
+        }
     }
 
     fn session_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
