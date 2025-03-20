@@ -76,6 +76,30 @@ limitations under the License.
   const map = document.getElementById("map");
   const info = document.getElementById("info");
 
+  function parse_device(device) {
+    const {
+      mac_address, x, y, z, yaw, pitch, roll,
+    } = device;
+    return {
+      mac_address,
+      position: { x, y, z },
+      yaw,
+      pitch,
+      roll,
+      neighbors: []
+    }
+  }
+
+  async function update_state() {
+    const res = await fetch('/get-state');
+    const { devices } = await res.json();
+    map.devices = devices.map(device => parse_device(device));
+  }
+
+  window.addEventListener('load', async () => {
+    update_state();
+  });
+
   map.addEventListener(
     "select",
     (event) => (info.device = event.detail.device)
@@ -122,19 +146,9 @@ limitations under the License.
     const data = JSON.parse(event.data);
     console.log("Device Added", data);
 
-    const {
-      mac_address, x, y, z, yaw, pitch, roll,
-    } = data;
     map.devices = [
       ...map.devices,
-      {
-        mac_address,
-        position: { x, y, z },
-        yaw,
-        pitch,
-        roll,
-        neighbors: [],
-      },
+      parse_device(data)
     ];
   });
 
