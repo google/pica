@@ -122,11 +122,12 @@ impl Device {
         mac_address: MacAddress,
         tx: mpsc::UnboundedSender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
+        is_reset: bool,
     ) -> Self {
         Device {
             handle,
             mac_address,
-            is_reset: false,
+            is_reset,
             config: Default::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
@@ -225,6 +226,7 @@ impl Device {
             self.mac_address,
             self.tx.clone(),
             self.pica_tx.clone(),
+            false,
         );
         self.is_reset = true;
         self.init();
