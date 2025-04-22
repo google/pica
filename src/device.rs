@@ -994,52 +994,71 @@ impl Device {
             .specialize()
             .expect("Failed to parse Control packet child")
         {
-            CorePacket(cmd) => match cmd.specialize().expect("Failed to parse Core packet child") {
-                CoreDeviceResetCmd(cmd) => self.core_device_reset(cmd).try_into().unwrap(),
-                CoreGetDeviceInfoCmd(cmd) => self.core_get_device_info(cmd).try_into().unwrap(),
-                CoreGetCapsInfoCmd(cmd) => self.core_get_caps_info(cmd).try_into().unwrap(),
-                CoreSetConfigCmd(cmd) => self.core_set_config(cmd).try_into().unwrap(),
-                CoreGetConfigCmd(cmd) => self.core_get_config(cmd).try_into().unwrap(),
-                _ => unimplemented!("Unsupported Core oid {:?}", cmd.oid),
+            CorePacket(cmd) => match cmd.specialize() {
+                Ok(CoreDeviceResetCmd(cmd)) => self.core_device_reset(cmd).try_into().unwrap(),
+                Ok(CoreGetDeviceInfoCmd(cmd)) => self.core_get_device_info(cmd).try_into().unwrap(),
+                Ok(CoreGetCapsInfoCmd(cmd)) => self.core_get_caps_info(cmd).try_into().unwrap(),
+                Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).try_into().unwrap(),
+                Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).try_into().unwrap(),
+                _ => uci::CorePacket {
+                    mt: uci::MessageType::Response,
+                    oid: cmd.oid,
+                    payload: vec![0x1, uci::Status::SyntaxError.into()],
+                }
+                .try_into()
+                .unwrap(),
             },
-            SessionConfigPacket(cmd) => match cmd
-                .specialize()
-                .expect("Failed to parse Session Config packet child")
-            {
-                SessionInitCmd(cmd) => self.session_init(cmd).try_into().unwrap(),
-                SessionDeinitCmd(cmd) => self.session_deinit(cmd).try_into().unwrap(),
-                SessionGetCountCmd(cmd) => self.session_get_count(cmd).try_into().unwrap(),
-                SessionSetAppConfigCmd(cmd) => self.session_set_app_config(cmd).try_into().unwrap(),
-                SessionGetAppConfigCmd(cmd) => self.session_get_app_config(cmd).try_into().unwrap(),
-                SessionGetStateCmd(cmd) => self.session_get_state(cmd).try_into().unwrap(),
-                SessionUpdateControllerMulticastListCmd(cmd) => self
+            SessionConfigPacket(cmd) => match cmd.specialize() {
+                Ok(SessionInitCmd(cmd)) => self.session_init(cmd).try_into().unwrap(),
+                Ok(SessionDeinitCmd(cmd)) => self.session_deinit(cmd).try_into().unwrap(),
+                Ok(SessionGetCountCmd(cmd)) => self.session_get_count(cmd).try_into().unwrap(),
+                Ok(SessionSetAppConfigCmd(cmd)) => {
+                    self.session_set_app_config(cmd).try_into().unwrap()
+                }
+                Ok(SessionGetAppConfigCmd(cmd)) => {
+                    self.session_get_app_config(cmd).try_into().unwrap()
+                }
+                Ok(SessionGetStateCmd(cmd)) => self.session_get_state(cmd).try_into().unwrap(),
+                Ok(SessionUpdateControllerMulticastListCmd(cmd)) => self
                     .session_update_controller_multicast_list(cmd)
                     .try_into()
                     .unwrap(),
-                _ => unimplemented!("Unsupported Session Config oid {:?}", cmd.oid),
+                _ => uci::SessionConfigPacket {
+                    mt: uci::MessageType::Response,
+                    oid: cmd.oid,
+                    payload: vec![0x1, uci::Status::SyntaxError.into()],
+                }
+                .try_into()
+                .unwrap(),
             },
-            SessionControlPacket(cmd) => match cmd
-                .specialize()
-                .expect("Failed to parse Session Control packet child")
-            {
-                SessionStartCmd(cmd) => self.session_start(cmd).try_into().unwrap(),
-                SessionStopCmd(cmd) => self.session_stop(cmd).try_into().unwrap(),
-                SessionGetRangingCountCmd(cmd) => {
+            SessionControlPacket(cmd) => match cmd.specialize() {
+                Ok(SessionStartCmd(cmd)) => self.session_start(cmd).try_into().unwrap(),
+                Ok(SessionStopCmd(cmd)) => self.session_stop(cmd).try_into().unwrap(),
+                Ok(SessionGetRangingCountCmd(cmd)) => {
                     self.session_get_ranging_count(cmd).try_into().unwrap()
                 }
-                _ => unimplemented!("Unsupported Session Control oid {:?}", cmd.oid),
+                _ => uci::SessionControlPacket {
+                    mt: uci::MessageType::Response,
+                    oid: cmd.oid,
+                    payload: vec![0x1, uci::Status::SyntaxError.into()],
+                }
+                .try_into()
+                .unwrap(),
             },
-            AndroidPacket(cmd) => match cmd
-                .specialize()
-                .expect("Failed to parse Android packet child")
-            {
-                AndroidSetCountryCodeCmd(cmd) => {
+            AndroidPacket(cmd) => match cmd.specialize() {
+                Ok(AndroidSetCountryCodeCmd(cmd)) => {
                     self.android_set_country_code(cmd).try_into().unwrap()
                 }
-                AndroidGetPowerStatsCmd(cmd) => {
+                Ok(AndroidGetPowerStatsCmd(cmd)) => {
                     self.android_get_power_stats(cmd).try_into().unwrap()
                 }
-                _ => unimplemented!("Unsupported Android oid {:?}", cmd.oid),
+                _ => uci::AndroidPacket {
+                    mt: uci::MessageType::Response,
+                    oid: cmd.oid,
+                    payload: vec![0x1, uci::Status::SyntaxError.into()],
+                }
+                .try_into()
+                .unwrap(),
             },
             ControlPacketChild::None
                 if matches!(
