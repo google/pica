@@ -156,6 +156,10 @@ struct Anchor {
     mac_address: MacAddress,
 }
 
+const fn degrees_to_q9_7(deg: i16) -> i16 {
+    deg << 7
+}
+
 fn make_measurement(
     mac_address: &MacAddress,
     local: RangingMeasurement,
@@ -167,13 +171,13 @@ fn make_measurement(
             status: uci::Status::Ok,
             nlos: 0, // in Line Of Sight
             distance: local.range,
-            aoa_azimuth: local.azimuth as u16,
+            aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
             aoa_azimuth_fom: 100, // Yup, pretty sure about this
-            aoa_elevation: local.elevation as u16,
+            aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
             aoa_elevation_fom: 100, // Yup, pretty sure about this
-            aoa_destination_azimuth: remote.azimuth as u16,
+            aoa_destination_azimuth: degrees_to_q9_7(remote.azimuth) as u16,
             aoa_destination_azimuth_fom: 100,
-            aoa_destination_elevation: remote.elevation as u16,
+            aoa_destination_elevation: degrees_to_q9_7(i16::from(remote.elevation)) as u16,
             aoa_destination_elevation_fom: 100,
             slot_index: 0,
             rssi: u8::MAX,
