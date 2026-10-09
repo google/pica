@@ -705,7 +705,7 @@ packet CoreDeviceResetCmd : CorePacket (mt = COMMAND, oid = DEVICE_RESET) {
 }
 
 test CoreDeviceResetCmd {
-    "\x20\x00\x00\x01\x00\x00\x00\x00",
+    "\x20\x00\x00\x01\x00",
 }
 
 packet CoreDeviceResetRsp : CorePacket (mt = RESPONSE, oid = DEVICE_RESET) {
@@ -713,7 +713,7 @@ packet CoreDeviceResetRsp : CorePacket (mt = RESPONSE, oid = DEVICE_RESET) {
 }
 
 test CoreDeviceResetRsp {
-    "\x40\x00\x00\x01\x00\x00\x00\x00",
+    "\x40\x00\x00\x01\x00",
 }
 
 packet CoreDeviceStatusNtf : CorePacket (mt = NOTIFICATION, oid = DEVICE_STATUS) {
@@ -721,14 +721,14 @@ packet CoreDeviceStatusNtf : CorePacket (mt = NOTIFICATION, oid = DEVICE_STATUS)
 }
 
 test CoreDeviceStatusNtf {
-    "\x60\x01\x00\x01\x00\x00\x00\x01",
+    "\x60\x01\x00\x01\x01",
 }
 
 packet CoreGetDeviceInfoCmd : CorePacket (mt = COMMAND, oid = GET_DEVICE_INFO) {
 }
 
 test CoreGetDeviceInfoCmd {
-    "\x20\x02\x00\x00\x00\x00\x00",
+    "\x20\x02\x00\x00",
 }
 
 packet CoreGetDeviceInfoRsp : CorePacket (mt = RESPONSE, oid = GET_DEVICE_INFO) {
@@ -742,14 +742,14 @@ packet CoreGetDeviceInfoRsp : CorePacket (mt = RESPONSE, oid = GET_DEVICE_INFO) 
 }
 
 test CoreGetDeviceInfoRsp {
-    "\x40\x02\x00\x0b\x00\x00\x00\x01\x01\x00\x02\x00\x03\x00\x04\x00\x01\x0a",
+    "\x40\x02\x00\x0b\x01\x01\x00\x02\x00\x03\x00\x04\x00\x01\x0a",
 }
 
 packet CoreGetCapsInfoCmd : CorePacket (mt = COMMAND, oid = GET_CAPS_INFO) {
 }
 
 test CoreGetCapsInfoCmd {
-    "\x20\x03\x00\x00\x00\x00\x00",
+    "\x20\x03\x00\x00",
 }
 
 struct CapTlv {
@@ -766,7 +766,7 @@ packet CoreGetCapsInfoRsp : CorePacket (mt = RESPONSE, oid = GET_CAPS_INFO) {
 }
 
 test CoreGetCapsInfoRsp {
-    "\x40\x03\x00\x05\x00\x00\x00\x00\x01\x00\x01\x01",
+    "\x40\x03\x00\x05\x00\x01\x00\x01\x01",
 }
 
 // [UCI] Table 44: Device Configuration Parameters
@@ -788,7 +788,7 @@ packet CoreSetConfigCmd : CorePacket (mt = COMMAND, oid = SET_CONFIG) {
 }
 
 test CoreSetConfigCmd {
-    "\x20\x04\x00\x03\x00\x00\x00\x01\x01\x00",
+    "\x20\x04\x00\x03\x01\x01\x00",
 }
 
 struct ConfigParameterStatus {
@@ -803,8 +803,8 @@ packet CoreSetConfigRsp : CorePacket (mt = RESPONSE, oid = SET_CONFIG) {
 }
 
 test CoreSetConfigRsp {
-    "\x40\x04\x00\x04\x00\x00\x00\x01\x01\x01\x01",
-    "\x40\x04\x00\x04\x00\x00\x00\x01\x01\x01\x0B",
+    "\x40\x04\x00\x04\x01\x01\x01\x01",
+    "\x40\x04\x00\x04\x01\x01\x01\x0b",
 }
 
 packet CoreGetConfigCmd : CorePacket (mt = COMMAND, oid = GET_CONFIG) {
@@ -813,7 +813,7 @@ packet CoreGetConfigCmd : CorePacket (mt = COMMAND, oid = GET_CONFIG) {
 }
 
 test CoreGetConfigCmd {
-    "\x20\x05\x00\x02\x00\x00\x00\x01\x01",
+    "\x20\x05\x00\x02\x01\x01",
 }
 
 packet CoreGetConfigRsp : CorePacket (mt = RESPONSE, oid = GET_CONFIG) {
@@ -823,7 +823,7 @@ packet CoreGetConfigRsp : CorePacket (mt = RESPONSE, oid = GET_CONFIG) {
 }
 
 test CoreGetConfigRsp {
-    "\x40\x05\x00\x05\x00\x00\x00\x01\x01\x00\x01\x01",
+    "\x40\x05\x00\x05\x01\x01\x00\x01\x01",
 }
 
 packet CoreGenericErrorNtf : CorePacket (mt = NOTIFICATION, oid = GENERIC_ERROR) {
@@ -831,7 +831,7 @@ packet CoreGenericErrorNtf : CorePacket (mt = NOTIFICATION, oid = GENERIC_ERROR)
 }
 
 test CoreGenericErrorNtf {
-    "\x60\x07\x00\x01\x00\x00\x00\x01",
+    "\x60\x07\x00\x01\x01",
 }
 
 
@@ -839,7 +839,7 @@ packet CoreQueryTimeStampCmd : CorePacket (mt = COMMAND, oid = QUERY_UWBS_TIMEST
 }
 
 test CoreQueryTimeStampCmd {
-    "\x20\x08\x00\\x00",
+    "\x20\x08\x00\x00",
 }
 
 packet CoreQueryTimeStampRsp : CorePacket (mt = RESPONSE, oid = QUERY_UWBS_TIMESTAMP) {
@@ -859,7 +859,7 @@ packet SessionInitCmd : SessionConfigPacket (mt = COMMAND, oid = INIT) {
 }
 
 test SessionInitCmd {
-    "\x21\x00\x00\x05\x00\x00\x00\x01\x02\x03\x04\x01",
+    "\x21\x00\x00\x05\x01\x02\x03\x04\x01",
 }
 
 // FIRA version 2 introduces a new version of SESSION_INIT_RSP which
@@ -870,7 +870,7 @@ packet SessionInitRsp_V2 : SessionConfigPacket (mt = RESPONSE, oid = INIT) {
 }
 
 test SessionInitRsp_V2 {
-    "\x41\x00\x00\x01\x00\x00\x00\x11\x00\x00\x00\x01",
+    "\x41\x00\x00\x05\x11\x00\x00\x00\x01",
 }
 
 packet SessionInitRsp : SessionConfigPacket (mt = RESPONSE, oid = INIT) {
@@ -878,7 +878,7 @@ packet SessionInitRsp : SessionConfigPacket (mt = RESPONSE, oid = INIT) {
 }
 
 test SessionInitRsp {
-    "\x41\x00\x00\x01\x00\x00\x00\x11",
+    "\x41\x00\x00\x01\x11",
 }
 
 packet SessionDeinitCmd : SessionConfigPacket (mt = COMMAND, oid = DEINIT) {
@@ -886,7 +886,7 @@ packet SessionDeinitCmd : SessionConfigPacket (mt = COMMAND, oid = DEINIT) {
 }
 
 test SessionDeinitCmd {
-    "\x21\x01\x00\x04\x00\x00\x00\x01\x02\x03\x04",
+    "\x21\x01\x00\x04\x01\x02\x03\x04",
 }
 
 packet SessionDeinitRsp : SessionConfigPacket (mt = RESPONSE, oid = DEINIT) {
@@ -894,7 +894,7 @@ packet SessionDeinitRsp : SessionConfigPacket (mt = RESPONSE, oid = DEINIT) {
 }
 
 test SessionDeinitRsp {
-    "\x41\x01\x00\x01\x00\x00\x00\x00",
+    "\x41\x01\x00\x01\x00",
 }
 
 packet SessionStatusNtf : SessionConfigPacket (mt = NOTIFICATION, oid = STATUS) {
@@ -906,8 +906,8 @@ packet SessionStatusNtf : SessionConfigPacket (mt = NOTIFICATION, oid = STATUS) 
 }
 
 test SessionStatusNtf {
-    "\x61\x02\x00\x06\x00\x00\x00\x01\x02\x03\x04\x02\x21",
-    "\x61\x02\x00\x06\x00\x00\x00\x01\x02\x03\x04\x01\x82", // Vendor Specific Reason Code
+    "\x61\x02\x00\x06\x01\x02\x03\x04\x02\x21",
+    "\x61\x02\x00\x06\x01\x02\x03\x04\x01\x82", // Vendor Specific Reason Code
 }
 
 struct AppConfigTlv {
@@ -923,7 +923,7 @@ packet SessionSetAppConfigCmd : SessionConfigPacket (mt = COMMAND, oid = SET_APP
 }
 
 test SessionSetAppConfigCmd {
-    "\x21\x03\x00\x05\x00\x00\x00\x01\x02\x03\x04\x00",
+    "\x21\x03\x00\x05\x01\x02\x03\x04\x00",
 }
 
 struct AppConfigStatus {
@@ -938,7 +938,7 @@ packet SessionSetAppConfigRsp : SessionConfigPacket (mt = RESPONSE, oid = SET_AP
 }
 
 test SessionSetAppConfigRsp {
-    "\x41\x03\x00\x04\x00\x00\x00\x01\x01\x01\x00",
+    "\x41\x03\x00\x04\x01\x01\x01\x00",
 }
 
 packet SessionGetAppConfigCmd : SessionConfigPacket (mt = COMMAND, oid = GET_APP_CONFIG) {
@@ -948,7 +948,7 @@ packet SessionGetAppConfigCmd : SessionConfigPacket (mt = COMMAND, oid = GET_APP
 }
 
 test SessionGetAppConfigCmd {
-    "\x21\x04\x00\x05\x00\x00\x00\x01\x02\x03\x04\x00",
+    "\x21\x04\x00\x05\x01\x02\x03\x04\x00",
 }
 
 packet SessionGetAppConfigRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_APP_CONFIG) {
@@ -958,14 +958,14 @@ packet SessionGetAppConfigRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_AP
 }
 
 test SessionGetAppConfigRsp {
-    "\x41\x04\x00\x02\x00\x00\x00\x01\x00",
+    "\x41\x04\x00\x02\x01\x00",
 }
 
 packet SessionGetCountCmd : SessionConfigPacket (mt = COMMAND, oid = GET_COUNT) {
 }
 
 test SessionGetCountCmd {
-    "\x21\x05\x00\x00\x00\x00\x00",
+    "\x21\x05\x00\x00",
 }
 
 packet SessionGetCountRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_COUNT) {
@@ -974,7 +974,7 @@ packet SessionGetCountRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_COUNT)
 }
 
 test SessionGetCountRsp {
-    "\x41\x05\x00\x02\x00\x00\x00\x00\x01",
+    "\x41\x05\x00\x02\x00\x01",
 }
 
 packet SessionGetStateCmd : SessionConfigPacket (mt = COMMAND, oid = GET_STATE) {
@@ -982,7 +982,7 @@ packet SessionGetStateCmd : SessionConfigPacket (mt = COMMAND, oid = GET_STATE) 
 }
 
 test SessionGetStateCmd {
-    "\x21\x06\x00\x04\x00\x00\x00\x00\x01\x02\x03",
+    "\x21\x06\x00\x04\x00\x01\x02\x03",
 }
 
 packet SessionGetStateRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_STATE) {
@@ -991,7 +991,7 @@ packet SessionGetStateRsp : SessionConfigPacket (mt = RESPONSE, oid = GET_STATE)
 }
 
 test SessionGetStateRsp {
-    "\x41\x06\x00\x02\x00\x00\x00\x00\x01",
+    "\x41\x06\x00\x02\x00\x01",
 }
 
 packet SessionUpdateDtAnchorRangingRoundsCmd : SessionConfigPacket (mt = COMMAND, oid = UPDATE_DT_ANCHOR_RANGING_ROUNDS) {
@@ -1009,7 +1009,7 @@ packet SessionUpdateDtTagRangingRoundsCmd : SessionConfigPacket (mt = COMMAND, o
 }
 
 test SessionUpdateDtTagRangingRoundsCmd {
-    "\x21\x09\x00\x0a\x00\x00\x00\x03\x03\x0f\x0c\x05\x08\x00\x00\x00\x00",
+    "\x21\x09\x00\x0a\x03\x03\x0f\x0c\x05\x08\x00\x00\x00\x00",
 }
 
 packet SessionUpdateDtTagRangingRoundsRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_DT_TAG_RANGING_ROUNDS) {
@@ -1019,7 +1019,7 @@ packet SessionUpdateDtTagRangingRoundsRsp : SessionConfigPacket (mt = RESPONSE, 
 }
 
 test SessionUpdateDtTagRangingRoundsRsp {
-    "\x41\x09\x00\x03\x00\x00\x00\x01\x01\x01",
+    "\x41\x09\x00\x03\x01\x01\x01",
 }
 
 struct Controlee {
@@ -1075,7 +1075,7 @@ packet SessionUpdateControllerMulticastListRsp : SessionConfigPacket (mt = RESPO
 }
 
 test SessionUpdateControllerMulticastListRsp {
-    "\x41\x07\x00\x01\x00\x00\x00\x00",
+    "\x41\x07\x00\x02\x00\x00",
 }
 
 struct ControleeStatus {
@@ -1090,7 +1090,7 @@ packet SessionUpdateControllerMulticastListNtf : SessionConfigPacket (mt = NOTIF
 }
 
 test SessionUpdateControllerMulticastListNtf {
-    "\x61\x07\x00\x06\x00\x00\x00\x00\x01\x02\x03\x04\x00",
+    "\x61\x07\x00\x05\x00\x01\x02\x03\x00",
 }
 
 // ---------------------- Session Control group ----------------------------- //
@@ -1101,7 +1101,7 @@ packet SessionDataCreditNtf : SessionControlPacket (mt = NOTIFICATION, oid = DAT
 }
 
 test SessionDataCreditNtf {
-    "\x62\x04\x00\x05\x00\x00\x00\x00\x00\x00\x01\x01",
+    "\x62\x04\x00\x05\x00\x00\x00\x01\x01",
 }
 
 packet SessionDataTransferStatusNtf : SessionControlPacket (mt = NOTIFICATION, oid = DATA_TRANSFER_STATUS) {
@@ -1112,7 +1112,7 @@ packet SessionDataTransferStatusNtf : SessionControlPacket (mt = NOTIFICATION, o
 }
 
 test SessionDataTransferStatusNtf {
-    "\x62\x05\x00\x06\x00\x00\x00\x00\x00\x00\x01\x01\x00\x00",
+    "\x62\x05\x00\x07\x00\x00\x00\x01\x01\x00\x00",
 }
 
 packet SessionQueryMaxDataSizeInRangingCmd : SessionConfigPacket (mt = COMMAND, oid = QUERY_DATA_SIZE_IN_RANGING) {
@@ -1129,7 +1129,7 @@ packet SessionQueryMaxDataSizeInRangingRsp : SessionConfigPacket (mt = RESPONSE,
 }
 
 test SessionQueryMaxDataSizeInRangingRsp {
-  "\x41\x0B\x00\x06\x00\x00\x00\x00\x0E7\0x07",
+  "\x41\x0B\x00\x06\x00\x00\x00\x00\xe7\x07",
 }
 
 packet SessionStartCmd : SessionControlPacket (mt = COMMAND, oid = START) {
@@ -1137,7 +1137,7 @@ packet SessionStartCmd : SessionControlPacket (mt = COMMAND, oid = START) {
 }
 
 test SessionStartCmd {
-    "\x22\x00\x00\x04\x00\x00\x00\x00\x01\x02\x03",
+    "\x22\x00\x00\x04\x00\x01\x02\x03",
 }
 
 packet SessionStartRsp : SessionControlPacket (mt = RESPONSE, oid = START) {
@@ -1145,7 +1145,7 @@ packet SessionStartRsp : SessionControlPacket (mt = RESPONSE, oid = START) {
 }
 
 test SessionStartRsp {
-    "\x42\x00\x00\x01\x00\x00\x00\x00",
+    "\x42\x00\x00\x01\x00",
 }
 
 struct ShortAddressTwoWayRangingMeasurement {
@@ -1292,7 +1292,7 @@ packet ShortMacTwoWaySessionInfoNtf : SessionInfoNtf (ranging_measurement_type =
 }
 
 test ShortMacTwoWaySessionInfoNtf {
-    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
 packet ExtendedMacTwoWaySessionInfoNtf : SessionInfoNtf (ranging_measurement_type = TWO_WAY, mac_address_indicator = EXTENDED_ADDRESS) {
@@ -1302,7 +1302,7 @@ packet ExtendedMacTwoWaySessionInfoNtf : SessionInfoNtf (ranging_measurement_typ
 }
 
 test ExtendedMacTwoWaySessionInfoNtf {
-    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
 packet ShortMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_type = DL_TDOA, mac_address_indicator = SHORT_ADDRESS) {
@@ -1311,7 +1311,7 @@ packet ShortMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_type =
 }
 
 test ShortMacDlTDoASessionInfoNtf {
-     "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x02\x01\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+     "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x02\x01\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
 packet ExtendedMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_type = DL_TDOA, mac_address_indicator = EXTENDED_ADDRESS) {
@@ -1320,7 +1320,7 @@ packet ExtendedMacDlTDoASessionInfoNtf : SessionInfoNtf (ranging_measurement_typ
 }
 
 test ExtendedMacDlTDoASessionInfoNtf {
-     "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x02\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+     "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x02\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
 packet ShortMacOwrAoaSessionInfoNtf : SessionInfoNtf (ranging_measurement_type = OWR_AOA, mac_address_indicator = SHORT_ADDRESS) {
@@ -1330,8 +1330,8 @@ packet ShortMacOwrAoaSessionInfoNtf : SessionInfoNtf (ranging_measurement_type =
 }
 
 test ShortMacOwrAoaSessionInfoNtf {
-    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-    "\x62\x00\x00\x26\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xaa\xbb\x00\x00\x01\x01\x00\x03\x04\x60\x05\x06\x50",
+    "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x62\x00\x00\x26\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xaa\xbb\x00\x00\x01\x01\x00\x03\x04\x60\x05\x06\x50",
 }
 
 packet ExtendedMacOwrAoaSessionInfoNtf : SessionInfoNtf (ranging_measurement_type = OWR_AOA, mac_address_indicator = EXTENDED_ADDRESS) {
@@ -1341,8 +1341,8 @@ packet ExtendedMacOwrAoaSessionInfoNtf : SessionInfoNtf (ranging_measurement_typ
 }
 
 test ExtendedMacOwrAoaSessionInfoNtf {
-    "\x62\x00\x00\x19\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-    "\x62\x00\x00\x2c\x00\x00\x00\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\xaa\xbb\xcc\xdd\x01\x02\x03\x04\x00\x00\x01\x01\x00\x03\x04\x60\x05\x06\x50",
+    "\x62\x00\x00\x19\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x62\x00\x00\x2c\x00\x02\x03\x04\x05\x06\x07\x08\x00\x0a\x01\x01\x01\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\xaa\xbb\xcc\xdd\x01\x02\x03\x04\x00\x00\x01\x01\x00\x03\x04\x60\x05\x06\x50",
 }
 
 packet SessionStopCmd : SessionControlPacket (mt = COMMAND, oid = STOP) {
@@ -1350,7 +1350,7 @@ packet SessionStopCmd : SessionControlPacket (mt = COMMAND, oid = STOP) {
 }
 
 test SessionStopCmd {
-    "\x22\x01\x00\x04\x00\x00\x00\x00\x02\x03\x04",
+    "\x22\x01\x00\x04\x00\x02\x03\x04",
 }
 
 packet SessionStopRsp : SessionControlPacket (mt = RESPONSE, oid = STOP) {
@@ -1358,7 +1358,7 @@ packet SessionStopRsp : SessionControlPacket (mt = RESPONSE, oid = STOP) {
 }
 
 test SessionStopRsp {
-    "\x42\x01\x00\x01\x00\x00\x00\x00",
+    "\x42\x01\x00\x01\x00",
 }
 
 packet SessionGetRangingCountCmd : SessionControlPacket (mt = COMMAND, oid = GET_RANGING_COUNT) {
@@ -1366,7 +1366,7 @@ packet SessionGetRangingCountCmd : SessionControlPacket (mt = COMMAND, oid = GET
 }
 
 test SessionGetRangingCountCmd {
-    "\x22\x03\x00\x04\x00\x00\x00\x00\x02\x03\x04",
+    "\x22\x03\x00\x04\x00\x02\x03\x04",
 }
 
 packet SessionGetRangingCountRsp : SessionControlPacket (mt = RESPONSE, oid = GET_RANGING_COUNT) {
@@ -1375,7 +1375,7 @@ packet SessionGetRangingCountRsp : SessionControlPacket (mt = RESPONSE, oid = GE
 }
 
 test SessionGetRangingCountRsp {
-    "\x42\x03\x00\x05\x00\x00\x00\x00\x02\x03\x04\x05",
+    "\x42\x03\x00\x05\x00\x02\x03\x04\x05",
 }
 
 // -------------------------- Android group --------------------------------- //
@@ -1384,7 +1384,7 @@ packet AndroidGetPowerStatsCmd : AndroidPacket (mt = COMMAND, oid = GET_POWER_ST
 }
 
 test AndroidGetPowerStatsCmd {
-    "\x2c\x00\x00\x00\x00\x00\x00",
+    "\x2c\x00\x00\x00",
 }
 
 struct PowerStats {
@@ -1400,7 +1400,7 @@ packet AndroidGetPowerStatsRsp : AndroidPacket (mt = RESPONSE, oid = GET_POWER_S
 }
 
 test AndroidGetPowerStatsRsp {
-    "\x4c\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+    "\x4c\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 }
 
 packet AndroidSetCountryCodeCmd: AndroidPacket (mt = COMMAND, oid = SET_COUNTRY_CODE) {
@@ -1409,7 +1409,7 @@ packet AndroidSetCountryCodeCmd: AndroidPacket (mt = COMMAND, oid = SET_COUNTRY_
 
 // Set country code to US.
 test AndroidSetCountryCodeCmd {
-    "\x2c\x01\x00\x02\x00\x00\x00\x55\x53",
+    "\x2c\x01\x00\x02\x55\x53",
 }
 
 packet AndroidSetCountryCodeRsp : AndroidPacket (mt = RESPONSE, oid = SET_COUNTRY_CODE) {
@@ -1417,7 +1417,7 @@ packet AndroidSetCountryCodeRsp : AndroidPacket (mt = RESPONSE, oid = SET_COUNTR
 }
 
 test AndroidSetCountryCodeRsp {
-    "\x4c\x01\x00\x01\x00\x00\x00\x00",
+    "\x4c\x01\x00\x01\x00",
 }
 
 enum FrameReportTlvType : 8 {
@@ -1496,6 +1496,6 @@ packet AndroidRangeDiagnosticsNtf : AndroidPacket (mt = NOTIFICATION, oid = FIRA
 }
 
 test AndroidRangeDiagnosticsNtf {
-    "\x6c\x02\x00\x11\x00\x00\x00\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x01\x00\x01\x00\x00",
-    "\x6c\x02\x00\x34\x00\x00\x00\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x03\x01\x08\x00\x01\x02\x01\x02\x01\x02\x01\x01\x02\x15\x00\x01\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x00\x02\x04\x00\x01\x02\x03\x04\x00\x01\x00\x00",
+    "\x6c\x02\x00\x11\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x01\x00\x01\x00\x00",
+    "\x6c\x02\x00\x34\x01\x01\x01\x01\x02\x02\x02\x02\x01\x00\x01\x02\x03\x01\x08\x00\x01\x02\x01\x02\x01\x02\x01\x01\x02\x15\x00\x01\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x01\x02\x00\x02\x04\x00\x01\x02\x03\x04\x00\x01\x00\x00",
 }
