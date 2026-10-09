@@ -59,11 +59,7 @@ impl Serialize for Position {
 }
 
 fn checked_div(num: f32, den: f32) -> Option<f32> {
-    if den == 0. {
-        None
-    } else {
-        Some(num / den)
-    }
+    if den == 0. { None } else { Some(num / den) }
 }
 
 fn azimuth(delta: Vec3) -> f32 {

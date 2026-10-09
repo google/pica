@@ -1,5 +1,5 @@
-use crate::packets::uci;
 use crate::MacAddress;
+use crate::packets::uci;
 
 /// [UCI] 8.3 Application Configuration Parameters.
 /// Sub-session Key provided for Provisioned STS for Responder specific Key mode
@@ -366,19 +366,22 @@ impl AppConfig {
     /// Returns `Ok` if the identifier is known, `Err` otherwise.
     pub fn get(&self, id: uci::AppConfigTlvType) -> anyhow::Result<Vec<u8>> {
         match id {
-            uci::AppConfigTlvType::DeviceType => Ok(vec![self
-                .device_type
-                .ok_or(anyhow::anyhow!("optional app config not set"))?
-                .into()]),
-            uci::AppConfigTlvType::RangingRoundUsage => Ok(vec![self
-                .ranging_round_usage
-                .ok_or(anyhow::anyhow!("optional app config not set"))?
-                .into()]),
+            uci::AppConfigTlvType::DeviceType => Ok(vec![
+                self.device_type
+                    .ok_or(anyhow::anyhow!("optional app config not set"))?
+                    .into(),
+            ]),
+            uci::AppConfigTlvType::RangingRoundUsage => Ok(vec![
+                self.ranging_round_usage
+                    .ok_or(anyhow::anyhow!("optional app config not set"))?
+                    .into(),
+            ]),
             uci::AppConfigTlvType::StsConfig => Ok(vec![self.sts_config.into()]),
-            uci::AppConfigTlvType::MultiNodeMode => Ok(vec![self
-                .multi_node_mode
-                .ok_or(anyhow::anyhow!("optional app config not set"))?
-                .into()]),
+            uci::AppConfigTlvType::MultiNodeMode => Ok(vec![
+                self.multi_node_mode
+                    .ok_or(anyhow::anyhow!("optional app config not set"))?
+                    .into(),
+            ]),
             uci::AppConfigTlvType::ChannelNumber => Ok(vec![self.channel_number.into()]),
             uci::AppConfigTlvType::NumberOfControlees => Ok(vec![self.number_of_controlees]),
             uci::AppConfigTlvType::DeviceMacAddress => Ok(self
@@ -407,10 +410,11 @@ impl AppConfig {
             uci::AppConfigTlvType::FarProximityConfig => {
                 Ok(self.far_proximity_config.to_le_bytes().to_vec())
             }
-            uci::AppConfigTlvType::DeviceRole => Ok(vec![self
-                .device_role
-                .ok_or(anyhow::anyhow!("optional app config not set"))?
-                .into()]),
+            uci::AppConfigTlvType::DeviceRole => Ok(vec![
+                self.device_role
+                    .ok_or(anyhow::anyhow!("optional app config not set"))?
+                    .into(),
+            ]),
             uci::AppConfigTlvType::RframeConfig => Ok(vec![self.rframe_config.into()]),
             uci::AppConfigTlvType::RssiReporting => Ok(vec![self.rssi_reporting.into()]),
             uci::AppConfigTlvType::PreambleCodeIndex => Ok(vec![self.preamble_code_index]),
@@ -430,10 +434,11 @@ impl AppConfig {
             uci::AppConfigTlvType::PrfMode => Ok(vec![self.prf_mode.into()]),
             uci::AppConfigTlvType::CapSizeRange => Ok(self.cap_size_range.to_vec()),
             uci::AppConfigTlvType::TxJitterWindowSize => Ok(vec![self.tx_jitter_window_size]),
-            uci::AppConfigTlvType::ScheduleMode => Ok(vec![self
-                .schedule_mode
-                .ok_or(anyhow::anyhow!("optional app config not set"))?
-                .into()]),
+            uci::AppConfigTlvType::ScheduleMode => Ok(vec![
+                self.schedule_mode
+                    .ok_or(anyhow::anyhow!("optional app config not set"))?
+                    .into(),
+            ]),
             uci::AppConfigTlvType::KeyRotation => Ok(vec![self.key_rotation.into()]),
             uci::AppConfigTlvType::KeyRotationRate => Ok(vec![self.key_rotation_rate]),
             uci::AppConfigTlvType::SessionPriority => Ok(vec![self.session_priority]),

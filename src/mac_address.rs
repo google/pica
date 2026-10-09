@@ -94,7 +94,7 @@ impl TryFrom<String> for MacAddress {
 impl From<&MacAddress> for String {
     fn from(mac_address: &MacAddress) -> Self {
         let to_string = |addr: &[u8]| -> String {
-            let mac_address: Vec<_> = addr.iter().map(|byte| format!("{:02X}:", byte)).collect();
+            let mac_address: Vec<_> = addr.iter().map(|byte| format!("{byte:02X}:")).collect();
             let s = mac_address
                 .iter()
                 .flat_map(|byte| byte.chars())

@@ -124,7 +124,7 @@ impl Display for PicaCommand {
             PicaCommand::CreateAnchor(_, _) => "CreateAnchor",
             PicaCommand::DestroyAnchor(_, _) => "DestroyAnchor",
         };
-        write!(f, "{}", cmd)
+        write!(f, "{cmd}")
     }
 }
 
@@ -374,7 +374,7 @@ impl Pica {
         // the state.
         tokio::task::spawn(async move {
             let pcapng_file = if let Some(dir) = pcapng_dir {
-                let full_path = dir.join(format!("device-{}.pcapng", handle));
+                let full_path = dir.join(format!("device-{handle}.pcapng"));
                 log::debug!("Recording pcapng to file {}", full_path.as_path().display());
                 Some(pcapng::File::create(full_path).unwrap())
             } else {
@@ -604,16 +604,17 @@ impl Pica {
             let handle = self.counter;
             self.counter += 1;
 
-            assert!(self
-                .anchors
-                .insert(
-                    mac_address,
-                    Anchor {
-                        handle,
+            assert!(
+                self.anchors
+                    .insert(
                         mac_address,
-                    },
-                )
-                .is_none());
+                        Anchor {
+                            handle,
+                            mac_address,
+                        },
+                    )
+                    .is_none()
+            );
 
             Ok(handle)
         };
