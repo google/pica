@@ -353,12 +353,22 @@ impl Pica {
         let disconnect_tx = self.command_tx.clone();
         let pcapng_dir = self.pcapng_dir.clone();
 
-        let handle = self.counter;
-        self.counter += 1;
+        let initial_counter = self.counter;
+        let (handle, mac_address) = loop {
+            let handle = self.counter;
+            self.counter += 1;
+            let mac_address = MacAddress::Short((handle as u16).to_be_bytes());
+            if self.get_category(&mac_address).is_none() {
+                break (handle, mac_address);
+            }
+            if self.counter as u16 == initial_counter as u16 {
+                self.counter = initial_counter;
+                anyhow::bail!("No available short MAC address for new device");
+            }
+        };
 
         log::debug!("[{}] Connecting device", handle);
 
-        let mac_address = MacAddress::Short((handle as u16).to_be_bytes());
         let mut device = Device::new(handle, mac_address, packet_tx, self.command_tx.clone());
         device.init();
 
