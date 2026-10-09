@@ -15,7 +15,7 @@
 use anyhow::Result;
 use clap::Parser;
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{body, Body, Request, Response, Server, StatusCode as HttpStatusCode};
+use hyper::{Body, Request, Response, Server, StatusCode as HttpStatusCode, body};
 use serde::{Deserialize, Serialize};
 use serde_json::error::Category as SerdeErrorCategory;
 use std::collections::HashMap;
@@ -27,7 +27,7 @@ use std::sync::Mutex;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::try_join;
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use pica::{Category, MacAddress, Pica, PicaCommand, PicaCommandError, PicaEvent};
 
@@ -189,7 +189,7 @@ impl Context {
 
         let mut devices = self.devices.lock().unwrap();
         let mut found_device = None;
-        for (_, device) in devices.iter_mut() {
+        for device in devices.values_mut() {
             if device.mac_address == mac_address {
                 device.position = position;
                 found_device = Some(device.clone());

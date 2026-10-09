@@ -1,7 +1,7 @@
 [package]
 name = "pica"
 version = "0.1.12"
-edition = "2021"
+edition = "2024"
 description = "Pica is a virtual UWB Controller implementing the FiRa UCI specification."
 repository = "https://github.com/google/pica"
 license = "Apache-2.0"
@@ -35,6 +35,9 @@ path = "src/bin/main.rs"
 name = "pica-http"
 path = "src/bin/http-server/main.rs"
 required-features = ["web"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("serde"))'] }
 
 [features]
 default = ["web"]

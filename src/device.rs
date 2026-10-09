@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::packets::uci::{self, *};
 use crate::MacAddress;
 use crate::PicaCommand;
+use crate::packets::uci::{self, *};
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -23,9 +23,9 @@ use pdl_runtime::Packet;
 use tokio::sync::mpsc;
 use tokio::time;
 
+use super::UciPacket;
 use super::app_config::SubSessionKey;
 use super::session::Session;
-use super::UciPacket;
 
 pub const MAX_DEVICE: usize = 4;
 pub const MAX_SESSION: usize = 255;
