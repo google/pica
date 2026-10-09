@@ -87,17 +87,17 @@ impl Session {
         });
     }
 
-    pub fn get_dst_mac_address(&self) -> &[MacAddress] {
-        &self.app_config.dst_mac_address
+    pub fn get_dst_mac_address(&self) -> impl Iterator<Item = MacAddress> + '_ {
+        self.app_config.dst_mac_address()
     }
 
     pub fn is_session_info_ntf_enabled(&self) -> bool {
-        self.app_config.session_info_ntf_config != uci::SessionInfoNtfConfig::Disable
+        self.app_config.session_info_ntf_config() != uci::SessionInfoNtfConfig::Disable
     }
 
     #[allow(unused)]
     pub fn is_session_data_transfer_status_ntf_enabled(&self) -> bool {
-        self.app_config.session_data_transfer_status_ntf_config
+        self.app_config.session_data_transfer_status_ntf_config()
             != uci::SessionDataTransferStatusNtfConfig::Disable
     }
 

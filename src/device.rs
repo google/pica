@@ -479,11 +479,11 @@ impl Device {
             // - DEVICE_MAC_ADDRESS
             // - DEVICE_TYPE (see Note1)
             // - SCHEDULE_MODE
-            if app_config.device_role.is_none()
-                || app_config.multi_node_mode.is_none()
-                || app_config.ranging_round_usage.is_none()
-                || app_config.device_mac_address.is_none()
-                || app_config.schedule_mode.is_none()
+            if app_config.device_role().is_none()
+                || app_config.multi_node_mode().is_none()
+                || app_config.ranging_round_usage().is_none()
+                || app_config.device_mac_address().is_none()
+                || app_config.schedule_mode().is_none()
             {
                 log::error!(
                     "[{}:0x{:x}] missing mandatory APP config parameters",
@@ -532,16 +532,18 @@ impl Device {
             };
         };
 
-        let (status, valid_parameters) = {
+        let (status, valid_parameters) = if cmd.app_cfg.is_empty() {
+            (uci::Status::Ok, session.app_config.to_tlvs())
+        } else {
             let mut valid_parameters = vec![];
             let mut invalid_parameters = vec![];
             for id in cmd.app_cfg {
                 match session.app_config.get(id) {
-                    Ok(value) => valid_parameters.push(AppConfigTlv {
+                    Some(value) => valid_parameters.push(AppConfigTlv {
                         cfg_id: id,
-                        v: value,
+                        v: value.to_vec(),
                     }),
-                    Err(_) => invalid_parameters.push(AppConfigTlv {
+                    None => invalid_parameters.push(AppConfigTlv {
                         cfg_id: id,
                         v: vec![],
                     }),
@@ -600,8 +602,8 @@ impl Device {
 
         if (session.state != SessionState::SessionStateActive
             && session.state != SessionState::SessionStateIdle)
-            || session.app_config.device_type != Some(DeviceType::Controller)
-            || session.app_config.multi_node_mode != Some(MultiNodeMode::OneToMany)
+            || session.app_config.device_type() != Some(DeviceType::Controller)
+            || session.app_config.multi_node_mode() != Some(MultiNodeMode::OneToMany)
         {
             return SessionUpdateControllerMulticastListRsp {
                 status: uci::Status::Rejected,
@@ -609,7 +611,7 @@ impl Device {
             };
         }
         let action = cmd.action;
-        let mut dst_addresses = session.app_config.dst_mac_address.clone();
+        let mut dst_addresses: Vec<MacAddress> = session.app_config.dst_mac_address().collect();
         let new_controlees: Vec<Controlee> = match action {
             UpdateMulticastListAction::AddControlee
             | UpdateMulticastListAction::RemoveControlee => {
@@ -678,7 +680,7 @@ impl Device {
                     if (action == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
                         || action
                             == UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey)
-                        && session.app_config.sts_config
+                        && session.app_config.sts_config()
                             != uci::StsConfig::ProvisionedForResponderSubSessionKey
                     {
                         // If Action is 0x02 or 0x03 for STS_CONFIG values other than
@@ -715,7 +717,7 @@ impl Device {
                 new_controlees.iter().for_each(|controlee: &Controlee| {
                     let pica_tx = self.pica_tx.clone();
                     let address = MacAddress::Short(controlee.short_address);
-                    let attempt_count = session.app_config.in_band_termination_attempt_count;
+                    let attempt_count = session.app_config.in_band_termination_attempt_count();
                     let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
                     if !dst_addresses.contains(&address) {
                         status = uci::Status::Failed;
@@ -772,12 +774,14 @@ impl Device {
                 }
             }
         }
-        session.app_config.number_of_controlees = dst_addresses.len() as u8;
-        session.app_config.dst_mac_address = dst_addresses.clone();
+        session
+            .app_config
+            .set_number_of_controlees(dst_addresses.len() as u8);
+        session.app_config.set_dst_mac_address(&dst_addresses);
         // If the multicast list becomes empty, the UWBS shall move the session to
         // SESSION_STATE_IDLE by sending the SESSION_STATUS_NTF with Reason Code
         // set to ERROR_INVALID_NUM_OF_CONTROLEES.
-        if session.app_config.dst_mac_address.is_empty() {
+        if dst_addresses.is_empty() {
             session.set_state(
                 SessionState::SessionStateIdle,
                 ReasonCode::ErrorInvalidNumOfControlees,
@@ -809,7 +813,7 @@ impl Device {
         assert!(session.ranging_task.is_none());
 
         let ranging_interval =
-            time::Duration::from_millis(session.app_config.ranging_duration as u64);
+            time::Duration::from_millis(session.app_config.ranging_duration() as u64);
 
         let tx = self.pica_tx.clone();
         let handle = self.handle;

@@ -455,7 +455,7 @@ impl Pica {
 
         // Look for compatible anchors.
         for mac_address in session.get_dst_mac_address() {
-            if let Some(other) = self.anchors.get(mac_address) {
+            if let Some(other) = self.anchors.get(&mac_address) {
                 let Some(local) = self
                     .ranging_estimator
                     .estimate(&device.handle, &other.handle)
@@ -468,7 +468,7 @@ impl Pica {
                 else {
                     continue;
                 };
-                measurements.push(TwoWayRangingMeasurement::new(mac_address, local, remote));
+                measurements.push(TwoWayRangingMeasurement::new(&mac_address, local, remote));
             }
         }
 
@@ -483,7 +483,7 @@ impl Pica {
                     .session(session_id)
                     .unwrap()
                     .app_config
-                    .device_mac_address
+                    .device_mac_address()
                     .unwrap();
                 let Some(local) = self
                     .ranging_estimator
@@ -522,7 +522,7 @@ impl Pica {
                         data_sequence_number: 0x01,
                         pbf: PacketBoundaryFlag::Complete,
                         session_handle: session_id,
-                        source_address: session.app_config.device_mac_address.unwrap().into(),
+                        source_address: session.app_config.device_mac_address().unwrap().into(),
                         status: uci::Status::Ok,
                     }
                     .encode_to_vec()
@@ -531,7 +531,7 @@ impl Pica {
                 .unwrap();
         }
         if session.is_session_info_ntf_enabled() {
-            let ntf_packet = match session.app_config.mac_address_mode {
+            let ntf_packet = match session.app_config.mac_address_mode() {
                 uci::MacAddressMode::Mode0 => Some(
                     ShortMacTwoWaySessionInfoNtf {
                         sequence_number: session.sequence_number,
@@ -639,7 +639,7 @@ impl Pica {
                 continue;
             };
 
-            if session.app_config.device_mac_address != Some(*mac_address) {
+            if session.app_config.device_mac_address() != Some(*mac_address) {
                 continue;
             }
 
