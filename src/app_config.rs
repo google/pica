@@ -1,5 +1,6 @@
 use crate::MacAddress;
 use crate::packets::uci;
+use anyhow::anyhow;
 
 /// [UCI] 8.3 Application Configuration Parameters.
 /// Sub-session Key provided for Provisioned STS for Responder specific Key mode
@@ -199,14 +200,18 @@ impl AppConfig {
             uci::AppConfigTlvType::DeviceMacAddress => {
                 self.device_mac_address = Some(match self.mac_address_mode {
                     uci::MacAddressMode::Mode0 => MacAddress::Short(value.try_into()?),
-                    uci::MacAddressMode::Mode1 => unimplemented!(),
+                    uci::MacAddressMode::Mode1 => {
+                        return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
+                    }
                     uci::MacAddressMode::Mode2 => MacAddress::Extended(value.try_into()?),
                 })
             }
             uci::AppConfigTlvType::DstMacAddress => {
                 let mac_address_size = match self.mac_address_mode {
                     uci::MacAddressMode::Mode0 => 2,
-                    uci::MacAddressMode::Mode1 => unimplemented!(),
+                    uci::MacAddressMode::Mode1 => {
+                        return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
+                    }
                     uci::MacAddressMode::Mode2 => 8,
                 };
                 if value.len() != self.number_of_controlees as usize * mac_address_size {
@@ -218,16 +223,19 @@ impl AppConfig {
                     );
                     anyhow::bail!("invalid dst_mac_address len")
                 }
-                self.dst_mac_address = value
-                    .chunks(mac_address_size)
-                    .map(|value| match self.mac_address_mode {
-                        uci::MacAddressMode::Mode0 => MacAddress::Short(value.try_into().unwrap()),
-                        uci::MacAddressMode::Mode1 => unimplemented!(),
-                        uci::MacAddressMode::Mode2 => {
-                            MacAddress::Extended(value.try_into().unwrap())
-                        }
-                    })
-                    .collect();
+                self.dst_mac_address = match self.mac_address_mode {
+                    uci::MacAddressMode::Mode0 => value
+                        .chunks(mac_address_size)
+                        .map(|value| MacAddress::Short(value.try_into().unwrap()))
+                        .collect(),
+                    uci::MacAddressMode::Mode1 => {
+                        return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
+                    }
+                    uci::MacAddressMode::Mode2 => value
+                        .chunks(mac_address_size)
+                        .map(|value| MacAddress::Extended(value.try_into().unwrap()))
+                        .collect(),
+                };
             }
             uci::AppConfigTlvType::SlotDuration => self.slot_duration = try_parse_u16(value)?,
             uci::AppConfigTlvType::RangingDuration => self.ranging_duration = try_parse_u32(value)?,
@@ -287,7 +295,13 @@ impl AppConfig {
             uci::AppConfigTlvType::KeyRotation => self.key_rotation = try_parse(value)?,
             uci::AppConfigTlvType::KeyRotationRate => self.key_rotation_rate = try_parse_u8(value)?,
             uci::AppConfigTlvType::SessionPriority => self.session_priority = try_parse_u8(value)?,
-            uci::AppConfigTlvType::MacAddressMode => self.mac_address_mode = try_parse(value)?,
+            uci::AppConfigTlvType::MacAddressMode => {
+                let mac_address_mode = try_parse(value)?;
+                if mac_address_mode == uci::MacAddressMode::Mode1 {
+                    return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
+                }
+                self.mac_address_mode = mac_address_mode;
+            }
             uci::AppConfigTlvType::VendorId => self.vendor_id = try_parse_u16(value)?,
             uci::AppConfigTlvType::StaticStsIv => self.static_sts_iv = value.try_into()?,
             uci::AppConfigTlvType::NumberOfStsSegments => {
@@ -504,6 +518,7 @@ impl AppConfig {
     pub fn is_compatible_for_ranging(&self, peer_config: &Self) -> bool {
         self.device_role != peer_config.device_role
             && self.device_type != peer_config.device_type
+            && self.mac_address_mode == peer_config.mac_address_mode
             && peer_config
                 .dst_mac_address
                 .contains(&self.device_mac_address.unwrap())
