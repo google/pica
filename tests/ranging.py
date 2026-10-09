@@ -113,6 +113,12 @@ async def controller(
     assert rsp.status == uci.Status.OK
     assert len(rsp.tlvs) == 58
 
+    host.send_control(uci.SessionQueryMaxDataSizeInRangingCmd(session_token=0))
+    rsp = await host.expect_control(uci.SessionQueryMaxDataSizeInRangingRsp)
+    assert rsp.status == uci.Status.OK
+    assert rsp.session_token == 0
+    assert rsp.max_data_size == 1024
+
     host.send_control(uci.SessionStartCmd(session_id=0))
 
     await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
@@ -341,6 +347,16 @@ async def run(address: str, uci_port: int):
             controller(host0, host1, uci.MacAddressMode.MODE_2, init_device=False),
             controlee(host1, host0, uci.MacAddressMode.MODE_2, init_device=False),
         )
+
+        host0.send_control(uci.CoreQueryTimeStampCmd())
+        rsp1 = await host0.expect_control(uci.CoreQueryTimeStampRsp)
+        assert rsp1.status == uci.Status.OK
+        assert rsp1.timeStamp > 0
+
+        host0.send_control(uci.CoreQueryTimeStampCmd())
+        rsp2 = await host0.expect_control(uci.CoreQueryTimeStampRsp)
+        assert rsp2.status == uci.Status.OK
+        assert rsp2.timeStamp >= rsp1.timeStamp
     finally:
         host0.disconnect()
         host1.disconnect()

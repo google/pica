@@ -17,7 +17,7 @@ use crate::PicaCommand;
 use crate::packets::uci::{self, *};
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pdl_runtime::Packet;
 use tokio::sync::mpsc;
@@ -114,6 +114,7 @@ pub struct Device {
     pica_tx: mpsc::Sender<PicaCommand>,
     country_code: [u8; 2],
     pub n_active_sessions: usize,
+    boot_time: Instant,
 }
 
 impl Device {
@@ -134,6 +135,7 @@ impl Device {
             pica_tx,
             country_code: Default::default(),
             n_active_sessions: 0,
+            boot_time: Instant::now(),
         }
     }
 
@@ -348,6 +350,13 @@ impl Device {
         }
     }
 
+    fn core_query_timestamp(&self) -> CoreQueryTimeStampRsp {
+        CoreQueryTimeStampRsp {
+            status: uci::Status::Ok,
+            timeStamp: self.boot_time.elapsed().as_micros() as u64,
+        }
+    }
+
     fn session_init(&mut self, cmd: SessionInitCmd) -> SessionInitRsp {
         let session_id = cmd.session_id;
         let session_type = cmd.session_type;
@@ -402,6 +411,25 @@ impl Device {
         SessionGetCountRsp {
             status: uci::Status::Ok,
             session_count: self.sessions.len() as u8,
+        }
+    }
+
+    fn session_query_max_data_size_in_ranging(
+        &self,
+        cmd: SessionQueryMaxDataSizeInRangingCmd,
+    ) -> SessionQueryMaxDataSizeInRangingRsp {
+        if self.session(cmd.session_token).is_some() {
+            SessionQueryMaxDataSizeInRangingRsp {
+                session_token: cmd.session_token,
+                status: uci::Status::Ok,
+                max_data_size: MAX_DATA_PACKET_PAYLOAD_SIZE as u16,
+            }
+        } else {
+            SessionQueryMaxDataSizeInRangingRsp {
+                session_token: cmd.session_token,
+                status: uci::Status::ErrorSessionNotExist,
+                max_data_size: 0,
+            }
         }
     }
 
@@ -997,6 +1025,7 @@ impl Device {
                 Ok(CoreGetCapsInfoCmd(cmd)) => self.core_get_caps_info(cmd).try_into().unwrap(),
                 Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).try_into().unwrap(),
                 Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).try_into().unwrap(),
+                Ok(CoreQueryTimeStampCmd(_)) => self.core_query_timestamp().try_into().unwrap(),
                 _ => uci::CorePacket {
                     mt: uci::MessageType::Response,
                     oid: cmd.oid,
@@ -1018,6 +1047,10 @@ impl Device {
                 Ok(SessionGetStateCmd(cmd)) => self.session_get_state(cmd).try_into().unwrap(),
                 Ok(SessionUpdateControllerMulticastListCmd(cmd)) => self
                     .session_update_controller_multicast_list(cmd)
+                    .try_into()
+                    .unwrap(),
+                Ok(SessionQueryMaxDataSizeInRangingCmd(cmd)) => self
+                    .session_query_max_data_size_in_ranging(cmd)
                     .try_into()
                     .unwrap(),
                 _ => uci::SessionConfigPacket {

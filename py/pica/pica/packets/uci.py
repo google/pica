@@ -3600,6 +3600,7 @@ class SessionQueryMaxDataSizeInRangingCmd(SessionConfigPacket):
 @dataclass
 class SessionQueryMaxDataSizeInRangingRsp(SessionConfigPacket):
     session_token: int = field(kw_only=True, default=0)
+    status: Status = field(kw_only=True, default=Status.OK)
     max_data_size: int = field(kw_only=True, default=0)
 
     def __post_init__(self):
@@ -3611,13 +3612,14 @@ class SessionQueryMaxDataSizeInRangingRsp(SessionConfigPacket):
     def parse(fields: dict, span: bytes) -> Tuple['SessionQueryMaxDataSizeInRangingRsp', bytes]:
         if fields['mt'] != MessageType.RESPONSE or fields['oid'] != SessionConfigOpcodeId.QUERY_DATA_SIZE_IN_RANGING or fields['gid'] != GroupId.SESSION_CONFIG:
             raise Exception("Invalid constraint field values")
-        if len(span) < 6:
+        if len(span) < 7:
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
-        value_ = int.from_bytes(span[4:6], byteorder='little')
+        fields['status'] = Status(span[4])
+        value_ = int.from_bytes(span[5:7], byteorder='little')
         fields['max_data_size'] = value_
-        span = span[6:]
+        span = span[7:]
         return SessionQueryMaxDataSizeInRangingRsp(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
@@ -3626,6 +3628,7 @@ class SessionQueryMaxDataSizeInRangingRsp(SessionConfigPacket):
             print(f"Invalid value for field SessionQueryMaxDataSizeInRangingRsp::session_token: {self.session_token} > 4294967295; the value will be truncated")
             self.session_token &= 4294967295
         _span.extend(int.to_bytes((self.session_token << 0), length=4, byteorder='little'))
+        _span.append((self.status << 0))
         if self.max_data_size > 65535:
             print(f"Invalid value for field SessionQueryMaxDataSizeInRangingRsp::max_data_size: {self.max_data_size} > 65535; the value will be truncated")
             self.max_data_size &= 65535
@@ -3634,7 +3637,7 @@ class SessionQueryMaxDataSizeInRangingRsp(SessionConfigPacket):
 
     @property
     def size(self) -> int:
-        return 6
+        return 7
 
 @dataclass
 class SessionStartCmd(SessionControlPacket):
