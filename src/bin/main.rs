@@ -72,7 +72,7 @@ impl pica::RangingEstimator for MockRangingEstimator {
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
