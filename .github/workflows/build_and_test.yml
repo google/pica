@@ -21,10 +21,10 @@ jobs:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
         persist-credentials: false
-    - name: Install Rust 1.85.0
-      uses: dtolnay/rust-toolchain@0acae73baee12cc81c9b1fb9e8f8b7672bf17c6a # 1.85.0
+    - name: Install Rust 1.87.0
+      uses: dtolnay/rust-toolchain@91c3abd82c08dd9739cd868596bc2f9e426bd28e # 1.87.0
       with:
-        toolchain: 1.85.0
+        toolchain: 1.87.0
         targets: ""
         components: rustfmt, clippy
     - name: Set Up Python 3.11
