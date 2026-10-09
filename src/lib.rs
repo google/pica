@@ -211,6 +211,45 @@ impl TwoWayRangingMeasurement {
             }
         }
     }
+
+    fn timeout(mac_address: &MacAddress) -> Self {
+        match mac_address {
+            MacAddress::Short(address) => Self::Short(ShortAddressTwoWayRangingMeasurement {
+                mac_address: u16::from_le_bytes(*address),
+                status: uci::Status::RangingRxTimeout,
+                nlos: 0,
+                distance: 0,
+                aoa_azimuth: 0,
+                aoa_azimuth_fom: 0,
+                aoa_elevation: 0,
+                aoa_elevation_fom: 0,
+                aoa_destination_azimuth: 0,
+                aoa_destination_azimuth_fom: 0,
+                aoa_destination_elevation: 0,
+                aoa_destination_elevation_fom: 0,
+                slot_index: 0,
+                rssi: 0,
+            }),
+            MacAddress::Extended(address) => {
+                Self::Extended(ExtendedAddressTwoWayRangingMeasurement {
+                    mac_address: u64::from_le_bytes(*address),
+                    status: uci::Status::RangingRxTimeout,
+                    nlos: 0,
+                    distance: 0,
+                    aoa_azimuth: 0,
+                    aoa_azimuth_fom: 0,
+                    aoa_elevation: 0,
+                    aoa_elevation_fom: 0,
+                    aoa_destination_azimuth: 0,
+                    aoa_destination_azimuth_fom: 0,
+                    aoa_destination_elevation: 0,
+                    aoa_destination_elevation_fom: 0,
+                    slot_index: 0,
+                    rssi: 0,
+                })
+            }
+        }
+    }
 }
 
 impl Pica {
@@ -453,55 +492,42 @@ impl Pica {
         let mut data_transfer = Vec::new();
         let mut measurements = Vec::new();
 
-        // Look for compatible anchors.
         for mac_address in session.get_dst_mac_address() {
-            if let Some(other) = self.anchors.get(&mac_address) {
-                let Some(local) = self
-                    .ranging_estimator
-                    .estimate(&device.handle, &other.handle)
-                else {
-                    continue;
-                };
-                let Some(remote) = self
-                    .ranging_estimator
-                    .estimate(&other.handle, &device.handle)
-                else {
-                    continue;
-                };
-                measurements.push(TwoWayRangingMeasurement::new(&mac_address, local, remote));
-            }
+            let peer_handle = self
+                .anchors
+                .get(&mac_address)
+                .map(|anchor| anchor.handle)
+                .or_else(|| {
+                    self.devices
+                        .values()
+                        .find(|peer_device| {
+                            peer_device.handle != device_handle
+                                && peer_device.can_start_ranging(session, session_id)
+                                && peer_device
+                                    .session(session_id)
+                                    .and_then(|s| s.app_config.device_mac_address())
+                                    == Some(mac_address)
+                        })
+                        .map(|peer_device| peer_device.handle)
+                });
+            let measurement = peer_handle
+                .and_then(|peer_handle| {
+                    let local = self
+                        .ranging_estimator
+                        .estimate(&device.handle, &peer_handle)?;
+                    let remote = self
+                        .ranging_estimator
+                        .estimate(&peer_handle, &device.handle)?;
+                    Some(TwoWayRangingMeasurement::new(&mac_address, local, remote))
+                })
+                .unwrap_or_else(|| TwoWayRangingMeasurement::timeout(&mac_address));
+            measurements.push(measurement);
         }
 
-        // Look for compatible ranging sessions in other devices.
+        // Look for compatible data transfer sessions in other devices.
         for peer_device in self.devices.values() {
             if peer_device.handle == device_handle {
                 continue;
-            }
-
-            if peer_device.can_start_ranging(session, session_id) {
-                let peer_mac_address = peer_device
-                    .session(session_id)
-                    .unwrap()
-                    .app_config
-                    .device_mac_address()
-                    .unwrap();
-                let Some(local) = self
-                    .ranging_estimator
-                    .estimate(&device.handle, &peer_device.handle)
-                else {
-                    continue;
-                };
-                let Some(remote) = self
-                    .ranging_estimator
-                    .estimate(&peer_device.handle, &device.handle)
-                else {
-                    continue;
-                };
-                measurements.push(TwoWayRangingMeasurement::new(
-                    &peer_mac_address,
-                    local,
-                    remote,
-                ));
             }
 
             if device.can_start_data_transfer(session_id)
