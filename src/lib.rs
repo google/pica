@@ -160,30 +160,56 @@ const fn degrees_to_q9_7(deg: i16) -> i16 {
     deg << 7
 }
 
-fn make_measurement(
-    mac_address: &MacAddress,
-    local: RangingMeasurement,
-    remote: RangingMeasurement,
-) -> ShortAddressTwoWayRangingMeasurement {
-    if let MacAddress::Short(address) = mac_address {
-        ShortAddressTwoWayRangingMeasurement {
-            mac_address: u16::from_le_bytes(*address),
-            status: uci::Status::Ok,
-            nlos: 0, // in Line Of Sight
-            distance: local.range,
-            aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
-            aoa_azimuth_fom: 100, // Yup, pretty sure about this
-            aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
-            aoa_elevation_fom: 100, // Yup, pretty sure about this
-            aoa_destination_azimuth: degrees_to_q9_7(remote.azimuth) as u16,
-            aoa_destination_azimuth_fom: 100,
-            aoa_destination_elevation: degrees_to_q9_7(i16::from(remote.elevation)) as u16,
-            aoa_destination_elevation_fom: 100,
-            slot_index: 0,
-            rssi: u8::MAX,
+#[derive(Debug)]
+enum TwoWayRangingMeasurement {
+    Short(ShortAddressTwoWayRangingMeasurement),
+    Extended(ExtendedAddressTwoWayRangingMeasurement),
+}
+
+impl TwoWayRangingMeasurement {
+    fn new(
+        mac_address: &MacAddress,
+        local: RangingMeasurement,
+        remote: RangingMeasurement,
+    ) -> Self {
+        match mac_address {
+            MacAddress::Short(address) => {
+                Self::Short(ShortAddressTwoWayRangingMeasurement {
+                    mac_address: u16::from_le_bytes(*address),
+                    status: uci::Status::Ok,
+                    nlos: 0, // in Line Of Sight
+                    distance: local.range,
+                    aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
+                    aoa_azimuth_fom: 100, // Yup, pretty sure about this
+                    aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
+                    aoa_elevation_fom: 100, // Yup, pretty sure about this
+                    aoa_destination_azimuth: degrees_to_q9_7(remote.azimuth) as u16,
+                    aoa_destination_azimuth_fom: 100,
+                    aoa_destination_elevation: degrees_to_q9_7(i16::from(remote.elevation)) as u16,
+                    aoa_destination_elevation_fom: 100,
+                    slot_index: 0,
+                    rssi: u8::MAX,
+                })
+            }
+            MacAddress::Extended(address) => {
+                Self::Extended(ExtendedAddressTwoWayRangingMeasurement {
+                    mac_address: u64::from_le_bytes(*address),
+                    status: uci::Status::Ok,
+                    nlos: 0,
+                    distance: local.range,
+                    aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
+                    aoa_azimuth_fom: 100,
+                    aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
+                    aoa_elevation_fom: 100,
+                    aoa_destination_azimuth: degrees_to_q9_7(remote.azimuth) as u16,
+                    aoa_destination_azimuth_fom: 100,
+                    aoa_destination_elevation: degrees_to_q9_7(i16::from(remote.elevation)) as u16,
+                    aoa_destination_elevation_fom: 100,
+                    slot_index: 0,
+                    rssi: u8::MAX,
+                })
+            }
         }
-    } else {
-        panic!("Extended address is not supported.")
     }
 }
 
@@ -353,12 +379,22 @@ impl Pica {
         let disconnect_tx = self.command_tx.clone();
         let pcapng_dir = self.pcapng_dir.clone();
 
-        let handle = self.counter;
-        self.counter += 1;
+        let initial_counter = self.counter;
+        let (handle, mac_address) = loop {
+            let handle = self.counter;
+            self.counter += 1;
+            let mac_address = MacAddress::Short((handle as u16).to_be_bytes());
+            if self.get_category(&mac_address).is_none() {
+                break (handle, mac_address);
+            }
+            if self.counter as u16 == initial_counter as u16 {
+                self.counter = initial_counter;
+                anyhow::bail!("No available short MAC address for new device");
+            }
+        };
 
         log::debug!("[{}] Connecting device", handle);
 
-        let mac_address = MacAddress::Short((handle as u16).to_be_bytes());
         let mut device = Device::new(handle, mac_address, packet_tx, self.command_tx.clone());
         device.init();
 
@@ -432,7 +468,7 @@ impl Pica {
                 else {
                     continue;
                 };
-                measurements.push(make_measurement(mac_address, local, remote));
+                measurements.push(TwoWayRangingMeasurement::new(mac_address, local, remote));
             }
         }
 
@@ -461,7 +497,11 @@ impl Pica {
                 else {
                     continue;
                 };
-                measurements.push(make_measurement(&peer_mac_address, local, remote));
+                measurements.push(TwoWayRangingMeasurement::new(
+                    &peer_mac_address,
+                    local,
+                    remote,
+                ));
             }
 
             if device.can_start_data_transfer(session_id)
@@ -491,27 +531,57 @@ impl Pica {
                 .unwrap();
         }
         if session.is_session_info_ntf_enabled() {
-            device
-                .tx
-                .send(
-                    // TODO: support extended address
+            let ntf_packet = match session.app_config.mac_address_mode {
+                uci::MacAddressMode::Mode0 => Some(
                     ShortMacTwoWaySessionInfoNtf {
                         sequence_number: session.sequence_number,
                         session_token: session_id,
                         rcr_indicator: 0,            //TODO
                         current_ranging_interval: 0, //TODO
-                        two_way_ranging_measurements: measurements,
+                        two_way_ranging_measurements: measurements
+                            .into_iter()
+                            .filter_map(|m| match m {
+                                TwoWayRangingMeasurement::Short(m) => Some(m),
+                                TwoWayRangingMeasurement::Extended(_) => None,
+                            })
+                            .collect(),
                         vendor_data: vec![],
                     }
                     .encode_to_vec()
                     .unwrap(),
-                )
-                .unwrap();
+                ),
+                uci::MacAddressMode::Mode2 => Some(
+                    ExtendedMacTwoWaySessionInfoNtf {
+                        sequence_number: session.sequence_number,
+                        session_token: session_id,
+                        rcr_indicator: 0,            //TODO
+                        current_ranging_interval: 0, //TODO
+                        two_way_ranging_measurements: measurements
+                            .into_iter()
+                            .filter_map(|m| match m {
+                                TwoWayRangingMeasurement::Extended(m) => Some(m),
+                                TwoWayRangingMeasurement::Short(_) => None,
+                            })
+                            .collect(),
+                        vendor_data: vec![],
+                    }
+                    .encode_to_vec()
+                    .unwrap(),
+                ),
+                mode => {
+                    log::warn!("Unsupported MAC address mode {:?}", mode);
+                    None
+                }
+            };
 
-            let device = self.get_device_mut(device_handle).unwrap();
-            let session = device.session_mut(session_id).unwrap();
+            if let Some(packet) = ntf_packet {
+                device.tx.send(packet).unwrap();
 
-            session.sequence_number += 1;
+                let device = self.get_device_mut(device_handle).unwrap();
+                let session = device.session_mut(session_id).unwrap();
+
+                session.sequence_number += 1;
+            }
         }
 
         // TODO: Clean the data only when all the data is transfered

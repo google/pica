@@ -31,6 +31,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "pica"
 path = "src/bin/main.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "pica-http"
@@ -41,8 +42,13 @@ required-features = ["web"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("serde"))'] }
 
 [features]
-default = ["web"]
+default = ["cli", "web"]
+cli = [
+  "dep:clap",
+  "dep:env_logger",
+]
 web = [
+  "dep:clap",
   "dep:glam",
   "dep:hyper",
   "dep:serde_json",
@@ -57,12 +63,12 @@ pdl-compiler = "0.5.2"
 anyhow = "1.0.56"
 bytes = "1"
 futures = "0.3.30"
-clap = { version = "4.1.8", default-features = false, features = ["derive", "error-context", "help", "std", "usage"] }
+clap = { version = "4.1.8", default-features = false, features = ["derive", "error-context", "help", "std", "usage"], optional = true }
 glam = { version = "0.25.0", optional = true }
 hex = "0.4.3"
 hyper = { version = "0.14", features = ["server", "stream", "http1", "tcp"], optional = true }
 log = "0.4.20"
-env_logger = "0.11.1"
+env_logger = { version = "0.11.1", optional = true }
 pdl-runtime = "0.5.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", optional = true }

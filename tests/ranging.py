@@ -23,8 +23,14 @@ from pica.packets import uci
 from .helper import init
 
 
-async def controller(host: Host, peer: Host):
-    await init(host)
+async def controller(
+    host: Host,
+    peer: Host,
+    mac_address_mode: uci.MacAddressMode = uci.MacAddressMode.MODE_0,
+    init_device: bool = True,
+):
+    if init_device:
+        await init(host)
 
     host.send_control(
         uci.SessionInitCmd(
@@ -62,7 +68,7 @@ async def controller(host: Host, peer: Host):
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
-                    v=bytes([uci.MacAddressMode.MODE_0]),
+                    v=bytes([mac_address_mode]),
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
@@ -117,9 +123,20 @@ async def controller(host: Host, peer: Host):
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
-    for _ in range(1, 3):
-        event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+    ntf_type = (
+        uci.ShortMacTwoWaySessionInfoNtf
+        if mac_address_mode == uci.MacAddressMode.MODE_0
+        else uci.ExtendedMacTwoWaySessionInfoNtf
+    )
+    expected_mac = int.from_bytes(peer.mac_address, byteorder="little")
+
+    for i in range(1, 3):
+        event = await host.expect_control(ntf_type, timeout=2.0)
         event.show()
+        if i == 1 or len(event.two_way_ranging_measurements) > 0:
+            assert len(event.two_way_ranging_measurements) == 1
+            assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+            assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
@@ -141,9 +158,23 @@ async def controller(host: Host, peer: Host):
 
     await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
 
-async def controlee(host: Host, peer: Host):
-    await init(host)
+
+async def controlee(
+    host: Host,
+    peer: Host,
+    mac_address_mode: uci.MacAddressMode = uci.MacAddressMode.MODE_0,
+    init_device: bool = True,
+):
+    if init_device:
+        await init(host)
 
     host.send_control(
         uci.SessionInitCmd(
@@ -181,7 +212,7 @@ async def controlee(host: Host, peer: Host):
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
-                    v=bytes([uci.MacAddressMode.MODE_0]),
+                    v=bytes([mac_address_mode]),
                 ),
                 uci.AppConfigTlv(
                     cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
@@ -236,9 +267,20 @@ async def controlee(host: Host, peer: Host):
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
-    for _ in range(1, 3):
-        event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+    ntf_type = (
+        uci.ShortMacTwoWaySessionInfoNtf
+        if mac_address_mode == uci.MacAddressMode.MODE_0
+        else uci.ExtendedMacTwoWaySessionInfoNtf
+    )
+    expected_mac = int.from_bytes(peer.mac_address, byteorder="little")
+
+    for i in range(1, 3):
+        event = await host.expect_control(ntf_type, timeout=2.0)
         event.show()
+        if i == 1 or len(event.two_way_ranging_measurements) > 0:
+            assert len(event.two_way_ranging_measurements) == 1
+            assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+            assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
@@ -260,6 +302,14 @@ async def controlee(host: Host, peer: Host):
 
     await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
 
 async def run(address: str, uci_port: int):
     try:
@@ -272,12 +322,22 @@ async def run(address: str, uci_port: int):
         )
         exit(1)
 
-    async with asyncio.TaskGroup() as tg:
-        tg.create_task(controller(host0, host1))
-        tg.create_task(controlee(host1, host0))
+    try:
+        await asyncio.gather(
+            controller(host0, host1),
+            controlee(host1, host0),
+        )
 
-    host0.disconnect()
-    host1.disconnect()
+        # Re-run ranging on the connected hosts using 8-byte extended MAC addresses (MODE_2).
+        host0.mac_address = (1).to_bytes(8, "big")
+        host1.mac_address = (2).to_bytes(8, "big")
+        await asyncio.gather(
+            controller(host0, host1, uci.MacAddressMode.MODE_2, init_device=False),
+            controlee(host1, host0, uci.MacAddressMode.MODE_2, init_device=False),
+        )
+    finally:
+        host0.disconnect()
+        host1.disconnect()
 
     logging.debug("Ranging test completed")
 

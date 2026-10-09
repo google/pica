@@ -447,7 +447,17 @@ impl Device {
         } else {
             let mut app_config = session.app_config.clone();
             let mut invalid_parameters = vec![];
-            for cfg in cmd.tlvs {
+            // Defer DeviceMacAddress and DstMacAddress so MacAddressMode and
+            // NumberOfControlees take effect first regardless of TLV order in the command.
+            let (deferred_tlvs, immediate_tlvs): (Vec<_>, Vec<_>) =
+                cmd.tlvs.into_iter().partition(|cfg| {
+                    matches!(
+                        cfg.cfg_id,
+                        uci::AppConfigTlvType::DeviceMacAddress
+                            | uci::AppConfigTlvType::DstMacAddress
+                    )
+                });
+            for cfg in immediate_tlvs.into_iter().chain(deferred_tlvs) {
                 match app_config.set(cfg.cfg_id, &cfg.v) {
                     Ok(_) => (),
                     Err(_) => invalid_parameters.push(AppConfigStatus {
@@ -678,33 +688,24 @@ impl Device {
                         status = uci::Status::Failed;
                         update_status = MulticastUpdateStatus::ErrorSubSessionKeyNotApplicable;
                         controlee_status_ntf.push(ControleeStatus {
-                            mac_address: match controlee.short_address {
-                                MacAddress::Short(address) => address,
-                                MacAddress::Extended(_) => {
-                                    panic!("Extended address is not supported!")
-                                }
-                            },
+                            mac_address: controlee.short_address,
                             status: update_status,
                         });
                     } else {
-                        if !dst_addresses.contains(&controlee.short_address) {
+                        let address = MacAddress::Short(controlee.short_address);
+                        if !dst_addresses.contains(&address) {
                             if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
                                 status = uci::Status::ErrorMulticastListFull;
                                 update_status = MulticastUpdateStatus::ErrorMulticastListFull;
                             } else {
-                                dst_addresses.push(controlee.short_address);
+                                dst_addresses.push(address);
                             };
                         } else {
                             status = uci::Status::Failed;
                             update_status = MulticastUpdateStatus::ErrorAddressAlreadyPresent;
                         }
                         controlee_status_rsp.push(ControleeStatus {
-                            mac_address: match controlee.short_address {
-                                MacAddress::Short(address) => address,
-                                MacAddress::Extended(_) => {
-                                    panic!("Extended address is not supported!")
-                                }
-                            },
+                            mac_address: controlee.short_address,
                             status: update_status,
                         });
                     }
@@ -713,7 +714,7 @@ impl Device {
             UpdateMulticastListAction::RemoveControlee => {
                 new_controlees.iter().for_each(|controlee: &Controlee| {
                     let pica_tx = self.pica_tx.clone();
-                    let address = controlee.short_address;
+                    let address = MacAddress::Short(controlee.short_address);
                     let attempt_count = session.app_config.in_band_termination_attempt_count;
                     let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
                     if !dst_addresses.contains(&address) {
@@ -736,20 +737,12 @@ impl Device {
                             });
                         }
                         controlee_status_ntf.push(ControleeStatus {
-                            mac_address: match address {
-                                MacAddress::Short(addr) => addr,
-                                MacAddress::Extended(_) => {
-                                    panic!("Extended address is not supported!")
-                                }
-                            },
+                            mac_address: controlee.short_address,
                             status: update_status,
                         });
                     }
                     controlee_status_rsp.push(ControleeStatus {
-                        mac_address: match address {
-                            MacAddress::Short(addr) => addr,
-                            MacAddress::Extended(_) => panic!("Extended address is not supported!"),
-                        },
+                        mac_address: controlee.short_address,
                         status: update_status,
                     });
                 });
@@ -1147,7 +1140,7 @@ impl Device {
 }
 
 struct Controlee {
-    short_address: MacAddress,
+    short_address: [u8; 2],
     #[allow(dead_code)]
     sub_session_id: u32,
     #[allow(dead_code)]
@@ -1157,7 +1150,7 @@ struct Controlee {
 impl From<&uci::Controlee> for Controlee {
     fn from(value: &uci::Controlee) -> Self {
         Controlee {
-            short_address: MacAddress::Short(value.short_address),
+            short_address: value.short_address,
             sub_session_id: value.subsession_id,
             session_key: SubSessionKey::None,
         }
@@ -1167,7 +1160,7 @@ impl From<&uci::Controlee> for Controlee {
 impl From<&uci::Controlee_V2_0_16_Byte_Version> for Controlee {
     fn from(value: &uci::Controlee_V2_0_16_Byte_Version) -> Self {
         Controlee {
-            short_address: MacAddress::Short(value.short_address),
+            short_address: value.short_address,
             sub_session_id: value.subsession_id,
             session_key: SubSessionKey::Short(value.subsession_key),
         }
@@ -1177,7 +1170,7 @@ impl From<&uci::Controlee_V2_0_16_Byte_Version> for Controlee {
 impl From<&uci::Controlee_V2_0_32_Byte_Version> for Controlee {
     fn from(value: &uci::Controlee_V2_0_32_Byte_Version) -> Self {
         Controlee {
-            short_address: MacAddress::Short(value.short_address),
+            short_address: value.short_address,
             sub_session_id: value.subsession_id,
             session_key: SubSessionKey::Extended(value.subsession_key),
         }
