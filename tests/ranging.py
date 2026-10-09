@@ -107,6 +107,12 @@ async def controller(
         )
     )
 
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=0, app_cfg=[]))
+
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    assert len(rsp.tlvs) == 58
+
     host.send_control(uci.SessionStartCmd(session_id=0))
 
     await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))

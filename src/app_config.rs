@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
+use bytes::Bytes;
+
 use crate::MacAddress;
 use crate::packets::uci;
-use anyhow::anyhow;
 
 /// [UCI] 8.3 Application Configuration Parameters.
 /// Sub-session Key provided for Provisioned STS for Responder specific Key mode
@@ -12,6 +15,16 @@ pub enum SubSessionKey {
     Extended([u8; 32]),
 }
 
+const DEFAULT_STS_CONFIG: uci::StsConfig = uci::StsConfig::Static;
+const DEFAULT_NUMBER_OF_CONTROLEES: u8 = 1;
+const DEFAULT_RANGING_DURATION: u32 = 200;
+const DEFAULT_SESSION_INFO_NTF_CONFIG: uci::SessionInfoNtfConfig =
+    uci::SessionInfoNtfConfig::Enable;
+const DEFAULT_MAC_ADDRESS_MODE: uci::MacAddressMode = uci::MacAddressMode::Mode0;
+const DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT: u8 = 1;
+const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferStatusNtfConfig =
+    uci::SessionDataTransferStatusNtfConfig::Disable;
+
 /// [UCI] 8.3 Application Configuration Parameters.
 /// The configuration is initially filled with default values from the
 /// specification.
@@ -22,150 +35,232 @@ pub enum SubSessionKey {
 /// SESSION_STATE_IDLE.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AppConfig {
-    pub device_type: Option<uci::DeviceType>,
-    pub ranging_round_usage: Option<uci::RangingRoundUsage>,
-    pub sts_config: uci::StsConfig,
-    pub multi_node_mode: Option<uci::MultiNodeMode>,
-    channel_number: uci::ChannelNumber,
-    /// Number of Controlees(N) 1<=N<=8 (Default is 1)
-    pub number_of_controlees: u8,
-    /// MAC Address of the UWBS itself participating in UWB session.
-    /// The short address (2 bytes) or extended MAC address (8 bytes)
-    /// shall be indicated via MAC_ADDRESS_MODE config.
-    pub device_mac_address: Option<MacAddress>,
-    /// MAC Address list(N) for NUMBER_OF_CONTROLEES
-    /// devices participating in UWB Session.
-    ///
-    /// The size of this list shall be:
-    /// - equal to 1 when MULTI_NODE_MODE is set 0x00 (O2O).
-    /// - ranging from 1 to 8 when MULTI_NODE_MODE is set to 0x01 (O2M).
-    pub dst_mac_address: Vec<MacAddress>,
-    slot_duration: u16,
-    pub ranging_duration: u32,
-    sts_index: u32,
-    mac_fcs_type: uci::MacFcsType,
-    ranging_round_control: u8,
-    aoa_result_req: uci::AoaResultReq,
-    pub session_info_ntf_config: uci::SessionInfoNtfConfig,
-    near_proximity_config: u16,
-    far_proximity_config: u16,
-    pub device_role: Option<uci::DeviceRole>,
-    rframe_config: uci::RframeConfig,
-    rssi_reporting: uci::RssiReporting,
-    preamble_code_index: u8,
-    sfd_id: u8,
-    psdu_data_rate: uci::PsduDataRate,
-    preamble_duration: uci::PreambleDuration,
-    link_layer_mode: uci::LinkLayerMode,
-    data_repetition_count: u8,
-    ranging_time_struct: uci::RangingTimeStruct,
-    slots_per_rr: u8,
-    aoa_bound_config: [u16; 4],
-    prf_mode: uci::PrfMode,
-    cap_size_range: [u8; 2],
-    tx_jitter_window_size: u8,
-    pub schedule_mode: Option<uci::ScheduleMode>,
-    key_rotation: uci::KeyRotation,
-    key_rotation_rate: u8,
-    session_priority: u8,
-    pub mac_address_mode: uci::MacAddressMode,
-    vendor_id: u16,
-    static_sts_iv: [u8; 6],
-    number_of_sts_segments: u8,
-    max_rr_retry: u16,
-    uwb_initiation_time: u64,
-    hopping_mode: uci::HoppingMode,
-    block_stride_length: u8,
-    result_report_config: u8,
-    pub in_band_termination_attempt_count: u8,
-    sub_session_id: u32,
-    bprf_phr_data_rate: uci::BprfPhrDataRate,
-    max_number_of_measurements: u16,
-    sts_length: uci::StsLength,
-    min_frames_per_rr: u8,
-    mtu_size: u16,
-    inter_frame_interval: u8,
-    session_key: Vec<u8>,
-    sub_session_key: SubSessionKey,
-    pub session_data_transfer_status_ntf_config: uci::SessionDataTransferStatusNtfConfig,
-    session_time_base: [u8; 9],
-    application_data_endpoint: u8,
+    tlvs: HashMap<uci::AppConfigTlvType, Bytes>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        AppConfig {
-            device_type: None,
-            ranging_round_usage: None,
-            sts_config: uci::StsConfig::Static,
-            multi_node_mode: None,
-            channel_number: uci::ChannelNumber::ChannelNumber9,
-            number_of_controlees: 1,
-            device_mac_address: None,
-            dst_mac_address: vec![],
-            slot_duration: 2400,
-            ranging_duration: 200,
-            sts_index: 0,
-            mac_fcs_type: uci::MacFcsType::Crc16,
-            // The default is 0x03 when Time Scheduled Ranging is used,
-            // 0x06 when Contention-based Ranging is used.
-            ranging_round_control: 0x06,
-            aoa_result_req: uci::AoaResultReq::AoaEnabled,
-            session_info_ntf_config: uci::SessionInfoNtfConfig::Enable,
-            near_proximity_config: 0,
-            far_proximity_config: 20000,
-            device_role: None,
-            rframe_config: uci::RframeConfig::Sp3,
-            rssi_reporting: uci::RssiReporting::Disable,
-            preamble_code_index: 10,
-            sfd_id: 2,
-            psdu_data_rate: uci::PsduDataRate::DataRate6m81,
-            preamble_duration: uci::PreambleDuration::Duration64Symbols,
-            link_layer_mode: uci::LinkLayerMode::BypassMode,
-            data_repetition_count: 0,
-            ranging_time_struct: uci::RangingTimeStruct::BlockBasedScheduling,
-            slots_per_rr: 25,
-            aoa_bound_config: [0; 4],
-            prf_mode: uci::PrfMode::BprfMode,
-            // Default for Octet[0] is SLOTS_PER_RR - 1
-            cap_size_range: [24, 5],
-            tx_jitter_window_size: 0,
-            schedule_mode: None,
-            key_rotation: uci::KeyRotation::Disable,
-            key_rotation_rate: 0,
-            session_priority: 50,
-            mac_address_mode: uci::MacAddressMode::Mode0,
-            vendor_id: 0,
-            static_sts_iv: [0; 6],
-            number_of_sts_segments: 1,
-            max_rr_retry: 0,
-            uwb_initiation_time: 0,
-            hopping_mode: uci::HoppingMode::Disable,
-            block_stride_length: 0,
-            result_report_config: 0x01,
-            in_band_termination_attempt_count: 1,
-            sub_session_id: 0, // XX
-            bprf_phr_data_rate: uci::BprfPhrDataRate::DataRate850k,
-            max_number_of_measurements: 0,
-            sts_length: uci::StsLength::Length64Symbols,
-            min_frames_per_rr: 4,
-            mtu_size: 0, // XX
-            inter_frame_interval: 1,
-            session_key: vec![],
-            sub_session_key: SubSessionKey::None,
-            session_data_transfer_status_ntf_config:
-                uci::SessionDataTransferStatusNtfConfig::Disable,
-            session_time_base: [0; 9],
-            application_data_endpoint: 0,
+        Self {
+            tlvs: HashMap::from([
+                (
+                    uci::AppConfigTlvType::StsConfig,
+                    Bytes::from_static(&[DEFAULT_STS_CONFIG as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::ChannelNumber,
+                    Bytes::from_static(&[uci::ChannelNumber::ChannelNumber9 as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::NumberOfControlees,
+                    Bytes::from_static(&[DEFAULT_NUMBER_OF_CONTROLEES]),
+                ),
+                (uci::AppConfigTlvType::DstMacAddress, Bytes::new()),
+                (
+                    uci::AppConfigTlvType::SlotDuration,
+                    Bytes::from_static(const { &2400u16.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::RangingDuration,
+                    Bytes::from_static(const { &DEFAULT_RANGING_DURATION.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::StsIndex,
+                    Bytes::from_static(const { &0u32.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::MacFcsType,
+                    Bytes::from_static(&[uci::MacFcsType::Crc16 as u8]),
+                ),
+                // The default is 0x03 when Time Scheduled Ranging is used,
+                // 0x06 when Contention-based Ranging is used.
+                (
+                    uci::AppConfigTlvType::RangingRoundControl,
+                    Bytes::from_static(&[0x06]),
+                ),
+                (
+                    uci::AppConfigTlvType::AoaResultReq,
+                    Bytes::from_static(&[uci::AoaResultReq::AoaEnabled as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::SessionInfoNtfConfig,
+                    Bytes::from_static(&[DEFAULT_SESSION_INFO_NTF_CONFIG as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::NearProximityConfig,
+                    Bytes::from_static(const { &0u16.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::FarProximityConfig,
+                    Bytes::from_static(const { &20000u16.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::RframeConfig,
+                    Bytes::from_static(&[uci::RframeConfig::Sp3 as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::RssiReporting,
+                    Bytes::from_static(&[uci::RssiReporting::Disable as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::PreambleCodeIndex,
+                    Bytes::from_static(&[10]),
+                ),
+                (uci::AppConfigTlvType::SfdId, Bytes::from_static(&[2])),
+                (
+                    uci::AppConfigTlvType::PsduDataRate,
+                    Bytes::from_static(&[uci::PsduDataRate::DataRate6m81 as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::PreambleDuration,
+                    Bytes::from_static(&[uci::PreambleDuration::Duration64Symbols as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::LinkLayerMode,
+                    Bytes::from_static(&[uci::LinkLayerMode::BypassMode as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::DataRepetitionCount,
+                    Bytes::from_static(&[0]),
+                ),
+                (
+                    uci::AppConfigTlvType::RangingTimeStruct,
+                    Bytes::from_static(&[uci::RangingTimeStruct::BlockBasedScheduling as u8]),
+                ),
+                (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[25])),
+                (
+                    uci::AppConfigTlvType::AoaBoundConfig,
+                    Bytes::from_static(&[0u8; 8]),
+                ),
+                (
+                    uci::AppConfigTlvType::PrfMode,
+                    Bytes::from_static(&[uci::PrfMode::BprfMode as u8]),
+                ),
+                // Default for Octet[0] is SLOTS_PER_RR - 1
+                (
+                    uci::AppConfigTlvType::CapSizeRange,
+                    Bytes::from_static(&[24, 5]),
+                ),
+                (
+                    uci::AppConfigTlvType::TxJitterWindowSize,
+                    Bytes::from_static(&[0]),
+                ),
+                (
+                    uci::AppConfigTlvType::KeyRotation,
+                    Bytes::from_static(&[uci::KeyRotation::Disable as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::KeyRotationRate,
+                    Bytes::from_static(&[0]),
+                ),
+                (
+                    uci::AppConfigTlvType::SessionPriority,
+                    Bytes::from_static(&[50]),
+                ),
+                (
+                    uci::AppConfigTlvType::MacAddressMode,
+                    Bytes::from_static(&[DEFAULT_MAC_ADDRESS_MODE as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::VendorId,
+                    Bytes::from_static(const { &0u16.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::StaticStsIv,
+                    Bytes::from_static(&[0u8; 6]),
+                ),
+                (
+                    uci::AppConfigTlvType::NumberOfStsSegments,
+                    Bytes::from_static(&[1]),
+                ),
+                (
+                    uci::AppConfigTlvType::MaxRrRetry,
+                    Bytes::from_static(const { &0u16.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::UwbInitiationTime,
+                    Bytes::from_static(&[0u8; 8]),
+                ),
+                (
+                    uci::AppConfigTlvType::HoppingMode,
+                    Bytes::from_static(&[uci::HoppingMode::Disable as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::BlockStrideLength,
+                    Bytes::from_static(&[0]),
+                ),
+                (
+                    uci::AppConfigTlvType::ResultReportConfig,
+                    Bytes::from_static(&[0x01]),
+                ),
+                (
+                    uci::AppConfigTlvType::InBandTerminationAttemptCount,
+                    Bytes::from_static(&[DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT]),
+                ),
+                (
+                    uci::AppConfigTlvType::SubSessionId,
+                    Bytes::from_static(const { &0u32.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::BprfPhrDataRate,
+                    Bytes::from_static(&[uci::BprfPhrDataRate::DataRate850k as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::MaxNumberOfMeasurements,
+                    Bytes::from_static(const { &0u16.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::StsLength,
+                    Bytes::from_static(&[uci::StsLength::Length64Symbols as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::MinFramesPerRr,
+                    Bytes::from_static(&[4]),
+                ),
+                (
+                    uci::AppConfigTlvType::MtuSize,
+                    Bytes::from_static(const { &0u16.to_le_bytes() }),
+                ),
+                (
+                    uci::AppConfigTlvType::InterFrameInterval,
+                    Bytes::from_static(&[1]),
+                ),
+                (uci::AppConfigTlvType::SessionKey, Bytes::new()),
+                (uci::AppConfigTlvType::SubSessionKey, Bytes::new()),
+                (
+                    uci::AppConfigTlvType::SessionDataTransferStatusNtfConfig,
+                    Bytes::from_static(&[DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::SessionTimeBase,
+                    Bytes::from_static(&[0u8; 9]),
+                ),
+                (
+                    uci::AppConfigTlvType::ApplicationDataEndpoint,
+                    Bytes::from_static(&[0]),
+                ),
+            ]),
         }
     }
 }
 
 impl AppConfig {
-    /// Set the APP configuration value with the selected identifier
-    /// and value. Returns `Ok` if the identifier is known and the value
-    /// well formatted, `Err` otherwise.
-    pub fn set(&mut self, id: uci::AppConfigTlvType, value: &[u8]) -> anyhow::Result<()> {
+    /// Retrieve the APP configuration value with the selected identifier
+    /// Returns `Some` if the identifier is set, `None` otherwise.
+    pub fn get(&self, id: uci::AppConfigTlvType) -> Option<&Bytes> {
+        self.tlvs.get(&id)
+    }
+
+    pub fn to_tlvs(&self) -> Vec<uci::AppConfigTlv> {
+        self.tlvs
+            .iter()
+            .map(|(&cfg_id, v)| uci::AppConfigTlv {
+                cfg_id,
+                v: v.to_vec(),
+            })
+            .collect()
+    }
+
+    fn validate(&self, id: uci::AppConfigTlvType, value: &[u8]) -> anyhow::Result<()> {
         fn try_parse<T: TryFrom<u8, Error = u8>>(value: &[u8]) -> anyhow::Result<T> {
             T::try_from(u8::from_le_bytes(value.try_into()?)).map_err(anyhow::Error::msg)
         }
@@ -187,172 +282,169 @@ impl AppConfig {
         }
 
         match id {
-            uci::AppConfigTlvType::DeviceType => self.device_type = Some(try_parse(value)?),
+            uci::AppConfigTlvType::DeviceType => {
+                let _ = try_parse::<uci::DeviceType>(value)?;
+            }
             uci::AppConfigTlvType::RangingRoundUsage => {
-                self.ranging_round_usage = Some(try_parse(value)?)
+                let _ = try_parse::<uci::RangingRoundUsage>(value)?;
             }
-            uci::AppConfigTlvType::StsConfig => self.sts_config = try_parse(value)?,
-            uci::AppConfigTlvType::MultiNodeMode => self.multi_node_mode = Some(try_parse(value)?),
-            uci::AppConfigTlvType::ChannelNumber => self.channel_number = try_parse(value)?,
-            uci::AppConfigTlvType::NumberOfControlees => {
-                self.number_of_controlees = try_parse_u8(value)?
+            uci::AppConfigTlvType::StsConfig => {
+                let _ = try_parse::<uci::StsConfig>(value)?;
             }
-            uci::AppConfigTlvType::DeviceMacAddress => {
-                self.device_mac_address = Some(match self.mac_address_mode {
-                    uci::MacAddressMode::Mode0 => MacAddress::Short(value.try_into()?),
-                    uci::MacAddressMode::Mode1 => {
-                        return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
-                    }
-                    uci::MacAddressMode::Mode2 => MacAddress::Extended(value.try_into()?),
-                })
+            uci::AppConfigTlvType::MultiNodeMode => {
+                let _ = try_parse::<uci::MultiNodeMode>(value)?;
             }
+            uci::AppConfigTlvType::ChannelNumber => {
+                let _ = try_parse::<uci::ChannelNumber>(value)?;
+            }
+            uci::AppConfigTlvType::NumberOfControlees
+            | uci::AppConfigTlvType::RangingRoundControl
+            | uci::AppConfigTlvType::PreambleCodeIndex
+            | uci::AppConfigTlvType::SfdId
+            | uci::AppConfigTlvType::DataRepetitionCount
+            | uci::AppConfigTlvType::SlotsPerRr
+            | uci::AppConfigTlvType::TxJitterWindowSize
+            | uci::AppConfigTlvType::KeyRotationRate
+            | uci::AppConfigTlvType::SessionPriority
+            | uci::AppConfigTlvType::NumberOfStsSegments
+            | uci::AppConfigTlvType::BlockStrideLength
+            | uci::AppConfigTlvType::ResultReportConfig
+            | uci::AppConfigTlvType::InBandTerminationAttemptCount
+            | uci::AppConfigTlvType::MinFramesPerRr
+            | uci::AppConfigTlvType::InterFrameInterval
+            | uci::AppConfigTlvType::ApplicationDataEndpoint => {
+                let _ = try_parse_u8(value)?;
+            }
+            uci::AppConfigTlvType::DeviceMacAddress => match self.mac_address_mode() {
+                uci::MacAddressMode::Mode0 => {
+                    let _: [u8; 2] = value.try_into()?;
+                }
+                uci::MacAddressMode::Mode1 => {
+                    anyhow::bail!("mac_address_mode Mode1 is not supported")
+                }
+                uci::MacAddressMode::Mode2 => {
+                    let _: [u8; 8] = value.try_into()?;
+                }
+            },
             uci::AppConfigTlvType::DstMacAddress => {
-                let mac_address_size = match self.mac_address_mode {
+                let mac_address_size = match self.mac_address_mode() {
                     uci::MacAddressMode::Mode0 => 2,
                     uci::MacAddressMode::Mode1 => {
-                        return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
+                        anyhow::bail!("mac_address_mode Mode1 is not supported")
                     }
                     uci::MacAddressMode::Mode2 => 8,
                 };
-                if value.len() != self.number_of_controlees as usize * mac_address_size {
+                if value.len() != self.number_of_controlees() as usize * mac_address_size {
+                    let n = self.number_of_controlees();
+                    let len = value.len();
                     log::error!(
-                        "invalid dst_mac_address len: expected {}x{}, got {}",
-                        self.number_of_controlees,
-                        mac_address_size,
-                        value.len()
+                        "invalid dst_mac_address len: expected {n}x{mac_address_size}, got {len}"
                     );
                     anyhow::bail!("invalid dst_mac_address len")
                 }
-                self.dst_mac_address = match self.mac_address_mode {
-                    uci::MacAddressMode::Mode0 => value
-                        .chunks(mac_address_size)
-                        .map(|value| MacAddress::Short(value.try_into().unwrap()))
-                        .collect(),
-                    uci::MacAddressMode::Mode1 => {
-                        return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
-                    }
-                    uci::MacAddressMode::Mode2 => value
-                        .chunks(mac_address_size)
-                        .map(|value| MacAddress::Extended(value.try_into().unwrap()))
-                        .collect(),
-                };
             }
-            uci::AppConfigTlvType::SlotDuration => self.slot_duration = try_parse_u16(value)?,
-            uci::AppConfigTlvType::RangingDuration => self.ranging_duration = try_parse_u32(value)?,
-            uci::AppConfigTlvType::StsIndex => self.sts_index = try_parse_u32(value)?,
-            uci::AppConfigTlvType::MacFcsType => self.mac_fcs_type = try_parse(value)?,
-            uci::AppConfigTlvType::RangingRoundControl => {
-                self.ranging_round_control = try_parse_u8(value)?
+            uci::AppConfigTlvType::SlotDuration
+            | uci::AppConfigTlvType::NearProximityConfig
+            | uci::AppConfigTlvType::FarProximityConfig
+            | uci::AppConfigTlvType::VendorId
+            | uci::AppConfigTlvType::MaxRrRetry
+            | uci::AppConfigTlvType::MaxNumberOfMeasurements
+            | uci::AppConfigTlvType::MtuSize => {
+                let _ = try_parse_u16(value)?;
             }
-            uci::AppConfigTlvType::AoaResultReq => self.aoa_result_req = try_parse(value)?,
+            uci::AppConfigTlvType::RangingDuration
+            | uci::AppConfigTlvType::StsIndex
+            | uci::AppConfigTlvType::SubSessionId => {
+                let _ = try_parse_u32(value)?;
+            }
+            uci::AppConfigTlvType::MacFcsType => {
+                let _ = try_parse::<uci::MacFcsType>(value)?;
+            }
+            uci::AppConfigTlvType::AoaResultReq => {
+                let _ = try_parse::<uci::AoaResultReq>(value)?;
+            }
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
-                self.session_info_ntf_config = try_parse(value)?
+                let _ = try_parse::<uci::SessionInfoNtfConfig>(value)?;
             }
-            uci::AppConfigTlvType::NearProximityConfig => {
-                self.near_proximity_config = try_parse_u16(value)?
+            uci::AppConfigTlvType::DeviceRole => {
+                let _ = try_parse::<uci::DeviceRole>(value)?;
             }
-            uci::AppConfigTlvType::FarProximityConfig => {
-                self.far_proximity_config = try_parse_u16(value)?
+            uci::AppConfigTlvType::RframeConfig => {
+                let _ = try_parse::<uci::RframeConfig>(value)?;
             }
-            uci::AppConfigTlvType::DeviceRole => self.device_role = Some(try_parse(value)?),
-            uci::AppConfigTlvType::RframeConfig => self.rframe_config = try_parse(value)?,
-            uci::AppConfigTlvType::RssiReporting => self.rssi_reporting = try_parse(value)?,
-            uci::AppConfigTlvType::PreambleCodeIndex => {
-                self.preamble_code_index = try_parse_u8(value)?
+            uci::AppConfigTlvType::RssiReporting => {
+                let _ = try_parse::<uci::RssiReporting>(value)?;
             }
-            uci::AppConfigTlvType::SfdId => self.sfd_id = try_parse_u8(value)?,
-            uci::AppConfigTlvType::PsduDataRate => self.psdu_data_rate = try_parse(value)?,
-            uci::AppConfigTlvType::PreambleDuration => self.preamble_duration = try_parse(value)?,
-            uci::AppConfigTlvType::LinkLayerMode => self.link_layer_mode = try_parse(value)?,
-            uci::AppConfigTlvType::DataRepetitionCount => {
-                self.data_repetition_count = try_parse_u8(value)?
+            uci::AppConfigTlvType::PsduDataRate => {
+                let _ = try_parse::<uci::PsduDataRate>(value)?;
+            }
+            uci::AppConfigTlvType::PreambleDuration => {
+                let _ = try_parse::<uci::PreambleDuration>(value)?;
+            }
+            uci::AppConfigTlvType::LinkLayerMode => {
+                let _ = try_parse::<uci::LinkLayerMode>(value)?;
             }
             uci::AppConfigTlvType::RangingTimeStruct => {
-                self.ranging_time_struct = try_parse(value)?
+                let _ = try_parse::<uci::RangingTimeStruct>(value)?;
             }
-            uci::AppConfigTlvType::SlotsPerRr => self.slots_per_rr = try_parse_u8(value)?,
             uci::AppConfigTlvType::AoaBoundConfig => {
                 if value.len() != 8 {
-                    log::error!(
-                        "invalid aoa_bound_config len: expected 8, got {}",
-                        value.len()
-                    );
+                    let len = value.len();
+                    log::error!("invalid aoa_bound_config len: expected 8, got {len}");
                     anyhow::bail!("invalid aoa_bound_config len")
                 }
-                self.aoa_bound_config = [
-                    u16::from_le_bytes([value[0], value[1]]),
-                    u16::from_le_bytes([value[2], value[3]]),
-                    u16::from_le_bytes([value[4], value[5]]),
-                    u16::from_le_bytes([value[6], value[7]]),
-                ]
             }
-            uci::AppConfigTlvType::PrfMode => self.prf_mode = try_parse(value)?,
-            uci::AppConfigTlvType::CapSizeRange => self.cap_size_range = value.try_into()?,
-            uci::AppConfigTlvType::TxJitterWindowSize => {
-                self.tx_jitter_window_size = try_parse_u8(value)?
+            uci::AppConfigTlvType::PrfMode => {
+                let _ = try_parse::<uci::PrfMode>(value)?;
             }
-            uci::AppConfigTlvType::ScheduleMode => self.schedule_mode = Some(try_parse(value)?),
-            uci::AppConfigTlvType::KeyRotation => self.key_rotation = try_parse(value)?,
-            uci::AppConfigTlvType::KeyRotationRate => self.key_rotation_rate = try_parse_u8(value)?,
-            uci::AppConfigTlvType::SessionPriority => self.session_priority = try_parse_u8(value)?,
+            uci::AppConfigTlvType::CapSizeRange => {
+                let _: [u8; 2] = value.try_into()?;
+            }
+            uci::AppConfigTlvType::ScheduleMode => {
+                let _ = try_parse::<uci::ScheduleMode>(value)?;
+            }
+            uci::AppConfigTlvType::KeyRotation => {
+                let _ = try_parse::<uci::KeyRotation>(value)?;
+            }
             uci::AppConfigTlvType::MacAddressMode => {
-                let mac_address_mode = try_parse(value)?;
-                if mac_address_mode == uci::MacAddressMode::Mode1 {
-                    return Err(anyhow!("MacAddressMode::Mode1 is not supported"));
-                }
-                self.mac_address_mode = mac_address_mode;
-            }
-            uci::AppConfigTlvType::VendorId => self.vendor_id = try_parse_u16(value)?,
-            uci::AppConfigTlvType::StaticStsIv => self.static_sts_iv = value.try_into()?,
-            uci::AppConfigTlvType::NumberOfStsSegments => {
-                self.number_of_sts_segments = try_parse_u8(value)?
-            }
-            uci::AppConfigTlvType::MaxRrRetry => self.max_rr_retry = try_parse_u16(value)?,
-            uci::AppConfigTlvType::UwbInitiationTime => {
-                // Implement backward compatiblity for UCI 1.0
-                // where the value is 4 bytes instead of 8.
-                self.uwb_initiation_time = match value.len() {
-                    4 => try_parse_u32(value)? as u64,
-                    _ => try_parse_u64(value)?,
+                let mode = try_parse::<uci::MacAddressMode>(value)?;
+                if mode == uci::MacAddressMode::Mode1 {
+                    anyhow::bail!("mac_address_mode Mode1 is not supported");
                 }
             }
-            uci::AppConfigTlvType::HoppingMode => self.hopping_mode = try_parse(value)?,
-            uci::AppConfigTlvType::BlockStrideLength => {
-                self.block_stride_length = try_parse_u8(value)?
+            uci::AppConfigTlvType::StaticStsIv => {
+                let _: [u8; 6] = value.try_into()?;
             }
-            uci::AppConfigTlvType::ResultReportConfig => {
-                self.result_report_config = try_parse_u8(value)?
+            uci::AppConfigTlvType::UwbInitiationTime => match value.len() {
+                4 => {
+                    let _ = try_parse_u32(value)?;
+                }
+                _ => {
+                    let _ = try_parse_u64(value)?;
+                }
+            },
+            uci::AppConfigTlvType::HoppingMode => {
+                let _ = try_parse::<uci::HoppingMode>(value)?;
             }
-            uci::AppConfigTlvType::InBandTerminationAttemptCount => {
-                self.in_band_termination_attempt_count = try_parse_u8(value)?
+            uci::AppConfigTlvType::BprfPhrDataRate => {
+                let _ = try_parse::<uci::BprfPhrDataRate>(value)?;
             }
-            uci::AppConfigTlvType::SubSessionId => self.sub_session_id = try_parse_u32(value)?,
-            uci::AppConfigTlvType::BprfPhrDataRate => self.bprf_phr_data_rate = try_parse(value)?,
-            uci::AppConfigTlvType::MaxNumberOfMeasurements => {
-                self.max_number_of_measurements = try_parse_u16(value)?
+            uci::AppConfigTlvType::StsLength => {
+                let _ = try_parse::<uci::StsLength>(value)?;
             }
-            uci::AppConfigTlvType::StsLength => self.sts_length = try_parse(value)?,
-            uci::AppConfigTlvType::MinFramesPerRr => self.min_frames_per_rr = try_parse_u8(value)?,
-            uci::AppConfigTlvType::MtuSize => self.mtu_size = try_parse_u16(value)?,
-            uci::AppConfigTlvType::InterFrameInterval => {
-                self.inter_frame_interval = try_parse_u8(value)?
-            }
-            uci::AppConfigTlvType::SessionKey => self.session_key = value.to_vec(),
+            uci::AppConfigTlvType::SessionKey => {}
             uci::AppConfigTlvType::SubSessionKey => {
-                self.sub_session_key = match value.len() {
-                    16 => SubSessionKey::Short(value.try_into().unwrap()),
-                    32 => SubSessionKey::Extended(value.try_into().unwrap()),
-                    _ => anyhow::bail!("invalid sub-session key size {}", value.len()),
+                if value.len() != 16 && value.len() != 32 {
+                    let len = value.len();
+                    anyhow::bail!("invalid sub-session key size {len}");
                 }
             }
             uci::AppConfigTlvType::SessionDataTransferStatusNtfConfig => {
-                self.session_data_transfer_status_ntf_config = try_parse(value)?
+                let _ = try_parse::<uci::SessionDataTransferStatusNtfConfig>(value)?;
             }
-            uci::AppConfigTlvType::SessionTimeBase => self.session_time_base = value.try_into()?,
-            uci::AppConfigTlvType::ApplicationDataEndpoint => {
-                self.application_data_endpoint = try_parse_u8(value)?
+            uci::AppConfigTlvType::SessionTimeBase => {
+                let _: [u8; 9] = value.try_into()?;
             }
-
             uci::AppConfigTlvType::CccHopModeKey
             | uci::AppConfigTlvType::CccUwbTime0
             | uci::AppConfigTlvType::CccRangingProtocolVer
@@ -365,173 +457,166 @@ impl AppConfig {
             | uci::AppConfigTlvType::NbOfElevationMeasurements
             | uci::AppConfigTlvType::EnableDiagnostics
             | uci::AppConfigTlvType::DiagramsFrameReportsFields => {
-                log::error!("unsupported vendor config type {:?}", id);
-                anyhow::bail!("unsupported vendor config type {:?}", id)
+                log::error!("unsupported vendor config type {id:?}");
+                anyhow::bail!("unsupported vendor config type {id:?}")
             }
             _ => {
-                log::error!("unsupported app config type {:?}", id);
-                anyhow::bail!("unsupported app config type {:?}", id)
+                log::error!("unsupported app config type {id:?}");
+                anyhow::bail!("unsupported app config type {id:?}")
             }
         }
+
         Ok(())
     }
 
-    /// Retrieve the APP configuration value with the selected identifier
-    /// Returns `Ok` if the identifier is known, `Err` otherwise.
-    pub fn get(&self, id: uci::AppConfigTlvType) -> anyhow::Result<Vec<u8>> {
-        match id {
-            uci::AppConfigTlvType::DeviceType => Ok(vec![
-                self.device_type
-                    .ok_or(anyhow::anyhow!("optional app config not set"))?
-                    .into(),
-            ]),
-            uci::AppConfigTlvType::RangingRoundUsage => Ok(vec![
-                self.ranging_round_usage
-                    .ok_or(anyhow::anyhow!("optional app config not set"))?
-                    .into(),
-            ]),
-            uci::AppConfigTlvType::StsConfig => Ok(vec![self.sts_config.into()]),
-            uci::AppConfigTlvType::MultiNodeMode => Ok(vec![
-                self.multi_node_mode
-                    .ok_or(anyhow::anyhow!("optional app config not set"))?
-                    .into(),
-            ]),
-            uci::AppConfigTlvType::ChannelNumber => Ok(vec![self.channel_number.into()]),
-            uci::AppConfigTlvType::NumberOfControlees => Ok(vec![self.number_of_controlees]),
-            uci::AppConfigTlvType::DeviceMacAddress => Ok(self
-                .device_mac_address
-                .ok_or(anyhow::anyhow!("optional app config not set"))?
-                .into()),
-            uci::AppConfigTlvType::DstMacAddress => Ok(self
-                .dst_mac_address
-                .iter()
-                .flat_map(Vec::<u8>::from)
-                .collect()),
-            uci::AppConfigTlvType::SlotDuration => Ok(self.slot_duration.to_le_bytes().to_vec()),
-            uci::AppConfigTlvType::RangingDuration => {
-                Ok(self.ranging_duration.to_le_bytes().to_vec())
-            }
-            uci::AppConfigTlvType::StsIndex => Ok(self.sts_index.to_le_bytes().to_vec()),
-            uci::AppConfigTlvType::MacFcsType => Ok(vec![self.mac_fcs_type.into()]),
-            uci::AppConfigTlvType::RangingRoundControl => Ok(vec![self.ranging_round_control]),
-            uci::AppConfigTlvType::AoaResultReq => Ok(vec![self.aoa_result_req.into()]),
-            uci::AppConfigTlvType::SessionInfoNtfConfig => {
-                Ok(vec![self.session_info_ntf_config.into()])
-            }
-            uci::AppConfigTlvType::NearProximityConfig => {
-                Ok(self.near_proximity_config.to_le_bytes().to_vec())
-            }
-            uci::AppConfigTlvType::FarProximityConfig => {
-                Ok(self.far_proximity_config.to_le_bytes().to_vec())
-            }
-            uci::AppConfigTlvType::DeviceRole => Ok(vec![
-                self.device_role
-                    .ok_or(anyhow::anyhow!("optional app config not set"))?
-                    .into(),
-            ]),
-            uci::AppConfigTlvType::RframeConfig => Ok(vec![self.rframe_config.into()]),
-            uci::AppConfigTlvType::RssiReporting => Ok(vec![self.rssi_reporting.into()]),
-            uci::AppConfigTlvType::PreambleCodeIndex => Ok(vec![self.preamble_code_index]),
-            uci::AppConfigTlvType::SfdId => Ok(vec![self.sfd_id]),
-            uci::AppConfigTlvType::PsduDataRate => Ok(vec![self.psdu_data_rate.into()]),
-            uci::AppConfigTlvType::PreambleDuration => Ok(vec![self.preamble_duration.into()]),
-            uci::AppConfigTlvType::LinkLayerMode => Ok(vec![self.link_layer_mode.into()]),
-            uci::AppConfigTlvType::DataRepetitionCount => Ok(vec![self.data_repetition_count]),
-            uci::AppConfigTlvType::RangingTimeStruct => Ok(vec![self.ranging_time_struct.into()]),
-            uci::AppConfigTlvType::SlotsPerRr => Ok(vec![self.slots_per_rr]),
-            uci::AppConfigTlvType::AoaBoundConfig => Ok(self
-                .aoa_bound_config
-                .iter()
-                .copied()
-                .flat_map(u16::to_le_bytes)
-                .collect()),
-            uci::AppConfigTlvType::PrfMode => Ok(vec![self.prf_mode.into()]),
-            uci::AppConfigTlvType::CapSizeRange => Ok(self.cap_size_range.to_vec()),
-            uci::AppConfigTlvType::TxJitterWindowSize => Ok(vec![self.tx_jitter_window_size]),
-            uci::AppConfigTlvType::ScheduleMode => Ok(vec![
-                self.schedule_mode
-                    .ok_or(anyhow::anyhow!("optional app config not set"))?
-                    .into(),
-            ]),
-            uci::AppConfigTlvType::KeyRotation => Ok(vec![self.key_rotation.into()]),
-            uci::AppConfigTlvType::KeyRotationRate => Ok(vec![self.key_rotation_rate]),
-            uci::AppConfigTlvType::SessionPriority => Ok(vec![self.session_priority]),
-            uci::AppConfigTlvType::MacAddressMode => Ok(vec![self.mac_address_mode.into()]),
-            uci::AppConfigTlvType::VendorId => Ok(self.vendor_id.to_le_bytes().to_vec()),
-            uci::AppConfigTlvType::StaticStsIv => Ok(self.static_sts_iv.to_vec()),
-            uci::AppConfigTlvType::NumberOfStsSegments => Ok(vec![self.number_of_sts_segments]),
-            uci::AppConfigTlvType::MaxRrRetry => Ok(self.max_rr_retry.to_le_bytes().to_vec()),
-            uci::AppConfigTlvType::UwbInitiationTime => {
-                Ok(self.uwb_initiation_time.to_le_bytes().to_vec())
-            }
-            uci::AppConfigTlvType::HoppingMode => Ok(vec![self.hopping_mode.into()]),
-            uci::AppConfigTlvType::BlockStrideLength => Ok(vec![self.block_stride_length]),
-            uci::AppConfigTlvType::ResultReportConfig => Ok(vec![self.result_report_config]),
-            uci::AppConfigTlvType::InBandTerminationAttemptCount => {
-                Ok(vec![self.in_band_termination_attempt_count])
-            }
-            uci::AppConfigTlvType::SubSessionId => Ok(self.sub_session_id.to_le_bytes().to_vec()),
-            uci::AppConfigTlvType::BprfPhrDataRate => Ok(vec![self.bprf_phr_data_rate.into()]),
-            uci::AppConfigTlvType::MaxNumberOfMeasurements => {
-                Ok(self.max_number_of_measurements.to_le_bytes().to_vec())
-            }
-            uci::AppConfigTlvType::StsLength => Ok(vec![self.sts_length.into()]),
-            uci::AppConfigTlvType::MinFramesPerRr => Ok(vec![self.min_frames_per_rr]),
-            uci::AppConfigTlvType::MtuSize => Ok(self.mtu_size.to_le_bytes().to_vec()),
-            uci::AppConfigTlvType::InterFrameInterval => Ok(vec![self.inter_frame_interval]),
-            uci::AppConfigTlvType::SessionKey => Ok(self.session_key.clone()),
-            uci::AppConfigTlvType::SubSessionKey => Ok(match self.sub_session_key {
-                SubSessionKey::None => vec![],
-                SubSessionKey::Short(key) => key.to_vec(),
-                SubSessionKey::Extended(key) => key.to_vec(),
-            }),
-            uci::AppConfigTlvType::SessionDataTransferStatusNtfConfig => {
-                Ok(vec![self.session_data_transfer_status_ntf_config.into()])
-            }
-            uci::AppConfigTlvType::SessionTimeBase => Ok(self.session_time_base.to_vec()),
-            uci::AppConfigTlvType::ApplicationDataEndpoint => {
-                Ok(vec![self.application_data_endpoint])
-            }
+    /// Set the APP configuration value with the selected identifier
+    /// and value. Returns `Ok` if the identifier is known and the value
+    /// well formatted, `Err` otherwise.
+    pub fn set(&mut self, id: uci::AppConfigTlvType, value: &[u8]) -> anyhow::Result<()> {
+        self.validate(id, value)?;
 
-            uci::AppConfigTlvType::CccHopModeKey
-            | uci::AppConfigTlvType::CccUwbTime0
-            | uci::AppConfigTlvType::CccRangingProtocolVer
-            | uci::AppConfigTlvType::CccUwbConfigId
-            | uci::AppConfigTlvType::CccPulseshapeCombo
-            | uci::AppConfigTlvType::CccUrskTtl
-            | uci::AppConfigTlvType::CccLastIndexUsed
-            | uci::AppConfigTlvType::NbOfRangeMeasurements
-            | uci::AppConfigTlvType::NbOfAzimuthMeasurements
-            | uci::AppConfigTlvType::NbOfElevationMeasurements
-            | uci::AppConfigTlvType::EnableDiagnostics
-            | uci::AppConfigTlvType::DiagramsFrameReportsFields => {
-                log::error!("unsupported vendor config type {:?}", id);
-                anyhow::bail!("unsupported vendor config type {:?}", id)
+        // Implement backward compatiblity for UCI 1.0
+        // where the value is 4 bytes instead of 8.
+        let bytes = match (id, value) {
+            (uci::AppConfigTlvType::UwbInitiationTime, &[a, b, c, d]) => {
+                Bytes::copy_from_slice(&(u32::from_le_bytes([a, b, c, d]) as u64).to_le_bytes())
             }
-            _ => {
-                log::error!("unsupported app config type {:?}", id);
-                anyhow::bail!("unsupported app config type {:?}", id)
-            }
+            _ => Bytes::copy_from_slice(value),
+        };
+
+        self.tlvs.insert(id, bytes);
+        Ok(())
+    }
+
+    fn get_enum<T: TryFrom<u8>>(&self, id: uci::AppConfigTlvType) -> Option<T> {
+        self.get(id)
+            .and_then(|v| v.first().copied())
+            .and_then(|b| T::try_from(b).ok())
+    }
+
+    fn get_u8(&self, id: uci::AppConfigTlvType) -> Option<u8> {
+        self.get(id).and_then(|v| v.first().copied())
+    }
+
+    fn get_u32(&self, id: uci::AppConfigTlvType) -> Option<u32> {
+        self.get(id)
+            .and_then(|v| v.as_ref().try_into().ok().map(u32::from_le_bytes))
+    }
+
+    pub fn device_type(&self) -> Option<uci::DeviceType> {
+        self.get_enum(uci::AppConfigTlvType::DeviceType)
+    }
+
+    pub fn ranging_round_usage(&self) -> Option<uci::RangingRoundUsage> {
+        self.get_enum(uci::AppConfigTlvType::RangingRoundUsage)
+    }
+
+    pub fn multi_node_mode(&self) -> Option<uci::MultiNodeMode> {
+        self.get_enum(uci::AppConfigTlvType::MultiNodeMode)
+    }
+
+    pub fn device_mac_address(&self) -> Option<MacAddress> {
+        let v = self.tlvs.get(&uci::AppConfigTlvType::DeviceMacAddress)?;
+        match v.len() {
+            2 => Some(MacAddress::Short(v.as_ref().try_into().ok()?)),
+            8 => Some(MacAddress::Extended(v.as_ref().try_into().ok()?)),
+            _ => None,
         }
     }
 
+    pub fn device_role(&self) -> Option<uci::DeviceRole> {
+        self.get_enum(uci::AppConfigTlvType::DeviceRole)
+    }
+
+    pub fn schedule_mode(&self) -> Option<uci::ScheduleMode> {
+        self.get_enum(uci::AppConfigTlvType::ScheduleMode)
+    }
+
+    pub fn sts_config(&self) -> uci::StsConfig {
+        self.get_enum(uci::AppConfigTlvType::StsConfig)
+            .unwrap_or(DEFAULT_STS_CONFIG)
+    }
+
+    pub fn set_number_of_controlees(&mut self, value: u8) {
+        self.tlvs.insert(
+            uci::AppConfigTlvType::NumberOfControlees,
+            Bytes::copy_from_slice(&[value]),
+        );
+    }
+
+    pub fn dst_mac_address(&self) -> impl Iterator<Item = MacAddress> + '_ {
+        let (slice, chunk_size) = match (
+            self.tlvs.get(&uci::AppConfigTlvType::DstMacAddress),
+            self.mac_address_mode(),
+        ) {
+            (Some(v), uci::MacAddressMode::Mode0) => (v.as_ref(), 2),
+            (Some(v), uci::MacAddressMode::Mode2) => (v.as_ref(), 8),
+            _ => (&[][..], 2),
+        };
+        slice
+            .chunks_exact(chunk_size)
+            .filter_map(|c| match c.len() {
+                2 => c.try_into().ok().map(MacAddress::Short),
+                8 => c.try_into().ok().map(MacAddress::Extended),
+                _ => None,
+            })
+    }
+
+    pub fn set_dst_mac_address(&mut self, addresses: &[MacAddress]) {
+        let bytes: Bytes = addresses.iter().flat_map(Vec::<u8>::from).collect();
+        self.tlvs
+            .insert(uci::AppConfigTlvType::DstMacAddress, bytes);
+    }
+
+    pub fn ranging_duration(&self) -> u32 {
+        self.get_u32(uci::AppConfigTlvType::RangingDuration)
+            .unwrap_or(DEFAULT_RANGING_DURATION)
+    }
+
+    pub fn session_info_ntf_config(&self) -> uci::SessionInfoNtfConfig {
+        self.get_enum(uci::AppConfigTlvType::SessionInfoNtfConfig)
+            .unwrap_or(DEFAULT_SESSION_INFO_NTF_CONFIG)
+    }
+
+    pub fn in_band_termination_attempt_count(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::InBandTerminationAttemptCount)
+            .unwrap_or(DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT)
+    }
+
+    pub fn session_data_transfer_status_ntf_config(
+        &self,
+    ) -> uci::SessionDataTransferStatusNtfConfig {
+        self.get_enum(uci::AppConfigTlvType::SessionDataTransferStatusNtfConfig)
+            .unwrap_or(DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG)
+    }
+
+    fn number_of_controlees(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::NumberOfControlees)
+            .unwrap_or(DEFAULT_NUMBER_OF_CONTROLEES)
+    }
+
+    pub fn mac_address_mode(&self) -> uci::MacAddressMode {
+        self.get_enum(uci::AppConfigTlvType::MacAddressMode)
+            .unwrap_or(DEFAULT_MAC_ADDRESS_MODE)
+    }
+
     pub fn is_compatible_for_ranging(&self, peer_config: &Self) -> bool {
-        self.device_role != peer_config.device_role
-            && self.device_type != peer_config.device_type
-            && self.mac_address_mode == peer_config.mac_address_mode
-            && peer_config
-                .dst_mac_address
-                .contains(&self.device_mac_address.unwrap())
+        self.device_role() != peer_config.device_role()
+            && self.device_type() != peer_config.device_type()
+            && self.mac_address_mode() == peer_config.mac_address_mode()
             && self
-                .dst_mac_address
-                .contains(&peer_config.device_mac_address.unwrap())
+                .device_mac_address()
+                .is_some_and(|mac| peer_config.dst_mac_address().any(|a| a == mac))
+            && peer_config
+                .device_mac_address()
+                .is_some_and(|mac| self.dst_mac_address().any(|a| a == mac))
     }
 
     pub fn can_start_data_transfer(&self) -> bool {
-        self.device_role == Some(uci::DeviceRole::Initiator)
+        self.device_role() == Some(uci::DeviceRole::Initiator)
     }
 
     pub fn can_receive_data_transfer(&self) -> bool {
-        self.device_role == Some(uci::DeviceRole::Responder)
+        self.device_role() == Some(uci::DeviceRole::Responder)
     }
 }
