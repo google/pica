@@ -462,9 +462,12 @@ impl Device {
             }
         }
 
-        let (status, invalid_parameters) = if session.state != SessionState::SessionStateInit
-            && session.state != SessionState::SessionStateActive
-        {
+        let (status, invalid_parameters) = if !matches!(
+            session.state,
+            SessionState::SessionStateInit
+                | SessionState::SessionStateIdle
+                | SessionState::SessionStateActive
+        ) {
             (uci::Status::Rejected, Vec::new())
         } else {
             let mut app_config = session.app_config.clone();

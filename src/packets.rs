@@ -88,10 +88,10 @@ pub mod uci {
     pub async fn write(
         mut socket: tokio::net::tcp::OwnedWriteHalf,
         packet: Vec<u8>,
-    ) -> std::result::Result<tokio::net::tcp::OwnedWriteHalf, anyhow::Error> {
+    ) -> Result<tokio::net::tcp::OwnedWriteHalf, ()> {
         use tokio::io::AsyncWriteExt;
 
-        socket.write_all(&packet).await?;
+        socket.write_all(&packet).await.map_err(|_| ())?;
 
         Ok(socket)
     }
