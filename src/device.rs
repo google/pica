@@ -79,7 +79,6 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
 
 /// [UCI] 8.2 Device Configuration Parameters
 pub struct DeviceConfig {
-    device_state: DeviceState,
     // This config is used to enable/disable the low power mode.
     //   0x00 = Disable low power mode
     //   0x01 = Enable low power mode (default)
@@ -92,7 +91,6 @@ pub struct DeviceConfig {
 impl Default for DeviceConfig {
     fn default() -> Self {
         DeviceConfig {
-            device_state: DeviceState::DeviceStateError,
             low_power_mode: true,
         }
     }
@@ -114,6 +112,22 @@ pub struct Device {
     pica_tx: mpsc::Sender<PicaCommand>,
     country_code: [u8; 2],
     pub n_active_sessions: usize,
+}
+
+fn command_error_response(gid: GroupId, oid: u8, status: uci::Status) -> ControlPacket {
+    ControlPacket {
+        mt: uci::MessageType::Response,
+        gid,
+        payload: vec![oid, 0, 0, status.into()],
+    }
+}
+
+fn packet_error_status<T, E>(result: Result<T, E>) -> uci::Status {
+    if result.is_ok() {
+        uci::Status::UnknownOid
+    } else {
+        uci::Status::SyntaxError
+    }
 }
 
 impl Device {
@@ -235,9 +249,7 @@ impl Device {
     }
 
     fn core_get_device_info(&self, _cmd: CoreGetDeviceInfoCmd) -> CoreGetDeviceInfoRsp {
-        // TODO: Implement a fancy build time state machine instead of crash at runtime
         tracing::debug!("[{}] GetDeviceInfo", self.handle);
-        assert_eq!(self.state, DeviceState::DeviceStateReady);
         CoreGetDeviceInfoRsp {
             status: uci::Status::Ok,
             uci_version: UCI_VERSION,
@@ -267,7 +279,13 @@ impl Device {
 
     pub fn core_set_config(&mut self, cmd: CoreSetConfigCmd) -> CoreSetConfigRsp {
         tracing::debug!("[{}] SetConfig", self.handle);
-        assert_eq!(self.state, DeviceState::DeviceStateReady); // UCI 6.3
+        // UCI 6.3
+        if self.state != DeviceState::DeviceStateReady {
+            return CoreSetConfigRsp {
+                status: uci::Status::Rejected,
+                parameters: vec![],
+            };
+        }
 
         // [UCI] 6.3.1 Setting the Configuration
         // The UWBS shall respond with CORE_SET_CONFIG_RSP setting the Status
@@ -323,7 +341,7 @@ impl Device {
             match id {
                 ConfigParameterId::DeviceState => valid_parameters.push(ConfigParameter {
                     id,
-                    value: vec![self.config.device_state.into()],
+                    value: vec![self.state.into()],
                 }),
                 ConfigParameterId::LowPowerMode => valid_parameters.push(ConfigParameter {
                     id,
@@ -420,10 +438,14 @@ impl Device {
             };
         };
 
-        assert!(
-            session.session_type == SessionType::FiraRangingSession
-                || session.session_type == SessionType::FiraRangingAndInBandDataSession
-        );
+        if session.session_type != SessionType::FiraRangingSession
+            && session.session_type != SessionType::FiraRangingAndInBandDataSession
+        {
+            return SessionSetAppConfigRsp {
+                status: uci::Status::Rejected,
+                cfg_status: vec![],
+            };
+        }
 
         if session.state == SessionState::SessionStateActive {
             const IMMUTABLE_PARAMETERS: &[AppConfigTlvType] = &[AppConfigTlvType::AoaResultReq];
@@ -737,41 +759,44 @@ impl Device {
                                 }
                             });
                         }
-                        controlee_status_ntf.push(ControleeStatus {
-                            mac_address: controlee.short_address,
-                            status: update_status,
-                        });
+                        // Following requirements are applicable when the action is set to Delete (Action field set to 0x01):
+                        // When the command is received while the Session State is SESSION_STATE_ACTIVE,
+                        // For requested Controlees present in the multicast list,
+                        // UWBS shall send the SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF and the
+                        // corresponding Controlee status shall be set to STATUS_OK_MULTICAST_LIST_UPDATE
+                        // in the Status List of SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF.
+                        if session.state == SessionState::SessionStateActive {
+                            controlee_status_ntf.push(ControleeStatus {
+                                mac_address: controlee.short_address,
+                                status: update_status,
+                            });
+                        }
                     }
                     controlee_status_rsp.push(ControleeStatus {
                         mac_address: controlee.short_address,
                         status: update_status,
                     });
                 });
-                // Following requirements are applicable when the action is set to Delete (Action field set to 0x01):
-                // When the command is received while the Session State is SESSION_STATE_ACTIVE,
-                // For requested Controlees present in the multicast list,
-                // UWBS shall send the SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF and the
-                // corresponding Controlee status shall be set to STATUS_OK_MULTICAST_LIST_UPDATE
-                // in the Status List of SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF.
-                if session.state == SessionState::SessionStateActive {
-                    let tx = self.tx.clone();
-                    tokio::spawn(async move {
-                        // Sleep for 5ms to make sure the notification is not being
-                        // sent before the response.
-                        // TODO(#84) remove the sleep.
-                        time::sleep(Duration::from_millis(5)).await;
-                        tx.send(
-                            SessionUpdateControllerMulticastListNtf {
-                                controlee_status: controlee_status_ntf,
-                                session_token: session_handle,
-                            }
-                            .encode_to_vec()
-                            .unwrap(),
-                        )
-                        .unwrap()
-                    });
-                }
             }
+        }
+
+        if !controlee_status_ntf.is_empty() {
+            let tx = self.tx.clone();
+            tokio::spawn(async move {
+                // Sleep for 5ms to make sure the notification is not being
+                // sent before the response.
+                // TODO(#84) remove the sleep.
+                time::sleep(Duration::from_millis(5)).await;
+                tx.send(
+                    SessionUpdateControllerMulticastListNtf {
+                        controlee_status: controlee_status_ntf,
+                        session_token: session_handle,
+                    }
+                    .encode_to_vec()
+                    .unwrap(),
+                )
+                .unwrap()
+            });
         }
         session
             .app_config
@@ -930,11 +955,8 @@ impl Device {
 
     pub fn data_message_snd(&mut self, data: DataPacket) -> ControlPacket {
         tracing::debug!("[{}] data_message_send", self.handle);
-        match data
-            .specialize()
-            .expect("failed to parse Data packet child")
-        {
-            DataPacketChild::DataMessageSnd(data_msg_snd) => {
+        match data.specialize() {
+            Ok(DataPacketChild::DataMessageSnd(data_msg_snd)) => {
                 let session_token = data_msg_snd.session_handle;
                 if let Some(session) = self.session_mut(session_token) {
                     session.data_message_snd(data_msg_snd)
@@ -949,7 +971,7 @@ impl Device {
                     .unwrap()
                 }
             }
-            DataPacketChild::DataMessageRcv(data_msg_rcv) => {
+            Ok(DataPacketChild::DataMessageRcv(data_msg_rcv)) => {
                 // This function should not be passed anything besides DataMessageSnd
                 let session_token = data_msg_rcv.session_handle;
                 SessionDataTransferStatusNtf {
@@ -961,9 +983,14 @@ impl Device {
                 .try_into()
                 .unwrap()
             }
-            _ => {
-                unimplemented!()
+            Ok(DataPacketChild::None) | Err(_) => SessionDataTransferStatusNtf {
+                session_token: 0,
+                status: DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
+                tx_count: 1,
+                uci_sequence_number: 0,
             }
+            .try_into()
+            .unwrap(),
         }
     }
 
@@ -985,23 +1012,34 @@ impl Device {
             .unwrap();
         }
 
-        match cmd
-            .specialize()
-            .expect("Failed to parse Control packet child")
-        {
+        let child = match cmd.specialize() {
+            Ok(child) => child,
+            Err(_) => {
+                let status = if cmd.payload.len() >= 3 {
+                    uci::Status::UnknownOid
+                } else {
+                    uci::Status::SyntaxError
+                };
+                return command_error_response(
+                    cmd.gid,
+                    cmd.payload.first().copied().unwrap_or(0),
+                    status,
+                );
+            }
+        };
+
+        match child {
             CorePacket(cmd) => match cmd.specialize() {
                 Ok(CoreDeviceResetCmd(cmd)) => self.core_device_reset(cmd).try_into().unwrap(),
                 Ok(CoreGetDeviceInfoCmd(cmd)) => self.core_get_device_info(cmd).try_into().unwrap(),
                 Ok(CoreGetCapsInfoCmd(cmd)) => self.core_get_caps_info(cmd).try_into().unwrap(),
                 Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).try_into().unwrap(),
                 Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).try_into().unwrap(),
-                _ => uci::CorePacket {
-                    mt: uci::MessageType::Response,
-                    oid: cmd.oid,
-                    payload: vec![0x1, uci::Status::SyntaxError.into()],
-                }
-                .try_into()
-                .unwrap(),
+                child => command_error_response(
+                    GroupId::Core,
+                    cmd.oid.into(),
+                    packet_error_status(child),
+                ),
             },
             SessionConfigPacket(cmd) => match cmd.specialize() {
                 Ok(SessionInitCmd(cmd)) => self.session_init(cmd).try_into().unwrap(),
@@ -1018,13 +1056,11 @@ impl Device {
                     .session_update_controller_multicast_list(cmd)
                     .try_into()
                     .unwrap(),
-                _ => uci::SessionConfigPacket {
-                    mt: uci::MessageType::Response,
-                    oid: cmd.oid,
-                    payload: vec![0x1, uci::Status::SyntaxError.into()],
-                }
-                .try_into()
-                .unwrap(),
+                child => command_error_response(
+                    GroupId::SessionConfig,
+                    cmd.oid.into(),
+                    packet_error_status(child),
+                ),
             },
             SessionControlPacket(cmd) => match cmd.specialize() {
                 Ok(SessionStartCmd(cmd)) => self.session_start(cmd).try_into().unwrap(),
@@ -1032,13 +1068,11 @@ impl Device {
                 Ok(SessionGetRangingCountCmd(cmd)) => {
                     self.session_get_ranging_count(cmd).try_into().unwrap()
                 }
-                _ => uci::SessionControlPacket {
-                    mt: uci::MessageType::Response,
-                    oid: cmd.oid,
-                    payload: vec![0x1, uci::Status::SyntaxError.into()],
-                }
-                .try_into()
-                .unwrap(),
+                child => command_error_response(
+                    GroupId::SessionControl,
+                    cmd.oid.into(),
+                    packet_error_status(child),
+                ),
             },
             AndroidPacket(cmd) => match cmd.specialize() {
                 Ok(AndroidSetCountryCodeCmd(cmd)) => {
@@ -1047,13 +1081,11 @@ impl Device {
                 Ok(AndroidGetPowerStatsCmd(cmd)) => {
                     self.android_get_power_stats(cmd).try_into().unwrap()
                 }
-                _ => uci::AndroidPacket {
-                    mt: uci::MessageType::Response,
-                    oid: cmd.oid,
-                    payload: vec![0x1, uci::Status::SyntaxError.into()],
-                }
-                .try_into()
-                .unwrap(),
+                child => command_error_response(
+                    GroupId::VendorAndroid,
+                    cmd.oid.into(),
+                    packet_error_status(child),
+                ),
             },
             ControlPacketChild::None
                 if matches!(
@@ -1071,16 +1103,11 @@ impl Device {
                 // value of STATUS_UNKNOWN_GID/STATUS_UNKNOWN_OID respectively
                 // and no additional fields.
                 tracing::error!("Unsupported gid {:?}", cmd.gid);
-                ControlPacket {
-                    mt: uci::MessageType::Response,
-                    gid: cmd.gid,
-                    payload: vec![
-                        cmd.payload[0],
-                        cmd.payload[1],
-                        0x1,
-                        uci::Status::UnknownGid.into(),
-                    ],
-                }
+                command_error_response(
+                    cmd.gid,
+                    cmd.payload.first().copied().unwrap_or(0),
+                    uci::Status::UnknownGid,
+                )
             }
         }
     }
