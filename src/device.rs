@@ -161,6 +161,14 @@ impl Device {
         self.set_state(DeviceState::DeviceStateReady);
     }
 
+    fn on_session_deactivated(&mut self) {
+        debug_assert!(self.n_active_sessions > 0);
+        self.n_active_sessions = self.n_active_sessions.saturating_sub(1);
+        if self.n_active_sessions == 0 {
+            self.set_state(DeviceState::DeviceStateReady);
+        }
+    }
+
     pub fn session(&self, session_id: u32) -> Option<&Session> {
         self.sessions.get(&session_id)
     }
@@ -383,10 +391,7 @@ impl Device {
         let status = match self.sessions.get_mut(&session_id) {
             Some(session) => {
                 if session.state == SessionState::SessionStateActive {
-                    self.n_active_sessions -= 1;
-                    if self.n_active_sessions == 0 {
-                        self.set_state(DeviceState::DeviceStateReady);
-                    }
+                    self.on_session_deactivated();
                 }
                 self.sessions.remove(&session_id);
                 uci::Status::Ok
@@ -781,11 +786,13 @@ impl Device {
         // If the multicast list becomes empty, the UWBS shall move the session to
         // SESSION_STATE_IDLE by sending the SESSION_STATUS_NTF with Reason Code
         // set to ERROR_INVALID_NUM_OF_CONTROLEES.
-        if dst_addresses.is_empty() {
+        if dst_addresses.is_empty() && session.state == SessionState::SessionStateActive {
+            session.stop_ranging_task();
             session.set_state(
                 SessionState::SessionStateIdle,
                 ReasonCode::ErrorInvalidNumOfControlees,
-            )
+            );
+            self.on_session_deactivated();
         }
         SessionUpdateControllerMulticastListRsp {
             status,
@@ -862,10 +869,7 @@ impl Device {
             ReasonCode::StateChangeWithSessionManagementCommands,
         );
 
-        self.n_active_sessions -= 1;
-        if self.n_active_sessions == 0 {
-            self.set_state(DeviceState::DeviceStateReady);
-        }
+        self.on_session_deactivated();
 
         SessionStopRsp {
             status: uci::Status::Ok,
