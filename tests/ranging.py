@@ -107,11 +107,35 @@ async def controller(
         )
     )
 
+    updated_ranging_duration = list(int(500).to_bytes(4, byteorder="little"))
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                    v=updated_ranging_duration,
+                ),
+            ],
+        )
+    )
+
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
     host.send_control(uci.SessionGetAppConfigCmd(session_token=0, app_cfg=[]))
 
     rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
     assert rsp.status == uci.Status.OK
     assert len(rsp.tlvs) == 58
+    assert (
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+            v=updated_ranging_duration,
+        )
+        in rsp.tlvs
+    )
 
     host.send_control(uci.SessionStartCmd(session_id=0))
 
@@ -199,7 +223,7 @@ async def controlee(
     )
 
     ranging_round_usage = 0x06
-    ranging_duration = int(1000).to_bytes(4, byteorder="little")
+    ranging_duration = int(500).to_bytes(4, byteorder="little")
 
     host.send_control(
         uci.SessionSetAppConfigCmd(
