@@ -185,7 +185,7 @@ impl Context {
     }
 
     fn http_set_position(&self, mac_address: MacAddress, position: Position) -> Response<Body> {
-        log::info!("set-position({}, {})", mac_address, position);
+        tracing::info!("set-position({mac_address}, {position})");
 
         let mut devices = self.devices.lock().unwrap();
         let mut found_device = None;
@@ -262,7 +262,7 @@ impl Context {
         position: Position,
         cmd_tx: mpsc::Sender<PicaCommand>,
     ) -> Response<Body> {
-        log::info!("create-anchor({}, {})", mac_address, position);
+        tracing::info!("create-anchor({mac_address}, {position})");
 
         let (rsp_tx, rsp_rx) = oneshot::channel::<Result<pica::Handle, PicaCommandError>>();
         cmd_tx
@@ -303,7 +303,7 @@ impl Context {
         mac_address: MacAddress,
         cmd_tx: mpsc::Sender<PicaCommand>,
     ) -> Response<Body> {
-        log::info!("destroy-anchor({})", mac_address);
+        tracing::info!("destroy-anchor({mac_address})");
 
         let (rsp_tx, rsp_rx) = oneshot::channel::<Result<pica::Handle, PicaCommandError>>();
         cmd_tx
@@ -332,7 +332,7 @@ impl Context {
     }
 
     fn http_get_state(&self) -> Response<Body> {
-        log::info!("get-state()");
+        tracing::info!("get-state()");
 
         #[derive(Serialize)]
         struct GetStateResponse {
@@ -391,7 +391,7 @@ macro_rules! position {
                     Position::default()
                 } else {
                     let reason = format!("Error while deserializing position: {}", err);
-                    log::error!("{}", reason);
+                    tracing::error!("{reason}");
                     return Ok(Response::builder().status(406).body(reason.into()).unwrap());
                 }
             }
@@ -405,7 +405,7 @@ macro_rules! mac_address {
             Ok(mac_address) => mac_address,
             Err(err) => {
                 let reason = format!("Error mac_address: {}", err);
-                log::error!("{}", reason);
+                tracing::error!("{reason}");
                 return Ok(Response::builder().status(406).body(reason.into()).unwrap());
             }
         }
@@ -489,7 +489,7 @@ async fn serve(context: Context, tx: mpsc::Sender<PicaCommand>, web_port: u16) -
 
     let server = Server::bind(&addr.into()).serve(make_svc);
 
-    log::info!("Pica: Web server started on http://0.0.0.0:{}", web_port);
+    tracing::info!("Pica: Web server started on http://0.0.0.0:{web_port}");
 
     server.await?;
     Ok(())
@@ -498,11 +498,11 @@ async fn serve(context: Context, tx: mpsc::Sender<PicaCommand>, web_port: u16) -
 async fn listen(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
-    log::info!("Pica: Listening on: {}", uci_port);
+    tracing::info!("Pica: Listening on: {uci_port}");
 
     loop {
         let (socket, addr) = uci_listener.accept().await?;
-        log::info!("Uwb host addr: {}", addr);
+        tracing::info!("Uwb host addr: {addr}");
 
         let (read_half, write_half) = socket.into_split();
         let stream = Box::pin(futures::stream::unfold(read_half, pica::packets::uci::read));
@@ -532,6 +532,15 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
+        )
+        .init();
+
     let args = Args::parse();
     assert_ne!(
         args.uci_port, args.web_port,

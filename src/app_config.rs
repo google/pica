@@ -337,7 +337,7 @@ impl AppConfig {
                 if value.len() != self.number_of_controlees() as usize * mac_address_size {
                     let n = self.number_of_controlees();
                     let len = value.len();
-                    log::error!(
+                    tracing::error!(
                         "invalid dst_mac_address len: expected {n}x{mac_address_size}, got {len}"
                     );
                     anyhow::bail!("invalid dst_mac_address len")
@@ -390,7 +390,7 @@ impl AppConfig {
             uci::AppConfigTlvType::AoaBoundConfig => {
                 if value.len() != 8 {
                     let len = value.len();
-                    log::error!("invalid aoa_bound_config len: expected 8, got {len}");
+                    tracing::error!("invalid aoa_bound_config len: expected 8, got {len}");
                     anyhow::bail!("invalid aoa_bound_config len")
                 }
             }
@@ -457,11 +457,11 @@ impl AppConfig {
             | uci::AppConfigTlvType::NbOfElevationMeasurements
             | uci::AppConfigTlvType::EnableDiagnostics
             | uci::AppConfigTlvType::DiagramsFrameReportsFields => {
-                log::error!("unsupported vendor config type {id:?}");
+                tracing::error!("unsupported vendor config type {id:?}");
                 anyhow::bail!("unsupported vendor config type {id:?}")
             }
             _ => {
-                log::error!("unsupported app config type {id:?}");
+                tracing::error!("unsupported app config type {id:?}");
                 anyhow::bail!("unsupported app config type {id:?}")
             }
         }
