@@ -23,15 +23,24 @@ from .helper import init
 from pathlib import Path
 
 MAX_DATA_PACKET_PAYLOAD_SIZE = 1024
+MAX_DATA_MESSAGE_SIZE = 4096
 
 
-async def controller(host: Host, peer: Host, file: Path):
-    await init(host)
+async def controller(
+    host: Host,
+    peer: Host,
+    file: Path,
+    session_type: uci.SessionType = uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION,
+    init_device: bool = True,
+    data_repetition_count: int = 0,
+):
+    if init_device:
+        await init(host)
 
     host.send_control(
         uci.SessionInitCmd(
             session_id=0,
-            session_type=uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION,
+            session_type=session_type,
         )
     )
 
@@ -46,49 +55,62 @@ async def controller(host: Host, peer: Host, file: Path):
     )
 
     ranging_round_usage = 0x06
-    ranging_duration = int(1000).to_bytes(4, byteorder="little")
+    ranging_duration = int(200).to_bytes(4, byteorder="little")
+
+    tlvs = [
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+            v=bytes([uci.DeviceRole.INITIATOR]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+            v=bytes([uci.DeviceType.CONTROLLER]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS, v=host.mac_address
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
+            v=bytes([uci.MacAddressMode.MODE_0]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+            v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+            v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+            v=bytes([ranging_round_usage]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.RANGING_DURATION, v=ranging_duration
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES, v=bytes([1])
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS, v=peer.mac_address
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG,
+            v=bytes([uci.SessionDataTransferStatusNtfConfig.ENABLE]),
+        ),
+    ]
+    if data_repetition_count > 0:
+        tlvs.append(
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DATA_REPETITION_COUNT,
+                v=bytes([data_repetition_count]),
+            )
+        )
 
     host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=0,
-            tlvs=[
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
-                    v=bytes([uci.DeviceRole.INITIATOR]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
-                    v=bytes([uci.DeviceType.CONTROLLER]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS, v=host.mac_address
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
-                    v=bytes([uci.MacAddressMode.MODE_0]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
-                    v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
-                    v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
-                    v=bytes([ranging_round_usage]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.RANGING_DURATION, v=ranging_duration
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES, v=bytes([1])
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS, v=peer.mac_address
-                ),
-            ],
+            tlvs=tlvs,
         )
     )
 
@@ -103,8 +125,6 @@ async def controller(host: Host, peer: Host, file: Path):
             reason_code=0,
         )
     )
-
-    await data_transfer(host, peer.mac_address, file, 0)
 
     # START SESSION CMD
     host.send_control(uci.SessionStartCmd(session_id=0))
@@ -123,11 +143,40 @@ async def controller(host: Host, peer: Host, file: Path):
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
-    event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
-    event.show()
+    await data_transfer(host, peer.mac_address, file, 0)
 
-    event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
-    event.show()
+    for rep in range(1, data_repetition_count + 1):
+        await host.expect_control(
+            uci.SessionDataTransferStatusNtf(
+                session_token=0,
+                uci_sequence_number=1,
+                status=uci.DataTransferNtfStatusCode.UCI_DATA_TRANSFER_STATUS_REPETITION_OK,
+                tx_count=rep,
+            ),
+            timeout=2.0,
+        )
+
+    await host.expect_control(
+        uci.SessionDataCreditNtf(
+            session_token=0,
+            credit_availability=uci.CreditAvailability.CREDIT_AVAILABLE,
+        ),
+        timeout=2.0,
+    )
+
+    await host.expect_control(
+        uci.SessionDataTransferStatusNtf(
+            session_token=0,
+            uci_sequence_number=1,
+            status=uci.DataTransferNtfStatusCode.UCI_DATA_TRANSFER_STATUS_OK,
+            tx_count=data_repetition_count + 1,
+        ),
+        timeout=2.0,
+    )
+
+    if session_type != uci.SessionType.FIRA_DATA_TRANSFER_SESSION:
+        event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+        event.show()
 
     # STOP SESSION
     host.send_control(uci.SessionStopCmd(session_id=0))
@@ -151,14 +200,30 @@ async def controller(host: Host, peer: Host, file: Path):
 
     await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
 
-async def controlee(host: Host, peer: Host, file: Path):
-    await init(host)
+
+async def controlee(
+    host: Host,
+    peer: Host,
+    file: Path,
+    session_type: uci.SessionType = uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION,
+    init_device: bool = True,
+    data_repetition_count: int = 0,
+):
+    if init_device:
+        await init(host)
 
     host.send_control(
         uci.SessionInitCmd(
             session_id=0,
-            session_type=uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION,
+            session_type=session_type,
         )
     )
 
@@ -173,7 +238,7 @@ async def controlee(host: Host, peer: Host, file: Path):
     )
 
     ranging_round_usage = 0x06
-    ranging_duration = int(1000).to_bytes(4, byteorder="little")
+    ranging_duration = int(200).to_bytes(4, byteorder="little")
 
     host.send_control(
         uci.SessionSetAppConfigCmd(
@@ -248,21 +313,25 @@ async def controlee(host: Host, peer: Host, file: Path):
     )
 
     with file.open("rb") as f:
-        application_data = list(bytearray(f.read()))
-        event = await host.expect_data(
-            uci.DataMessageRcv(
-                session_handle=0,
-                status=uci.Status.OK,
-                source_address=int.from_bytes(peer.mac_address, "little"),
-                data_sequence_number=0x01,
-                application_data=application_data,
-            ),
-            timeout=2.0,
-        )
-        event.show()
+        b = f.read(MAX_DATA_MESSAGE_SIZE)
+        for _ in range(data_repetition_count + 1):
+            event = await host.expect_data(
+                uci.DataMessageRcv(
+                    session_handle=0,
+                    status=uci.DataRcvStatusCode.UCI_STATUS_SUCCESS,
+                    source_address=int.from_bytes(peer.mac_address, "little"),
+                    data_sequence_number=1,
+                    application_data=list(b),
+                ),
+                timeout=2.0,
+            )
+            event.show()
 
-    event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
-    event.show()
+        if session_type != uci.SessionType.FIRA_DATA_TRANSFER_SESSION:
+            event = await host.expect_control(
+                uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0
+            )
+            event.show()
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
@@ -284,69 +353,56 @@ async def controlee(host: Host, peer: Host, file: Path):
 
     await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
 
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
 
 async def data_transfer(
     host: Host, dst_mac_address: bytes, file: Path, session_id: int
 ):
-    try:
-        with open(file, "rb") as f:
-            b = f.read()
-            seq_num = 0
+    with open(file, "rb") as f:
+        b = f.read(MAX_DATA_MESSAGE_SIZE)
 
-            if len(b) > MAX_DATA_PACKET_PAYLOAD_SIZE:
-                for i in range(0, len(b), MAX_DATA_PACKET_PAYLOAD_SIZE):
-                    chunk = b[i : i + MAX_DATA_PACKET_PAYLOAD_SIZE]
+        msg = uci.DataMessageSnd(
+            session_handle=int(session_id),
+            destination_address=int.from_bytes(dst_mac_address, "little"),
+            data_sequence_number=1,
+            application_data=list(b),
+        )
+        raw_payload = msg.serialize()[4:]
 
-                    if i + MAX_DATA_PACKET_PAYLOAD_SIZE >= len(b):
-                        host.send_data(
-                            uci.DataMessageSnd(
-                                session_handle=int(session_id),
-                                destination_address=int.from_bytes(dst_mac_address),
-                                data_sequence_number=seq_num,
-                                application_data=chunk,
-                            )
-                        )
-                    else:
-                        host.send_data(
-                            uci.DataMessageSnd(
-                                session_handle=int(session_id),
-                                pbf=uci.PacketBoundaryFlag.NOT_COMPLETE,
-                                destination_address=int.from_bytes(dst_mac_address),
-                                data_sequence_number=seq_num,
-                                application_data=chunk,
-                            )
-                        )
-
-                    seq_num += 1
-                    if seq_num >= 65535:
-                        seq_num = 0
-
-                    event = await host.expect_control(
-                        uci.SessionDataCreditNtf(
-                            session_token=int(session_id),
-                            credit_availability=uci.CreditAvailability.CREDIT_AVAILABLE,
-                        )
-                    )
-                    event.show()
-            else:
-                host.send_data(
-                    uci.DataMessageSnd(
-                        session_handle=int(session_id),
-                        destination_address=int.from_bytes(dst_mac_address),
-                        data_sequence_number=seq_num,
-                        application_data=b,
-                    )
+        for i in range(0, len(raw_payload), MAX_DATA_PACKET_PAYLOAD_SIZE):
+            chunk = raw_payload[i : i + MAX_DATA_PACKET_PAYLOAD_SIZE]
+            pbf = (
+                uci.PacketBoundaryFlag.COMPLETE
+                if i + MAX_DATA_PACKET_PAYLOAD_SIZE >= len(raw_payload)
+                else uci.PacketBoundaryFlag.NOT_COMPLETE
+            )
+            host.send_data(
+                uci.DataPacket(
+                    dpf=uci.DataPacketFormat.DATA_SND,
+                    pbf=pbf,
+                    payload=list(chunk),
                 )
-                event = await host.expect_control(
-                    uci.SessionDataCreditNtf(
-                        session_token=int(session_id),
-                        credit_availability=uci.CreditAvailability.CREDIT_AVAILABLE,
-                    )
-                )
-                event.show()
+            )
 
-    except Exception as e:
-        print(e)
+            credit_availability = (
+                uci.CreditAvailability.CREDIT_NOT_AVAILABLE
+                if pbf == uci.PacketBoundaryFlag.COMPLETE
+                else uci.CreditAvailability.CREDIT_AVAILABLE
+            )
+            event = await host.expect_control(
+                uci.SessionDataCreditNtf(
+                    session_token=int(session_id),
+                    credit_availability=credit_availability,
+                )
+            )
+            event.show()
 
 
 async def run(address: str, uci_port: int, file: Path):
@@ -363,8 +419,27 @@ async def run(address: str, uci_port: int, file: Path):
         async with asyncio.TaskGroup() as tg:
             tg.create_task(controller(host0, host1, file))
             tg.create_task(controlee(host1, host0, file))
-    except Exception as e:
-        raise e
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(
+                controller(
+                    host0,
+                    host1,
+                    file,
+                    uci.SessionType.FIRA_DATA_TRANSFER_SESSION,
+                    init_device=False,
+                    data_repetition_count=1,
+                )
+            )
+            tg.create_task(
+                controlee(
+                    host1,
+                    host0,
+                    file,
+                    uci.SessionType.FIRA_DATA_TRANSFER_SESSION,
+                    init_device=False,
+                    data_repetition_count=1,
+                )
+            )
     finally:
         host0.disconnect()
         host1.disconnect()

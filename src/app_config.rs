@@ -46,6 +46,7 @@ const DEFAULT_MAC_ADDRESS_MODE: uci::MacAddressMode = uci::MacAddressMode::Mode0
 const DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT: u8 = 1;
 const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferStatusNtfConfig =
     uci::SessionDataTransferStatusNtfConfig::Disable;
+const DEFAULT_DATA_REPETITION_COUNT: u8 = 0;
 
 /// [UCI] 8.3 Application Configuration Parameters.
 /// The configuration is initially filled with default values from the
@@ -142,7 +143,7 @@ impl Default for AppConfig {
                 ),
                 (
                     uci::AppConfigTlvType::DataRepetitionCount,
-                    Bytes::from_static(&[0]),
+                    Bytes::from_static(&[DEFAULT_DATA_REPETITION_COUNT]),
                 ),
                 (
                     uci::AppConfigTlvType::RangingTimeStruct,
@@ -598,6 +599,11 @@ impl AppConfig {
     pub fn in_band_termination_attempt_count(&self) -> u8 {
         self.get_u8(uci::AppConfigTlvType::InBandTerminationAttemptCount)
             .unwrap_or(DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT)
+    }
+
+    pub fn data_repetition_count(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::DataRepetitionCount)
+            .unwrap_or(DEFAULT_DATA_REPETITION_COUNT)
     }
 
     pub fn session_data_transfer_status_ntf_config(

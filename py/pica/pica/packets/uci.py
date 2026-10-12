@@ -1275,7 +1275,7 @@ class DataMessageSnd(DataPacket):
 @dataclass
 class DataMessageRcv(DataPacket):
     session_handle: int = field(kw_only=True, default=0)
-    status: Status = field(kw_only=True, default=Status.OK)
+    status: DataRcvStatusCode = field(kw_only=True, default=DataRcvStatusCode.UCI_STATUS_SUCCESS)
     source_address: int = field(kw_only=True, default=0)
     data_sequence_number: int = field(kw_only=True, default=0)
     application_data: bytearray = field(kw_only=True, default_factory=bytearray)
@@ -1292,7 +1292,7 @@ class DataMessageRcv(DataPacket):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_handle'] = value_
-        fields['status'] = Status.from_int(span[4])
+        fields['status'] = DataRcvStatusCode.from_int(span[4])
         value_ = int.from_bytes(span[5:13], byteorder='little')
         fields['source_address'] = value_
         value_ = int.from_bytes(span[13:15], byteorder='little')
@@ -3534,14 +3534,15 @@ class SessionDataTransferStatusNtf(SessionControlPacket):
     def parse(fields: dict, span: bytes) -> Tuple['SessionDataTransferStatusNtf', bytes]:
         if fields['mt'] != MessageType.NOTIFICATION or fields['oid'] != SessionControlOpcodeId.DATA_TRANSFER_STATUS or fields['gid'] != GroupId.SESSION_CONTROL:
             raise Exception("Invalid constraint field values")
-        if len(span) < 7:
+        if len(span) < 8:
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
-        fields['uci_sequence_number'] = span[4]
-        fields['status'] = DataTransferNtfStatusCode.from_int(span[5])
-        fields['tx_count'] = span[6]
-        span = span[7:]
+        value_ = int.from_bytes(span[4:6], byteorder='little')
+        fields['uci_sequence_number'] = value_
+        fields['status'] = DataTransferNtfStatusCode.from_int(span[6])
+        fields['tx_count'] = span[7]
+        span = span[8:]
         return SessionDataTransferStatusNtf(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
@@ -3550,10 +3551,10 @@ class SessionDataTransferStatusNtf(SessionControlPacket):
             print(f"Invalid value for field SessionDataTransferStatusNtf::session_token: {self.session_token} > 4294967295; the value will be truncated")
             self.session_token &= 4294967295
         _span.extend(int.to_bytes((self.session_token << 0), length=4, byteorder='little'))
-        if self.uci_sequence_number > 255:
-            print(f"Invalid value for field SessionDataTransferStatusNtf::uci_sequence_number: {self.uci_sequence_number} > 255; the value will be truncated")
-            self.uci_sequence_number &= 255
-        _span.append((self.uci_sequence_number << 0))
+        if self.uci_sequence_number > 65535:
+            print(f"Invalid value for field SessionDataTransferStatusNtf::uci_sequence_number: {self.uci_sequence_number} > 65535; the value will be truncated")
+            self.uci_sequence_number &= 65535
+        _span.extend(int.to_bytes((self.uci_sequence_number << 0), length=2, byteorder='little'))
         _span.append((self.status << 0))
         if self.tx_count > 255:
             print(f"Invalid value for field SessionDataTransferStatusNtf::tx_count: {self.tx_count} > 255; the value will be truncated")
@@ -3563,7 +3564,7 @@ class SessionDataTransferStatusNtf(SessionControlPacket):
 
     @property
     def size(self) -> int:
-        return 7
+        return 8
 
 @dataclass
 class SessionQueryMaxDataSizeInRangingCmd(SessionConfigPacket):
