@@ -160,13 +160,18 @@ async def controller(
     )
     expected_mac = int.from_bytes(peer.mac_address, byteorder="little")
 
-    for i in range(1, 3):
+    for _ in range(2):
         event = await host.expect_control(ntf_type, timeout=2.0)
         event.show()
-        if i == 1 or len(event.two_way_ranging_measurements) > 0:
-            assert len(event.two_way_ranging_measurements) == 1
-            assert event.two_way_ranging_measurements[0].status == uci.Status.OK
-            assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+        assert len(event.two_way_ranging_measurements) == 1
+        assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+        assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+
+    event = await host.expect_control(ntf_type, timeout=2.0)
+    event.show()
+    assert len(event.two_way_ranging_measurements) == 1
+    assert event.two_way_ranging_measurements[0].status == uci.Status.RANGING_RX_TIMEOUT
+    assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
@@ -304,13 +309,14 @@ async def controlee(
     )
     expected_mac = int.from_bytes(peer.mac_address, byteorder="little")
 
-    for i in range(1, 3):
+    for _ in range(2):
         event = await host.expect_control(ntf_type, timeout=2.0)
         event.show()
-        if i == 1 or len(event.two_way_ranging_measurements) > 0:
-            assert len(event.two_way_ranging_measurements) == 1
-            assert event.two_way_ranging_measurements[0].status == uci.Status.OK
-            assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+        assert len(event.two_way_ranging_measurements) == 1
+        assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+        assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+
+    await asyncio.sleep(0.1)
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
