@@ -738,41 +738,44 @@ impl Device {
                                 }
                             });
                         }
-                        controlee_status_ntf.push(ControleeStatus {
-                            mac_address: controlee.short_address,
-                            status: update_status,
-                        });
+                        // Following requirements are applicable when the action is set to Delete (Action field set to 0x01):
+                        // When the command is received while the Session State is SESSION_STATE_ACTIVE,
+                        // For requested Controlees present in the multicast list,
+                        // UWBS shall send the SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF and the
+                        // corresponding Controlee status shall be set to STATUS_OK_MULTICAST_LIST_UPDATE
+                        // in the Status List of SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF.
+                        if session.state == SessionState::SessionStateActive {
+                            controlee_status_ntf.push(ControleeStatus {
+                                mac_address: controlee.short_address,
+                                status: update_status,
+                            });
+                        }
                     }
                     controlee_status_rsp.push(ControleeStatus {
                         mac_address: controlee.short_address,
                         status: update_status,
                     });
                 });
-                // Following requirements are applicable when the action is set to Delete (Action field set to 0x01):
-                // When the command is received while the Session State is SESSION_STATE_ACTIVE,
-                // For requested Controlees present in the multicast list,
-                // UWBS shall send the SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF and the
-                // corresponding Controlee status shall be set to STATUS_OK_MULTICAST_LIST_UPDATE
-                // in the Status List of SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF.
-                if session.state == SessionState::SessionStateActive {
-                    let tx = self.tx.clone();
-                    tokio::spawn(async move {
-                        // Sleep for 5ms to make sure the notification is not being
-                        // sent before the response.
-                        // TODO(#84) remove the sleep.
-                        time::sleep(Duration::from_millis(5)).await;
-                        tx.send(
-                            SessionUpdateControllerMulticastListNtf {
-                                controlee_status: controlee_status_ntf,
-                                session_token: session_handle,
-                            }
-                            .encode_to_vec()
-                            .unwrap(),
-                        )
-                        .unwrap()
-                    });
-                }
             }
+        }
+
+        if !controlee_status_ntf.is_empty() {
+            let tx = self.tx.clone();
+            tokio::spawn(async move {
+                // Sleep for 5ms to make sure the notification is not being
+                // sent before the response.
+                // TODO(#84) remove the sleep.
+                time::sleep(Duration::from_millis(5)).await;
+                tx.send(
+                    SessionUpdateControllerMulticastListNtf {
+                        controlee_status: controlee_status_ntf,
+                        session_token: session_handle,
+                    }
+                    .encode_to_vec()
+                    .unwrap(),
+                )
+                .unwrap()
+            });
         }
         session
             .app_config
