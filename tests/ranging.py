@@ -211,6 +211,136 @@ async def controller(
     )
 
 
+async def multicast_empty_stop(host: Host, peer: Host):
+    host.send_control(
+        uci.SessionInitCmd(
+            session_id=0, session_type=uci.SessionType.FIRA_RANGING_SESSION
+        )
+    )
+
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                    v=bytes([uci.DeviceRole.INITIATOR]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                    v=bytes([uci.DeviceType.CONTROLLER]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS,
+                    v=host.mac_address,
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                    v=bytes([uci.MultiNodeMode.ONE_TO_MANY]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                    v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    v=bytes([0x06]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                    v=bytes([1]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                    v=peer.mac_address,
+                ),
+            ],
+        )
+    )
+
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(uci.SessionStartCmd(session_id=0))
+
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    host.send_control(
+        uci.SessionUpdateControllerMulticastListCmd(
+            session_token=0,
+            action=uci.UpdateMulticastListAction.REMOVE_CONTROLEE,
+            payload=uci.SessionUpdateControllerMulticastListCmdPayload(
+                controlees=[
+                    uci.Controlee(
+                        short_address=list(peer.mac_address),
+                        subsession_id=0,
+                    )
+                ]
+            ).serialize(),
+        )
+    )
+
+    await host.expect_control(uci.SessionConfigPacket)
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.ERROR_INVALID_NUM_OF_CONTROLEES,
+        )
+    )
+
+    ntf = await host.expect_control(uci.SessionUpdateControllerMulticastListNtf)
+    assert ntf.session_token == 0
+
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    host.send_control(uci.SessionDeinitCmd(session_token=0))
+
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
+
 async def multicast_list_ntf(host: Host, peer: Host):
     host.send_control(
         uci.SessionInitCmd(
@@ -486,6 +616,7 @@ async def run(address: str, uci_port: int):
             controlee(host1, host0),
         )
 
+        await multicast_empty_stop(host0, host1)
         await multicast_list_ntf(host0, host1)
 
         # Re-run ranging on the connected hosts using 8-byte extended MAC addresses (MODE_2).
