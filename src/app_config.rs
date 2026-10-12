@@ -1,9 +1,31 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
+use thiserror::Error;
 
 use crate::MacAddress;
 use crate::packets::uci;
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum AppConfigError {
+    #[error("invalid {id:?} length: expected {expected}, got {actual}")]
+    InvalidLength {
+        id: uci::AppConfigTlvType,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("invalid SubSessionKey length: expected 16 or 32, got {actual}")]
+    InvalidSubSessionKeyLength { actual: usize },
+    #[error("invalid {id:?} enum value: {value:#x}")]
+    InvalidEnumValue {
+        id: uci::AppConfigTlvType,
+        value: u8,
+    },
+    #[error("mac_address_mode {0:?} is not supported")]
+    UnsupportedMacAddressMode(uci::MacAddressMode),
+    #[error("unsupported app config parameter {0:?}")]
+    UnsupportedParameter(uci::AppConfigTlvType),
+}
 
 /// [UCI] 8.3 Application Configuration Parameters.
 /// Sub-session Key provided for Provisioned STS for Responder specific Key mode
@@ -260,42 +282,57 @@ impl AppConfig {
             .collect()
     }
 
-    fn validate(&self, id: uci::AppConfigTlvType, value: &[u8]) -> anyhow::Result<()> {
-        fn try_parse<T: TryFrom<u8, Error = u8>>(value: &[u8]) -> anyhow::Result<T> {
-            T::try_from(u8::from_le_bytes(value.try_into()?)).map_err(anyhow::Error::msg)
+    fn parse_tlv(&self, id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
+        fn try_parse_array<const N: usize>(
+            id: uci::AppConfigTlvType,
+            value: &[u8],
+        ) -> Result<[u8; N], AppConfigError> {
+            value.try_into().map_err(|_| AppConfigError::InvalidLength {
+                id,
+                expected: N,
+                actual: value.len(),
+            })
         }
 
-        fn try_parse_u8(value: &[u8]) -> anyhow::Result<u8> {
-            Ok(u8::from_le_bytes(value.try_into()?))
+        fn try_parse_u8(id: uci::AppConfigTlvType, value: &[u8]) -> Result<u8, AppConfigError> {
+            try_parse_array(id, value).map(u8::from_le_bytes)
         }
 
-        fn try_parse_u16(value: &[u8]) -> anyhow::Result<u16> {
-            Ok(u16::from_le_bytes(value.try_into()?))
+        fn try_parse_enum<T: TryFrom<u8, Error = u8>>(
+            id: uci::AppConfigTlvType,
+            value: &[u8],
+        ) -> Result<T, AppConfigError> {
+            T::try_from(try_parse_u8(id, value)?)
+                .map_err(|value| AppConfigError::InvalidEnumValue { id, value })
         }
 
-        fn try_parse_u32(value: &[u8]) -> anyhow::Result<u32> {
-            Ok(u32::from_le_bytes(value.try_into()?))
+        fn try_parse_u16(id: uci::AppConfigTlvType, value: &[u8]) -> Result<u16, AppConfigError> {
+            try_parse_array(id, value).map(u16::from_le_bytes)
         }
 
-        fn try_parse_u64(value: &[u8]) -> anyhow::Result<u64> {
-            Ok(u64::from_le_bytes(value.try_into()?))
+        fn try_parse_u32(id: uci::AppConfigTlvType, value: &[u8]) -> Result<u32, AppConfigError> {
+            try_parse_array(id, value).map(u32::from_le_bytes)
+        }
+
+        fn try_parse_u64(id: uci::AppConfigTlvType, value: &[u8]) -> Result<u64, AppConfigError> {
+            try_parse_array(id, value).map(u64::from_le_bytes)
         }
 
         match id {
             uci::AppConfigTlvType::DeviceType => {
-                let _ = try_parse::<uci::DeviceType>(value)?;
+                let _ = try_parse_enum::<uci::DeviceType>(id, value)?;
             }
             uci::AppConfigTlvType::RangingRoundUsage => {
-                let _ = try_parse::<uci::RangingRoundUsage>(value)?;
+                let _ = try_parse_enum::<uci::RangingRoundUsage>(id, value)?;
             }
             uci::AppConfigTlvType::StsConfig => {
-                let _ = try_parse::<uci::StsConfig>(value)?;
+                let _ = try_parse_enum::<uci::StsConfig>(id, value)?;
             }
             uci::AppConfigTlvType::MultiNodeMode => {
-                let _ = try_parse::<uci::MultiNodeMode>(value)?;
+                let _ = try_parse_enum::<uci::MultiNodeMode>(id, value)?;
             }
             uci::AppConfigTlvType::ChannelNumber => {
-                let _ = try_parse::<uci::ChannelNumber>(value)?;
+                let _ = try_parse_enum::<uci::ChannelNumber>(id, value)?;
             }
             uci::AppConfigTlvType::NumberOfControlees
             | uci::AppConfigTlvType::RangingRoundControl
@@ -313,34 +350,38 @@ impl AppConfig {
             | uci::AppConfigTlvType::MinFramesPerRr
             | uci::AppConfigTlvType::InterFrameInterval
             | uci::AppConfigTlvType::ApplicationDataEndpoint => {
-                let _ = try_parse_u8(value)?;
+                let _ = try_parse_u8(id, value)?;
             }
             uci::AppConfigTlvType::DeviceMacAddress => match self.mac_address_mode() {
                 uci::MacAddressMode::Mode0 => {
-                    let _: [u8; 2] = value.try_into()?;
+                    let _ = try_parse_array::<2>(id, value)?;
                 }
                 uci::MacAddressMode::Mode1 => {
-                    anyhow::bail!("mac_address_mode Mode1 is not supported")
+                    return Err(AppConfigError::UnsupportedMacAddressMode(
+                        uci::MacAddressMode::Mode1,
+                    ));
                 }
                 uci::MacAddressMode::Mode2 => {
-                    let _: [u8; 8] = value.try_into()?;
+                    let _ = try_parse_array::<8>(id, value)?;
                 }
             },
             uci::AppConfigTlvType::DstMacAddress => {
                 let mac_address_size = match self.mac_address_mode() {
                     uci::MacAddressMode::Mode0 => 2,
                     uci::MacAddressMode::Mode1 => {
-                        anyhow::bail!("mac_address_mode Mode1 is not supported")
+                        return Err(AppConfigError::UnsupportedMacAddressMode(
+                            uci::MacAddressMode::Mode1,
+                        ));
                     }
                     uci::MacAddressMode::Mode2 => 8,
                 };
-                if value.len() != self.number_of_controlees() as usize * mac_address_size {
-                    let n = self.number_of_controlees();
-                    let len = value.len();
-                    tracing::error!(
-                        "invalid dst_mac_address len: expected {n}x{mac_address_size}, got {len}"
-                    );
-                    anyhow::bail!("invalid dst_mac_address len")
+                let expected = self.number_of_controlees() as usize * mac_address_size;
+                if value.len() != expected {
+                    return Err(AppConfigError::InvalidLength {
+                        id,
+                        expected,
+                        actual: value.len(),
+                    });
                 }
             }
             uci::AppConfigTlvType::SlotDuration
@@ -350,140 +391,116 @@ impl AppConfig {
             | uci::AppConfigTlvType::MaxRrRetry
             | uci::AppConfigTlvType::MaxNumberOfMeasurements
             | uci::AppConfigTlvType::MtuSize => {
-                let _ = try_parse_u16(value)?;
+                let _ = try_parse_u16(id, value)?;
             }
             uci::AppConfigTlvType::RangingDuration
             | uci::AppConfigTlvType::StsIndex
             | uci::AppConfigTlvType::SubSessionId => {
-                let _ = try_parse_u32(value)?;
+                let _ = try_parse_u32(id, value)?;
             }
             uci::AppConfigTlvType::MacFcsType => {
-                let _ = try_parse::<uci::MacFcsType>(value)?;
+                let _ = try_parse_enum::<uci::MacFcsType>(id, value)?;
             }
             uci::AppConfigTlvType::AoaResultReq => {
-                let _ = try_parse::<uci::AoaResultReq>(value)?;
+                let _ = try_parse_enum::<uci::AoaResultReq>(id, value)?;
             }
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
-                let _ = try_parse::<uci::SessionInfoNtfConfig>(value)?;
+                let _ = try_parse_enum::<uci::SessionInfoNtfConfig>(id, value)?;
             }
             uci::AppConfigTlvType::DeviceRole => {
-                let _ = try_parse::<uci::DeviceRole>(value)?;
+                let _ = try_parse_enum::<uci::DeviceRole>(id, value)?;
             }
             uci::AppConfigTlvType::RframeConfig => {
-                let _ = try_parse::<uci::RframeConfig>(value)?;
+                let _ = try_parse_enum::<uci::RframeConfig>(id, value)?;
             }
             uci::AppConfigTlvType::RssiReporting => {
-                let _ = try_parse::<uci::RssiReporting>(value)?;
+                let _ = try_parse_enum::<uci::RssiReporting>(id, value)?;
             }
             uci::AppConfigTlvType::PsduDataRate => {
-                let _ = try_parse::<uci::PsduDataRate>(value)?;
+                let _ = try_parse_enum::<uci::PsduDataRate>(id, value)?;
             }
             uci::AppConfigTlvType::PreambleDuration => {
-                let _ = try_parse::<uci::PreambleDuration>(value)?;
+                let _ = try_parse_enum::<uci::PreambleDuration>(id, value)?;
             }
             uci::AppConfigTlvType::LinkLayerMode => {
-                let _ = try_parse::<uci::LinkLayerMode>(value)?;
+                let _ = try_parse_enum::<uci::LinkLayerMode>(id, value)?;
             }
             uci::AppConfigTlvType::RangingTimeStruct => {
-                let _ = try_parse::<uci::RangingTimeStruct>(value)?;
+                let _ = try_parse_enum::<uci::RangingTimeStruct>(id, value)?;
             }
             uci::AppConfigTlvType::AoaBoundConfig => {
-                if value.len() != 8 {
-                    let len = value.len();
-                    tracing::error!("invalid aoa_bound_config len: expected 8, got {len}");
-                    anyhow::bail!("invalid aoa_bound_config len")
-                }
+                let _ = try_parse_array::<8>(id, value)?;
             }
             uci::AppConfigTlvType::PrfMode => {
-                let _ = try_parse::<uci::PrfMode>(value)?;
+                let _ = try_parse_enum::<uci::PrfMode>(id, value)?;
             }
             uci::AppConfigTlvType::CapSizeRange => {
-                let _: [u8; 2] = value.try_into()?;
+                let _ = try_parse_array::<2>(id, value)?;
             }
             uci::AppConfigTlvType::ScheduleMode => {
-                let _ = try_parse::<uci::ScheduleMode>(value)?;
+                let _ = try_parse_enum::<uci::ScheduleMode>(id, value)?;
             }
             uci::AppConfigTlvType::KeyRotation => {
-                let _ = try_parse::<uci::KeyRotation>(value)?;
+                let _ = try_parse_enum::<uci::KeyRotation>(id, value)?;
             }
             uci::AppConfigTlvType::MacAddressMode => {
-                let mode = try_parse::<uci::MacAddressMode>(value)?;
+                let mode = try_parse_enum::<uci::MacAddressMode>(id, value)?;
                 if mode == uci::MacAddressMode::Mode1 {
-                    anyhow::bail!("mac_address_mode Mode1 is not supported");
+                    return Err(AppConfigError::UnsupportedMacAddressMode(
+                        uci::MacAddressMode::Mode1,
+                    ));
                 }
             }
             uci::AppConfigTlvType::StaticStsIv => {
-                let _: [u8; 6] = value.try_into()?;
+                let _ = try_parse_array::<6>(id, value)?;
             }
-            uci::AppConfigTlvType::UwbInitiationTime => match value.len() {
-                4 => {
-                    let _ = try_parse_u32(value)?;
-                }
-                _ => {
-                    let _ = try_parse_u64(value)?;
-                }
-            },
+            uci::AppConfigTlvType::UwbInitiationTime => {
+                // Implement backward compatibility for UCI 1.0
+                // where the value is 4 bytes instead of 8.
+                let v = match value.len() {
+                    4 => u64::from(try_parse_u32(id, value)?),
+                    _ => try_parse_u64(id, value)?,
+                };
+                return Ok(Bytes::copy_from_slice(&v.to_le_bytes()));
+            }
             uci::AppConfigTlvType::HoppingMode => {
-                let _ = try_parse::<uci::HoppingMode>(value)?;
+                let _ = try_parse_enum::<uci::HoppingMode>(id, value)?;
             }
             uci::AppConfigTlvType::BprfPhrDataRate => {
-                let _ = try_parse::<uci::BprfPhrDataRate>(value)?;
+                let _ = try_parse_enum::<uci::BprfPhrDataRate>(id, value)?;
             }
             uci::AppConfigTlvType::StsLength => {
-                let _ = try_parse::<uci::StsLength>(value)?;
+                let _ = try_parse_enum::<uci::StsLength>(id, value)?;
             }
             uci::AppConfigTlvType::SessionKey => {}
             uci::AppConfigTlvType::SubSessionKey => {
                 if value.len() != 16 && value.len() != 32 {
-                    let len = value.len();
-                    anyhow::bail!("invalid sub-session key size {len}");
+                    return Err(AppConfigError::InvalidSubSessionKeyLength {
+                        actual: value.len(),
+                    });
                 }
             }
             uci::AppConfigTlvType::SessionDataTransferStatusNtfConfig => {
-                let _ = try_parse::<uci::SessionDataTransferStatusNtfConfig>(value)?;
+                let _ = try_parse_enum::<uci::SessionDataTransferStatusNtfConfig>(id, value)?;
             }
             uci::AppConfigTlvType::SessionTimeBase => {
-                let _: [u8; 9] = value.try_into()?;
-            }
-            uci::AppConfigTlvType::CccHopModeKey
-            | uci::AppConfigTlvType::CccUwbTime0
-            | uci::AppConfigTlvType::CccRangingProtocolVer
-            | uci::AppConfigTlvType::CccUwbConfigId
-            | uci::AppConfigTlvType::CccPulseshapeCombo
-            | uci::AppConfigTlvType::CccUrskTtl
-            | uci::AppConfigTlvType::CccLastIndexUsed
-            | uci::AppConfigTlvType::NbOfRangeMeasurements
-            | uci::AppConfigTlvType::NbOfAzimuthMeasurements
-            | uci::AppConfigTlvType::NbOfElevationMeasurements
-            | uci::AppConfigTlvType::EnableDiagnostics
-            | uci::AppConfigTlvType::DiagramsFrameReportsFields => {
-                tracing::error!("unsupported vendor config type {id:?}");
-                anyhow::bail!("unsupported vendor config type {id:?}")
+                let _ = try_parse_array::<9>(id, value)?;
             }
             _ => {
-                tracing::error!("unsupported app config type {id:?}");
-                anyhow::bail!("unsupported app config type {id:?}")
+                return Err(AppConfigError::UnsupportedParameter(id));
             }
         }
 
-        Ok(())
+        Ok(Bytes::copy_from_slice(value))
     }
 
     /// Set the APP configuration value with the selected identifier
     /// and value. Returns `Ok` if the identifier is known and the value
     /// well formatted, `Err` otherwise.
-    pub fn set(&mut self, id: uci::AppConfigTlvType, value: &[u8]) -> anyhow::Result<()> {
-        self.validate(id, value)?;
-
-        // Implement backward compatiblity for UCI 1.0
-        // where the value is 4 bytes instead of 8.
-        let bytes = match (id, value) {
-            (uci::AppConfigTlvType::UwbInitiationTime, &[a, b, c, d]) => {
-                Bytes::copy_from_slice(&(u32::from_le_bytes([a, b, c, d]) as u64).to_le_bytes())
-            }
-            _ => Bytes::copy_from_slice(value),
-        };
-
+    pub fn set(&mut self, id: uci::AppConfigTlvType, value: &[u8]) -> Result<(), AppConfigError> {
+        let bytes = self
+            .parse_tlv(id, value)
+            .inspect_err(|err| tracing::error!("{err}"))?;
         self.tlvs.insert(id, bytes);
         Ok(())
     }
