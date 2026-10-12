@@ -2,7 +2,7 @@
 name = "pica"
 version = "0.1.12"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.88"
 description = "Pica is a virtual UWB Controller implementing the FiRa UCI specification."
 repository = "https://github.com/google/pica"
 license = "Apache-2.0"
@@ -60,7 +60,6 @@ web = [
 pdl-compiler = "0.5.2"
 
 [dependencies]
-anyhow = "1.0.56"
 bytes = "1"
 futures = "0.3.30"
 clap = { version = "4.1.8", default-features = false, features = ["derive", "error-context", "help", "std", "usage"], optional = true }

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Result;
 use pdl_runtime::Packet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36,11 +35,11 @@ mod mac_address;
 pub use mac_address::MacAddress;
 
 mod app_config;
-pub use app_config::AppConfig;
+pub use app_config::{AppConfig, AppConfigError};
 
 pub type UciPacket = Vec<u8>;
 pub type UciStream = Pin<Box<dyn futures::stream::Stream<Item = Vec<u8>> + Send>>;
-pub type UciSink = Pin<Box<dyn futures::sink::Sink<Vec<u8>, Error = anyhow::Error> + Send>>;
+pub type UciSink = Pin<Box<dyn futures::sink::Sink<Vec<u8>, Error = ()> + Send>>;
 
 /// Handle allocated for created devices or anchors.
 /// The handle is unique across the lifetime of the Pica context
@@ -80,6 +79,14 @@ pub struct Pica {
     event_tx: broadcast::Sender<PicaEvent>,
     ranging_estimator: Box<dyn RangingEstimator>,
     pcapng_dir: Option<PathBuf>,
+}
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum PicaError {
+    #[error("no available short MAC address for new device")]
+    NoAvailableMacAddress,
+    #[error("pica is already running")]
+    AlreadyRunning,
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -272,21 +279,25 @@ impl Pica {
         cmd_tx: mpsc::Sender<PicaCommand>,
         handle: Handle,
         pcapng_file: Option<&pcapng::File>,
-    ) -> anyhow::Result<()> {
+    ) {
         use futures::stream::StreamExt;
 
         loop {
             let mut complete_packet: Option<Vec<u8>> = None;
             loop {
-                let packet = uci_stream
-                    .next()
-                    .await
-                    .ok_or(anyhow::anyhow!("input packet stream closed"))?;
-                let header =
-                    packets::uci::CommonPacketHeader::decode_full(&packet[0..COMMON_HEADER_SIZE])?;
+                let Some(packet) = uci_stream.next().await else {
+                    return;
+                };
+                let Ok(header) =
+                    packets::uci::CommonPacketHeader::decode_full(&packet[0..COMMON_HEADER_SIZE])
+                else {
+                    return;
+                };
 
-                if let Some(file) = pcapng_file {
-                    file.write(&packet, pcapng::Direction::Tx)?;
+                if let Some(file) = pcapng_file
+                    && file.write(&packet, pcapng::Direction::Tx).is_err()
+                {
+                    return;
                 }
 
                 match &mut complete_packet {
@@ -316,14 +327,13 @@ impl Pica {
         mut packet_rx: mpsc::UnboundedReceiver<UciPacket>,
         _handle: Handle,
         pcapng_file: Option<&pcapng::File>,
-    ) -> anyhow::Result<()> {
+    ) {
         use futures::sink::SinkExt;
 
         loop {
-            let complete_packet = packet_rx
-                .recv()
-                .await
-                .ok_or(anyhow::anyhow!("output packet stream closed"))?;
+            let Some(complete_packet) = packet_rx.recv().await else {
+                return;
+            };
             let mut offset = HEADER_SIZE;
             let mt = parse_message_type(complete_packet[0]);
 
@@ -359,21 +369,22 @@ impl Pica {
 
                 packet.extend_from_slice(&complete_packet[offset..offset + fragment_length]);
 
-                if let Some(file) = pcapng_file {
-                    file.write(&packet, pcapng::Direction::Rx)?;
+                if let Some(file) = pcapng_file
+                    && file.write(&packet, pcapng::Direction::Rx).is_err()
+                {
+                    return;
                 }
 
-                uci_sink
-                    .send(packet)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("output packet sink closed"))?;
+                if uci_sink.send(packet).await.is_err() {
+                    return;
+                }
 
                 offset += fragment_length;
             }
         }
     }
 
-    pub fn add_device(&mut self, stream: UciStream, sink: UciSink) -> Result<Handle> {
+    pub fn add_device(&mut self, stream: UciStream, sink: UciSink) -> Result<Handle, PicaError> {
         let (packet_tx, packet_rx) = mpsc::unbounded_channel();
         let pica_tx = self.command_tx.clone();
         let disconnect_tx = self.command_tx.clone();
@@ -389,7 +400,7 @@ impl Pica {
             }
             if self.counter as u16 == initial_counter as u16 {
                 self.counter = initial_counter;
-                anyhow::bail!("No available short MAC address for new device");
+                return Err(PicaError::NoAvailableMacAddress);
             }
         };
 
@@ -417,10 +428,10 @@ impl Pica {
                 None
             };
 
-            let _ = tokio::try_join!(
-                async { Self::read_routine(stream, pica_tx, handle, pcapng_file.as_ref()).await },
-                async { Self::write_routine(sink, packet_rx, handle, pcapng_file.as_ref()).await }
-            );
+            tokio::select! {
+                () = Self::read_routine(stream, pica_tx, handle, pcapng_file.as_ref()) => (),
+                () = Self::write_routine(sink, packet_rx, handle, pcapng_file.as_ref()) => (),
+            }
 
             disconnect_tx
                 .send(PicaCommand::Disconnect(handle))
@@ -620,9 +631,9 @@ impl Pica {
     }
 
     /// Run the internal pica event loop.
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(mut self) -> Result<(), PicaError> {
         let Some(mut command_rx) = self.command_rx.take() else {
-            anyhow::bail!("missing pica command receiver")
+            return Err(PicaError::AlreadyRunning);
         };
         loop {
             if let Some(command) = command_rx.recv().await {
@@ -716,11 +727,11 @@ impl Pica {
 /// Run the internal pica event loop.
 /// As opposed to Pica::run, the context is passed under a mutex, which
 /// allows synchronous access to the context for device creation.
-pub async fn run(this: &std::sync::Mutex<Pica>) -> Result<()> {
+pub async fn run(this: &std::sync::Mutex<Pica>) -> Result<(), PicaError> {
     // Extract the mpsc receiver from the Pica context.
     // The receiver cannot be cloned.
     let Some(mut command_rx) = this.lock().unwrap().command_rx.take() else {
-        anyhow::bail!("missing pica command receiver");
+        return Err(PicaError::AlreadyRunning);
     };
 
     loop {
