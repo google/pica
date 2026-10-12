@@ -20,6 +20,7 @@ use crate::packets::uci::{self, *};
 use crate::{AppConfig, MacAddress};
 use bytes::BytesMut;
 use pdl_runtime::Packet;
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -37,8 +38,10 @@ pub struct Session {
 
     pub session_type: SessionType,
     pub sequence_number: u32,
+    pub ranging_count: u32,
     pub app_config: AppConfig,
     pub ranging_task: Option<JoinHandle<()>>,
+    pub in_range_peers: HashSet<MacAddress>,
     tx: mpsc::UnboundedSender<UciPacket>,
 }
 
@@ -56,8 +59,10 @@ impl Session {
             data: BytesMut::new(),
             session_type,
             sequence_number: 0,
+            ranging_count: 0,
             app_config: AppConfig::default(),
             ranging_task: None,
+            in_range_peers: HashSet::new(),
             tx,
         }
     }
@@ -89,10 +94,6 @@ impl Session {
 
     pub fn get_dst_mac_address(&self) -> impl Iterator<Item = MacAddress> + '_ {
         self.app_config.dst_mac_address()
-    }
-
-    pub fn is_session_info_ntf_enabled(&self) -> bool {
-        self.app_config.session_info_ntf_config() != uci::SessionInfoNtfConfig::Disable
     }
 
     #[allow(unused)]
@@ -129,6 +130,9 @@ impl Session {
             handle.abort();
             self.ranging_task = None;
         }
+        self.sequence_number = 0;
+        self.ranging_count = 0;
+        self.in_range_peers.clear();
     }
 
     pub fn data_message_snd(&mut self, data: DataMessageSnd) -> ControlPacket {

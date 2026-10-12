@@ -605,6 +605,255 @@ async def controlee(
     )
 
 
+async def ranging_max_measurements(host: Host, peer: Host):
+    peer.send_control(
+        uci.SessionInitCmd(
+            session_id=0, session_type=uci.SessionType.FIRA_RANGING_SESSION
+        )
+    )
+
+    await peer.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+
+    await peer.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+
+    peer.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                    v=bytes([uci.DeviceRole.RESPONDER]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                    v=bytes([uci.DeviceType.CONTROLEE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS,
+                    v=peer.mac_address,
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                    v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                    v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    v=bytes([0x06]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                    v=int.to_bytes(200, 4, "little"),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                    v=bytes([1]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                    v=host.mac_address,
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG,
+                    v=bytes([uci.SessionInfoNtfConfig.DISABLE]),
+                ),
+            ],
+        )
+    )
+
+    await peer.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    await peer.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+    peer.send_control(uci.SessionStartCmd(session_id=0))
+
+    await peer.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+
+    await peer.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+
+    await peer.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    host.send_control(
+        uci.SessionInitCmd(
+            session_id=0, session_type=uci.SessionType.FIRA_RANGING_SESSION
+        )
+    )
+
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                    v=bytes([uci.DeviceRole.INITIATOR]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                    v=bytes([uci.DeviceType.CONTROLLER]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS,
+                    v=host.mac_address,
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                    v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                    v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    v=bytes([0x06]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                    v=int.to_bytes(200, 4, "little"),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                    v=bytes([1]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                    v=peer.mac_address,
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG,
+                    v=bytes([uci.SessionInfoNtfConfig.ENABLE_PROXIMITY_EDGE_TRIGGER]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MAX_NUMBER_OF_MEASUREMENTS,
+                    v=int.to_bytes(1, 2, "little"),
+                ),
+            ],
+        )
+    )
+
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(uci.SessionStartCmd(session_id=0))
+
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    event = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+    assert len(event.two_way_ranging_measurements) == 1
+    assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+    assert event.two_way_ranging_measurements[0].mac_address == int.from_bytes(
+        peer.mac_address, "little"
+    )
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+        )
+    )
+
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    peer.send_control(uci.SessionStopCmd(session_id=0))
+
+    await peer.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
+
+    await peer.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+    await peer.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    peer.send_control(uci.SessionDeinitCmd(session_token=0))
+
+    await peer.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+
+    await peer.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(uci.SessionDeinitCmd(session_token=0))
+
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
+
 async def run(address: str, uci_port: int):
     try:
         host0 = await Host.connect(address, uci_port, bytes([0, 1]))
@@ -632,6 +881,10 @@ async def run(address: str, uci_port: int):
             controller(host0, host1, uci.MacAddressMode.MODE_2, init_device=False),
             controlee(host1, host0, uci.MacAddressMode.MODE_2, init_device=False),
         )
+
+        host0.mac_address = bytes([0, 1])
+        host1.mac_address = bytes([0, 2])
+        await ranging_max_measurements(host0, host1)
 
         host0.send_control(uci.CoreQueryTimeStampCmd())
         rsp1 = await host0.expect_control(uci.CoreQueryTimeStampRsp)
