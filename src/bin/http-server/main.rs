@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Result;
 use clap::Parser;
+use futures::TryFutureExt;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode as HttpStatusCode, body};
 use serde::{Deserialize, Serialize};
@@ -24,12 +24,27 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::try_join;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use pica::{Category, MacAddress, Pica, PicaCommand, PicaCommandError, PicaEvent};
+
+#[derive(Error, Debug)]
+enum Error {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Hyper(#[from] hyper::Error),
+    #[error(transparent)]
+    EventRecv(#[from] tokio::sync::broadcast::error::RecvError),
+    #[error("pica command stream closed")]
+    CommandStreamClosed,
+    #[error(transparent)]
+    Pica(#[from] pica::PicaError),
+}
 
 mod position;
 use position::Position;
@@ -126,7 +141,7 @@ impl Context {
     async fn handle_connection_events(
         self,
         mut events: broadcast::Receiver<PicaEvent>,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         loop {
             match events.recv().await {
                 Ok(PicaEvent::Connected {
@@ -163,7 +178,7 @@ impl Context {
                         })
                         .unwrap();
                 }
-                Err(err) => anyhow::bail!(err),
+                Err(err) => return Err(Error::EventRecv(err)),
             }
         }
     }
@@ -475,7 +490,11 @@ async fn http_request(
     Ok(response)
 }
 
-async fn serve(context: Context, tx: mpsc::Sender<PicaCommand>, web_port: u16) -> Result<()> {
+async fn serve(
+    context: Context,
+    tx: mpsc::Sender<PicaCommand>,
+    web_port: u16,
+) -> Result<(), Error> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, web_port);
     let make_svc = make_service_fn(move |_conn| {
         let tx = tx.clone();
@@ -495,7 +514,7 @@ async fn serve(context: Context, tx: mpsc::Sender<PicaCommand>, web_port: u16) -
     Ok(())
 }
 
-async fn listen(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
+async fn listen(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<(), Error> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
     log::info!("Pica: Listening on: {}", uci_port);
@@ -510,7 +529,7 @@ async fn listen(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
 
         tx.send(PicaCommand::Connect(stream, sink))
             .await
-            .map_err(|_| anyhow::anyhow!("pica command stream closed"))?
+            .map_err(|_| Error::CommandStreamClosed)?
     }
 }
 
@@ -531,7 +550,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Error> {
     let args = Args::parse();
     assert_ne!(
         args.uci_port, args.web_port,
@@ -545,7 +564,7 @@ async fn main() -> Result<()> {
     let events_rx = pica.events();
 
     try_join!(
-        pica.run(),
+        pica.run().map_err(Error::from),
         listen(cmd_tx.clone(), args.uci_port),
         serve(context.clone(), cmd_tx.clone(), args.web_port),
         context.handle_connection_events(events_rx),
