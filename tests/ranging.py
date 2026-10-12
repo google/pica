@@ -153,6 +153,15 @@ async def controller(
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
     )
 
+    if mac_address_mode == uci.MacAddressMode.MODE_0:
+        host.send_control(uci.CoreGetDeviceInfoCmd())
+        rsp = await host.expect_control(uci.CoreGetDeviceInfoRsp)
+        assert rsp.status == uci.Status.OK
+
+        host.send_control(uci.CoreSetConfigCmd(parameters=[]))
+        rsp = await host.expect_control(uci.CoreSetConfigRsp)
+        assert rsp.status == uci.Status.REJECTED
+
     ntf_type = (
         uci.ShortMacTwoWaySessionInfoNtf
         if mac_address_mode == uci.MacAddressMode.MODE_0
@@ -332,6 +341,119 @@ async def multicast_empty_stop(host: Host, peer: Host):
     )
 
 
+async def multicast_list_ntf(host: Host, peer: Host):
+    host.send_control(
+        uci.SessionInitCmd(
+            session_id=0, session_type=uci.SessionType.FIRA_RANGING_SESSION
+        )
+    )
+
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                    v=bytes([uci.DeviceRole.INITIATOR]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                    v=bytes([uci.DeviceType.CONTROLLER]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS,
+                    v=host.mac_address,
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                    v=bytes([uci.MultiNodeMode.ONE_TO_MANY]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                    v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    v=bytes([0x06]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                    v=bytes([1]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                    v=peer.mac_address,
+                ),
+            ],
+        )
+    )
+
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(
+        uci.SessionUpdateControllerMulticastListCmd(
+            session_token=0,
+            action=uci.UpdateMulticastListAction.ADD_CONTROLEE_WITH_SHORT_SUB_SESSION_KEY,
+            payload=uci.SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload(
+                controlees=[
+                    uci.Controlee_V2_0_16_Byte_Version(
+                        short_address=bytearray([0, 3]),
+                        subsession_id=0,
+                        subsession_key=bytearray(16),
+                    )
+                ]
+            ).serialize(),
+        )
+    )
+    rsp = await host.expect_control(uci.SessionConfigPacket)
+    assert rsp.oid == uci.SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST
+    assert rsp.payload[0] == uci.Status.FAILED
+
+    await host.expect_control(
+        uci.SessionUpdateControllerMulticastListNtf(
+            session_token=0,
+            controlee_status=[
+                uci.ControleeStatus(
+                    mac_address=[0, 3],
+                    status=uci.MulticastUpdateStatus.ERROR_SUB_SESSION_KEY_NOT_APPLICABLE,
+                )
+            ],
+        )
+    )
+
+    host.send_control(uci.SessionDeinitCmd(session_token=0))
+
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
+
 async def controlee(
     host: Host,
     peer: Host,
@@ -495,6 +617,7 @@ async def run(address: str, uci_port: int):
         )
 
         await multicast_empty_stop(host0, host1)
+        await multicast_list_ntf(host0, host1)
 
         # Re-run ranging on the connected hosts using 8-byte extended MAC addresses (MODE_2).
         host0.mac_address = (1).to_bytes(8, "big")
@@ -503,11 +626,50 @@ async def run(address: str, uci_port: int):
             controller(host0, host1, uci.MacAddressMode.MODE_2, init_device=False),
             controlee(host1, host0, uci.MacAddressMode.MODE_2, init_device=False),
         )
+
+        await verify_command_error_fallbacks(host0)
     finally:
         host0.disconnect()
         host1.disconnect()
 
     logging.debug("Ranging test completed")
+
+
+async def verify_command_error_fallbacks(host: Host):
+    host.send_control(
+        uci.SessionInitCmd(session_id=1, session_type=uci.SessionType.CCC)
+    )
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=1,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+    host.send_control(uci.SessionSetAppConfigCmd(session_token=1, tlvs=[]))
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.REJECTED, cfg_status=[])
+    )
+    host.send_control(uci.SessionDeinitCmd(session_token=1))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=1,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(
+        uci.SessionUpdateDtTagRangingRoundsCmd(
+            session_token=1, ranging_round_indexes=[]
+        )
+    )
+    rsp = await host.expect_control(uci.SessionConfigPacket)
+    assert rsp.mt == uci.MessageType.RESPONSE
+    assert rsp.oid == uci.SessionConfigOpcodeId.UPDATE_DT_TAG_RANGING_ROUNDS
+    assert rsp.payload == bytes([uci.Status.UNKNOWN_OID])
 
 
 def main():
