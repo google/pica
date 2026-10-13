@@ -388,6 +388,8 @@ class AppConfigTlvType(enum.IntEnum):
 class DeviceType(enum.IntEnum):
     CONTROLEE = 0x0
     CONTROLLER = 0x1
+    CCC_CONTROLLER = 0xA0
+    CCC_CONTROLEE = 0xA1
 
     @staticmethod
     def from_int(v: int) -> Union[int, 'DeviceType']:
@@ -703,6 +705,25 @@ class HoppingMode(enum.IntEnum):
     def from_int(v: int) -> Union[int, 'HoppingMode']:
         try:
             return HoppingMode(v)
+        except ValueError as exn:
+            raise exn
+
+
+class CccHoppingMode(enum.IntEnum):
+    DISABLE = 0x00
+    ADAPTIVE_DEFAULT = 0x02
+    CONTINUOUS_DEFAULT = 0x03
+    ADAPTIVE_AES = 0x04
+    CONTINUOUS_AES = 0x05
+    EXTENSION_CONTINUOUS_AES = 0xA0
+    EXTENSION_CONTINUOUS_DEFAULT = 0xA1
+    EXTENSION_ADAPTIVE_AES = 0xA2
+    EXTENSION_ADAPTIVE_DEFAULT = 0xA3
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'CccHoppingMode']:
+        try:
+            return CccHoppingMode(v)
         except ValueError as exn:
             raise exn
 
