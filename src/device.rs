@@ -1068,13 +1068,11 @@ impl Device {
                 Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).try_into().unwrap(),
                 Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).try_into().unwrap(),
                 Ok(CoreQueryTimeStampCmd(_)) => self.core_query_timestamp().try_into().unwrap(),
-                _ => uci::CorePacket {
-                    mt: uci::MessageType::Response,
-                    oid: cmd.oid,
-                    payload: vec![0x1, uci::Status::SyntaxError.into()],
-                }
-                .try_into()
-                .unwrap(),
+                child => command_error_response(
+                    GroupId::Core,
+                    cmd.oid.into(),
+                    packet_error_status(child),
+                ),
             },
             SessionConfigPacket(cmd) => match cmd.specialize() {
                 Ok(SessionInitCmd(cmd)) => self.session_init(cmd).try_into().unwrap(),
@@ -1095,13 +1093,11 @@ impl Device {
                     .session_query_max_data_size_in_ranging(cmd)
                     .try_into()
                     .unwrap(),
-                _ => uci::SessionConfigPacket {
-                    mt: uci::MessageType::Response,
-                    oid: cmd.oid,
-                    payload: vec![0x1, uci::Status::SyntaxError.into()],
-                }
-                .try_into()
-                .unwrap(),
+                child => command_error_response(
+                    GroupId::SessionConfig,
+                    cmd.oid.into(),
+                    packet_error_status(child),
+                ),
             },
             SessionControlPacket(cmd) => match cmd.specialize() {
                 Ok(SessionStartCmd(cmd)) => self.session_start(cmd).try_into().unwrap(),
