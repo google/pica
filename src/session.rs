@@ -119,6 +119,7 @@ impl Session {
             SessionType::FiraRangingSession
                 | SessionType::FiraRangingAndInBandDataSession
                 | SessionType::Ccc
+                | SessionType::Aliro
         )
     }
 

@@ -249,6 +249,7 @@ enum AppConfigTlvType : 8 {
         CCC_PULSESHAPE_COMBO = 0xA5,
         CCC_URSK_TTL = 0xA6,
         CCC_LAST_INDEX_USED  = 0xA8,
+        ALIRO_MAC_MODE = 0xA9,
     },
 
     // Reserved for extension IDs.
@@ -498,6 +499,8 @@ enum CapTlvType : 8 {
         CCC_SUPPORTED_PULSE_SHAPE_COMBOS = 0xA6,
         CCC_SUPPORTED_RAN_MULTIPLIER = 0xA7,
         CCC_SUPPORTED_MAX_RANGING_SESSION_NUMBER = 0xA8,
+        ALIRO_SUPPORTED_MAC_MODES = 0xAC,
+        ALIRO_SUPPORTED_PROTOCOL_VERSION = 0xAD,
     },
 
     SUPPORTED_POWER_STATS = 0xC0,
@@ -620,6 +623,7 @@ enum SessionType: 8 {
     FIRA_IN_BAND_DATA_PHASE = 0x04,
     FIRA_RANGING_WITH_DATA_PHASE = 0x05,
     CCC = 0xA0,
+    ALIRO = 0xA2,
     DEVICE_TEST_MODE = 0xD0,
 }
 
