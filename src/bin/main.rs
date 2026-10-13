@@ -12,26 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::Result;
 use clap::Parser;
-use env_logger::Env;
+use futures::TryFutureExt;
 use pica::{Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
+use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::try_join;
 
 const DEFAULT_UCI_PORT: u16 = 7000;
 
-async fn accept_incoming(cmd_tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<()> {
+#[derive(Error, Debug)]
+enum Error {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("pica command stream closed")]
+    CommandStreamClosed,
+    #[error(transparent)]
+    Pica(#[from] pica::PicaError),
+}
+
+async fn accept_incoming(cmd_tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<(), Error> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
-    log::info!("Pica: Listening on: {}", uci_port);
+    tracing::info!("Pica: Listening on: {uci_port}");
 
     loop {
         let (socket, addr) = uci_listener.accept().await?;
-        log::info!("Uwb host addr: {}", addr);
+        tracing::info!("Uwb host addr: {addr}");
 
         let (read_half, write_half) = socket.into_split();
         let stream = Box::pin(futures::stream::unfold(read_half, pica::packets::uci::read));
@@ -40,7 +50,7 @@ async fn accept_incoming(cmd_tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Re
         cmd_tx
             .send(PicaCommand::Connect(stream, sink))
             .await
-            .map_err(|_| anyhow::anyhow!("pica command stream closed"))?
+            .map_err(|_| Error::CommandStreamClosed)?
     }
 }
 
@@ -73,15 +83,25 @@ impl pica::RangingEstimator for MockRangingEstimator {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+async fn main() -> Result<(), Error> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
+        )
+        .init();
 
     let args = Args::parse();
 
     let pica = Pica::new(Box::new(MockRangingEstimator()), args.pcapng_dir);
     let commands = pica.commands();
 
-    try_join!(accept_incoming(commands.clone(), args.uci_port), pica.run(),)?;
+    try_join!(
+        accept_incoming(commands.clone(), args.uci_port),
+        pica.run().map_err(Error::from),
+    )?;
 
     Ok(())
 }

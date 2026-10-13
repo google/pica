@@ -132,7 +132,7 @@ impl Session {
     }
 
     pub fn data_message_snd(&mut self, data: DataMessageSnd) -> ControlPacket {
-        log::debug!("[{}] data_message_snd", self.device_handle);
+        tracing::debug!("[{}] data_message_snd", self.device_handle);
         let session_token = data.session_handle;
         let uci_sequence_number = data.data_sequence_number as u8;
 
