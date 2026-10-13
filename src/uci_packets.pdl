@@ -1125,11 +1125,12 @@ test SessionQueryMaxDataSizeInRangingCmd {
 
 packet SessionQueryMaxDataSizeInRangingRsp : SessionConfigPacket (mt = RESPONSE, oid = QUERY_DATA_SIZE_IN_RANGING) {
     session_token: 32, // Session ID or Session Handle (based on UWBS version)
+    status: Status,
     max_data_size: 16,
 }
 
 test SessionQueryMaxDataSizeInRangingRsp {
-  "\x41\x0B\x00\x06\x00\x00\x00\x00\xe7\x07",
+  "\x41\x0B\x00\x07\x00\x00\x00\x00\x00\xe7\x07",
 }
 
 packet SessionStartCmd : SessionControlPacket (mt = COMMAND, oid = START) {
