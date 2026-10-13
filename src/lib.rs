@@ -500,6 +500,10 @@ impl Pica {
         let device = self.get_device(device_handle).unwrap();
         let session = device.session(session_id).unwrap();
 
+        if session.app_config.suspend_ranging_rounds() == uci::SuspendRangingRounds::Enable {
+            return;
+        }
+
         let mut data_transfer = Vec::new();
         let mut measurements = Vec::new();
 

@@ -46,6 +46,8 @@ const DEFAULT_MAC_ADDRESS_MODE: uci::MacAddressMode = uci::MacAddressMode::Mode0
 const DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT: u8 = 1;
 const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferStatusNtfConfig =
     uci::SessionDataTransferStatusNtfConfig::Disable;
+const DEFAULT_SUSPEND_RANGING_ROUNDS: uci::SuspendRangingRounds =
+    uci::SuspendRangingRounds::Disable;
 
 /// [UCI] 8.3 Application Configuration Parameters.
 /// The configuration is initially filled with default values from the
@@ -235,6 +237,18 @@ impl Default for AppConfig {
                     Bytes::from_static(&[uci::StsLength::Length64Symbols as u8]),
                 ),
                 (
+                    uci::AppConfigTlvType::SuspendRangingRounds,
+                    Bytes::from_static(&[DEFAULT_SUSPEND_RANGING_ROUNDS as u8]),
+                ),
+                (
+                    uci::AppConfigTlvType::SecureRangingNefaLevel,
+                    Bytes::from_static(&[0]),
+                ),
+                (
+                    uci::AppConfigTlvType::SecureRangingCswLength,
+                    Bytes::from_static(&[4]),
+                ),
+                (
                     uci::AppConfigTlvType::MinFramesPerRr,
                     Bytes::from_static(&[4]),
                 ),
@@ -349,6 +363,8 @@ impl AppConfig {
             | uci::AppConfigTlvType::InBandTerminationAttemptCount
             | uci::AppConfigTlvType::MinFramesPerRr
             | uci::AppConfigTlvType::InterFrameInterval
+            | uci::AppConfigTlvType::SecureRangingNefaLevel
+            | uci::AppConfigTlvType::SecureRangingCswLength
             | uci::AppConfigTlvType::ApplicationDataEndpoint => {
                 let _ = try_parse_u8(id, value)?;
             }
@@ -472,6 +488,9 @@ impl AppConfig {
             uci::AppConfigTlvType::StsLength => {
                 let _ = try_parse_enum::<uci::StsLength>(id, value)?;
             }
+            uci::AppConfigTlvType::SuspendRangingRounds => {
+                let _ = try_parse_enum::<uci::SuspendRangingRounds>(id, value)?;
+            }
             uci::AppConfigTlvType::SessionKey => {}
             uci::AppConfigTlvType::SubSessionKey => {
                 if value.len() != 16 && value.len() != 32 {
@@ -552,6 +571,11 @@ impl AppConfig {
     pub fn sts_config(&self) -> uci::StsConfig {
         self.get_enum(uci::AppConfigTlvType::StsConfig)
             .unwrap_or(DEFAULT_STS_CONFIG)
+    }
+
+    pub fn suspend_ranging_rounds(&self) -> uci::SuspendRangingRounds {
+        self.get_enum(uci::AppConfigTlvType::SuspendRangingRounds)
+            .unwrap_or(DEFAULT_SUSPEND_RANGING_ROUNDS)
     }
 
     pub fn set_number_of_controlees(&mut self, value: u8) {
