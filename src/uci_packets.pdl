@@ -1068,6 +1068,11 @@ struct SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload {
     controlees: Controlee_V2_0_32_Byte_Version[],
 }
 
+struct ControleeStatus {
+    mac_address: 8[2],
+    status: MulticastUpdateStatus,
+}
+
 packet SessionUpdateControllerMulticastListRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
     status: Status,
     _count_(controlee_status): 8,
@@ -1076,11 +1081,6 @@ packet SessionUpdateControllerMulticastListRsp : SessionConfigPacket (mt = RESPO
 
 test SessionUpdateControllerMulticastListRsp {
     "\x41\x07\x00\x02\x00\x00",
-}
-
-struct ControleeStatus {
-    mac_address: 8[2],
-    status: MulticastUpdateStatus,
 }
 
 packet SessionUpdateControllerMulticastListNtf : SessionConfigPacket (mt = NOTIFICATION, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
