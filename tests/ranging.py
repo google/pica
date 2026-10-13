@@ -643,7 +643,7 @@ async def run(address: str, uci_port: int):
         assert rsp2.status == uci.Status.OK
         assert rsp2.timeStamp >= rsp1.timeStamp
 
-       await verify_command_error_fallbacks(host0)
+        await verify_command_error_fallbacks(host0)
     finally:
         host0.disconnect()
         host1.disconnect()
