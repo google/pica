@@ -41,7 +41,7 @@ pub mod uci {
     /// Maximum size of an UCI control packet payload.
     pub const MAX_CTRL_PACKET_PAYLOAD_SIZE: usize = 255;
     /// Maximum size of an UCI data packet payload.
-    pub const MAX_DATA_PACKET_PAYLOAD_SIZE: usize = 1024;
+    pub const MAX_DATA_PACKET_PAYLOAD_SIZE: usize = 1020;
     /// Maximum size of a reassembled UCI application data message.
     pub const MAX_DATA_MESSAGE_SIZE: usize = 4096;
     /// Size of the DATA_MESSAGE_SND header carried by the first packet of a message.

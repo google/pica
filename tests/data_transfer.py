@@ -22,7 +22,7 @@ from pica.packets import uci
 from .helper import init
 from pathlib import Path
 
-MAX_DATA_PACKET_PAYLOAD_SIZE = 1024
+MAX_DATA_PACKET_PAYLOAD_SIZE = 1020
 MAX_DATA_MESSAGE_SIZE = 4096
 
 
