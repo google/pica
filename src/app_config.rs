@@ -500,7 +500,7 @@ impl AppConfig {
     pub fn set(&mut self, id: uci::AppConfigTlvType, value: &[u8]) -> Result<(), AppConfigError> {
         let bytes = self
             .parse_tlv(id, value)
-            .inspect_err(|err| log::error!("{err}"))?;
+            .inspect_err(|err| tracing::error!("{err}"))?;
         self.tlvs.insert(id, bytes);
         Ok(())
     }

@@ -443,7 +443,7 @@ impl Pica {
             }
         };
 
-        log::debug!("[{}] Connecting device", handle);
+        tracing::debug!("[{handle}] Connecting device");
 
         let mut device = Device::new(handle, mac_address, packet_tx, self.command_tx.clone());
         device.init();
@@ -461,7 +461,7 @@ impl Pica {
         tokio::task::spawn(async move {
             let pcapng_file = if let Some(dir) = pcapng_dir {
                 let full_path = dir.join(format!("device-{handle}.pcapng"));
-                log::debug!("Recording pcapng to file {}", full_path.as_path().display());
+                tracing::debug!("Recording pcapng to file {}", full_path.as_path().display());
                 Some(pcapng::File::create(full_path).unwrap())
             } else {
                 None
@@ -482,7 +482,7 @@ impl Pica {
     }
 
     fn disconnect(&mut self, device_handle: usize) {
-        log::debug!("[{}] Disconnecting device", device_handle);
+        tracing::debug!("[{device_handle}] Disconnecting device");
 
         if let Some(device) = self.devices.get(&device_handle) {
             self.send_event(PicaEvent::Disconnected {
@@ -494,8 +494,8 @@ impl Pica {
     }
 
     fn ranging(&mut self, device_handle: usize, session_id: u32) {
-        log::debug!("[{}] Ranging event", device_handle);
-        log::debug!("  session_id={}", session_id);
+        tracing::debug!("[{device_handle}] Ranging event");
+        tracing::debug!("  session_id={session_id}");
 
         let device = self.get_device(device_handle).unwrap();
         let session = device.session(session_id).unwrap();
@@ -606,7 +606,7 @@ impl Pica {
                     .unwrap(),
                 ),
                 mode => {
-                    log::warn!("Unsupported MAC address mode {:?}", mode);
+                    tracing::warn!("Unsupported MAC address mode {mode:?}");
                     None
                 }
             };
@@ -631,7 +631,7 @@ impl Pica {
     fn uci_packet(&mut self, device_handle: usize, packet: Vec<u8>) {
         match self.get_device_mut(device_handle) {
             Some(device) => device.receive_packet(packet),
-            None => log::error!("Device {} not found", device_handle),
+            None => tracing::error!("Device {device_handle} not found"),
         }
     }
 
@@ -691,7 +691,7 @@ impl Pica {
                     device.set_state(DeviceState::DeviceStateReady);
                 }
             } else {
-                log::warn!("stop_controlee_ranging: session is not active !");
+                tracing::warn!("stop_controlee_ranging: session is not active !");
             }
         }
     }
@@ -702,8 +702,8 @@ impl Pica {
         mac_address: MacAddress,
         rsp_tx: oneshot::Sender<Result<Handle, PicaCommandError>>,
     ) {
-        log::debug!("[_] Create anchor");
-        log::debug!("  mac_address: {}", mac_address);
+        tracing::debug!("[_] Create anchor");
+        tracing::debug!("  mac_address: {mac_address}");
 
         let status = if self.get_category(&mac_address).is_some() {
             Err(PicaCommandError::DeviceAlreadyExists(mac_address))
@@ -727,7 +727,7 @@ impl Pica {
         };
 
         rsp_tx.send(status).unwrap_or_else(|err| {
-            log::error!("Failed to send create-anchor command response: {:?}", err)
+            tracing::error!("Failed to send create-anchor command response: {err:?}")
         })
     }
 
@@ -736,8 +736,8 @@ impl Pica {
         mac_address: MacAddress,
         rsp_tx: oneshot::Sender<Result<Handle, PicaCommandError>>,
     ) {
-        log::debug!("[_] Destroy anchor");
-        log::debug!("  mac_address: {}", mac_address);
+        tracing::debug!("[_] Destroy anchor");
+        tracing::debug!("  mac_address: {mac_address}");
 
         let status = match self.anchors.remove(&mac_address) {
             None => Err(PicaCommandError::DeviceNotFound(mac_address)),
@@ -745,7 +745,7 @@ impl Pica {
         };
 
         rsp_tx.send(status).unwrap_or_else(|err| {
-            log::error!("Failed to send destroy-anchor command response: {:?}", err)
+            tracing::error!("Failed to send destroy-anchor command response: {err:?}")
         })
     }
 }

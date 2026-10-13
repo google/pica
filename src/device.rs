@@ -239,8 +239,8 @@ impl Device {
     // send a notification once the reset is done
     fn core_device_reset(&mut self, cmd: CoreDeviceResetCmd) -> CoreDeviceResetRsp {
         let reset_config = cmd.reset_config;
-        log::debug!("[{}] DeviceReset", self.handle);
-        log::debug!("  reset_config={:?}", reset_config);
+        tracing::debug!("[{}] DeviceReset", self.handle);
+        tracing::debug!("  reset_config={reset_config:?}");
 
         *self = Device::new(
             self.handle,
@@ -257,7 +257,7 @@ impl Device {
     }
 
     fn core_get_device_info(&self, _cmd: CoreGetDeviceInfoCmd) -> CoreGetDeviceInfoRsp {
-        log::debug!("[{}] GetDeviceInfo", self.handle);
+        tracing::debug!("[{}] GetDeviceInfo", self.handle);
         CoreGetDeviceInfoRsp {
             status: uci::Status::Ok,
             uci_version: UCI_VERSION,
@@ -269,7 +269,7 @@ impl Device {
     }
 
     pub fn core_get_caps_info(&self, _cmd: CoreGetCapsInfoCmd) -> CoreGetCapsInfoRsp {
-        log::debug!("[{}] GetCapsInfo", self.handle);
+        tracing::debug!("[{}] GetCapsInfo", self.handle);
 
         let caps = DEFAULT_CAPS_INFO
             .iter()
@@ -286,7 +286,7 @@ impl Device {
     }
 
     pub fn core_set_config(&mut self, cmd: CoreSetConfigCmd) -> CoreSetConfigRsp {
-        log::debug!("[{}] SetConfig", self.handle);
+        tracing::debug!("[{}] SetConfig", self.handle);
         // UCI 6.3
         if self.state != DeviceState::DeviceStateReady {
             return CoreSetConfigRsp {
@@ -314,7 +314,7 @@ impl Device {
                     self.config.low_power_mode = parameter.value.first().copied().unwrap_or(1) != 0;
                 }
                 uci::ConfigParameterId::Rfu(id) => {
-                    log::warn!("unknown config parameter id 0x{:02x}", *id);
+                    tracing::warn!("unknown config parameter id 0x{:02x}", *id);
                     invalid_parameters.push(uci::ConfigParameterStatus {
                         id: parameter.id,
                         status: uci::Status::InvalidParam,
@@ -334,7 +334,7 @@ impl Device {
     }
 
     pub fn core_get_config(&self, cmd: CoreGetConfigCmd) -> CoreGetConfigRsp {
-        log::debug!("[{}] GetConfig", self.handle);
+        tracing::debug!("[{}] GetConfig", self.handle);
 
         // [UCI] 6.3.2 Retrieve the Configuration
         // If the Host tries to retrieve any Parameter(s) that are not available
@@ -378,9 +378,9 @@ impl Device {
         let session_id = cmd.session_id;
         let session_type = cmd.session_type;
 
-        log::debug!("[{}] Session init", self.handle);
-        log::debug!("  session_id=0x{:x}", session_id);
-        log::debug!("  session_type={:?}", session_type);
+        tracing::debug!("[{}] Session init", self.handle);
+        tracing::debug!("  session_id=0x{session_id:x}");
+        tracing::debug!("  session_type={session_type:?}");
 
         let status = if self.sessions.len() >= MAX_SESSION {
             uci::Status::ErrorMaxSessionsExceeded
@@ -403,8 +403,8 @@ impl Device {
 
     fn session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
         let session_id = cmd.session_token;
-        log::debug!("[{}] Session deinit", self.handle);
-        log::debug!("  session_id=0x{:x}", session_id);
+        tracing::debug!("[{}] Session deinit", self.handle);
+        tracing::debug!("  session_id=0x{session_id:x}");
 
         let status = match self.sessions.get_mut(&session_id) {
             Some(session) => {
@@ -420,7 +420,7 @@ impl Device {
     }
 
     fn session_get_count(&self, _cmd: SessionGetCountCmd) -> SessionGetCountRsp {
-        log::debug!("[{}] Session get count", self.handle);
+        tracing::debug!("[{}] Session get count", self.handle);
 
         SessionGetCountRsp {
             status: uci::Status::Ok,
@@ -431,10 +431,9 @@ impl Device {
     fn session_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> SessionSetAppConfigRsp {
         let session_handle = cmd.session_token;
 
-        log::debug!(
-            "[{}:0x{:x}] Session Set App Config",
-            self.handle,
-            session_handle
+        tracing::debug!(
+            "[{}:0x{session_handle:x}] Session Set App Config",
+            self.handle
         );
 
         let Some(session) = self.sessions.get_mut(&session_handle) else {
@@ -515,10 +514,9 @@ impl Device {
                 || app_config.device_mac_address().is_none()
                 || app_config.schedule_mode().is_none()
             {
-                log::error!(
-                    "[{}:0x{:x}] missing mandatory APP config parameters",
-                    self.handle,
-                    session_handle
+                tracing::error!(
+                    "[{}:0x{session_handle:x}] missing mandatory APP config parameters",
+                    self.handle
                 );
                 return SessionSetAppConfigRsp {
                     status: uci::Status::Rejected,
@@ -549,10 +547,9 @@ impl Device {
     fn session_get_app_config(&self, cmd: SessionGetAppConfigCmd) -> SessionGetAppConfigRsp {
         let session_handle = cmd.session_token;
 
-        log::debug!(
-            "[{}:0x{:x}] Session Get App Config",
-            self.handle,
-            session_handle
+        tracing::debug!(
+            "[{}:0x{session_handle:x}] Session Get App Config",
+            self.handle
         );
 
         let Some(session) = self.sessions.get(&session_handle) else {
@@ -596,7 +593,7 @@ impl Device {
     fn session_get_state(&self, cmd: SessionGetStateCmd) -> SessionGetStateRsp {
         let session_handle = cmd.session_token;
 
-        log::debug!("[{}:0x{:x}] Session Get State", self.handle, session_handle);
+        tracing::debug!("[{}:0x{session_handle:x}] Session Get State", self.handle);
 
         let Some(session) = self.sessions.get(&session_handle) else {
             return SessionGetStateRsp {
@@ -617,10 +614,9 @@ impl Device {
     ) -> SessionUpdateControllerMulticastListRsp {
         let session_handle = cmd.session_token;
 
-        log::debug!(
-            "[{}:0x{:x}] Session Update Controller Multicast List",
-            self.handle,
-            session_handle
+        tracing::debug!(
+            "[{}:0x{session_handle:x}] Session Update Controller Multicast List",
+            self.handle
         );
 
         let Some(session) = self.sessions.get_mut(&session_handle) else {
@@ -831,7 +827,7 @@ impl Device {
     fn session_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
         let session_id = cmd.session_id;
 
-        log::debug!("[{}:0x{:x}] Session Start", self.handle, session_id);
+        tracing::debug!("[{}:0x{session_id:x}] Session Start", self.handle);
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
             return SessionStartRsp {
@@ -877,7 +873,7 @@ impl Device {
     fn session_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
         let session_id = cmd.session_id;
 
-        log::debug!("[{}:0x{:x}] Session Stop", self.handle, session_id);
+        tracing::debug!("[{}:0x{session_id:x}] Session Stop", self.handle);
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
             return SessionStopRsp {
@@ -910,10 +906,9 @@ impl Device {
     ) -> SessionGetRangingCountRsp {
         let session_id = cmd.session_id;
 
-        log::debug!(
-            "[{}:0x{:x}] Session Get Ranging Count",
-            self.handle,
-            session_id
+        tracing::debug!(
+            "[{}:0x{session_id:x}] Session Get Ranging Count",
+            self.handle
         );
 
         let Some(session) = self.sessions.get(&session_id) else {
@@ -935,8 +930,8 @@ impl Device {
     ) -> AndroidSetCountryCodeRsp {
         let country_code = cmd.country_code;
 
-        log::debug!("[{}] Set country code", self.handle);
-        log::debug!("  country_code={},{}", country_code[0], country_code[1]);
+        tracing::debug!("[{}] Set country code", self.handle);
+        tracing::debug!("  country_code={},{}", country_code[0], country_code[1]);
 
         self.country_code = country_code;
         AndroidSetCountryCodeRsp {
@@ -948,7 +943,7 @@ impl Device {
         &mut self,
         _cmd: AndroidGetPowerStatsCmd,
     ) -> AndroidGetPowerStatsRsp {
-        log::debug!("[{}] Get power stats", self.handle);
+        tracing::debug!("[{}] Get power stats", self.handle);
 
         // TODO
         AndroidGetPowerStatsRsp {
@@ -963,7 +958,7 @@ impl Device {
     }
 
     pub fn data_message_snd(&mut self, data: DataPacket) -> ControlPacket {
-        log::debug!("[{}] data_message_send", self.handle);
+        tracing::debug!("[{}] data_message_send", self.handle);
         match data.specialize() {
             Ok(DataPacketChild::DataMessageSnd(data_msg_snd)) => {
                 let session_token = data_msg_snd.session_handle;
@@ -1111,7 +1106,7 @@ impl Device {
                 // values as the Command, followed by a Status field with the
                 // value of STATUS_UNKNOWN_GID/STATUS_UNKNOWN_OID respectively
                 // and no additional fields.
-                log::error!("Unsupported gid {:?}", cmd.gid);
+                tracing::error!("Unsupported gid {:?}", cmd.gid);
                 command_error_response(
                     cmd.gid,
                     cmd.payload.first().copied().unwrap_or(0),
@@ -1129,7 +1124,7 @@ impl Device {
                     let notification = self.data_message_snd(packet);
                     self.send_control(notification)
                 }
-                Err(err) => log::error!("failed to parse incoming Data packet: {}", err),
+                Err(err) => tracing::error!("failed to parse incoming Data packet: {err}"),
             },
             MessageType::Command => {
                 match ControlPacket::decode_full(&packet) {
@@ -1172,7 +1167,7 @@ impl Device {
 
             // Message types for notifications and responses ignored
             // by the controller.
-            _ => log::warn!("received unexpected packet of MT {:?}", mt),
+            _ => tracing::warn!("received unexpected packet of MT {mt:?}"),
         }
     }
 }

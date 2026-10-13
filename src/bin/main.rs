@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use clap::Parser;
-use env_logger::Env;
 use futures::TryFutureExt;
 use pica::{Pica, PicaCommand};
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -38,11 +37,11 @@ enum Error {
 async fn accept_incoming(cmd_tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<(), Error> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
-    log::info!("Pica: Listening on: {}", uci_port);
+    tracing::info!("Pica: Listening on: {uci_port}");
 
     loop {
         let (socket, addr) = uci_listener.accept().await?;
-        log::info!("Uwb host addr: {}", addr);
+        tracing::info!("Uwb host addr: {addr}");
 
         let (read_half, write_half) = socket.into_split();
         let stream = Box::pin(futures::stream::unfold(read_half, pica::packets::uci::read));
@@ -85,7 +84,14 @@ impl pica::RangingEstimator for MockRangingEstimator {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")),
+        )
+        .init();
 
     let args = Args::parse();
 
