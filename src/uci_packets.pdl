@@ -272,6 +272,8 @@ enum DeviceType : 8 {
     // [MAC] 5.1.1
     // Device controlling the ranging features through Control Messages
     CONTROLLER = 0x01,
+    CCC_CONTROLLER = 0xA0,
+    CCC_CONTROLEE = 0xA1,
 }
 
 enum RangingRoundUsage : 8 {
@@ -414,6 +416,18 @@ enum MacAddressMode : 8 {
 enum HoppingMode : 8 {
     DISABLE = 0x00, // Default
     ENABLE = 0x01,
+}
+
+enum CccHoppingMode : 8 {
+    DISABLE = 0x00,
+    ADAPTIVE_DEFAULT = 0x02,
+    CONTINUOUS_DEFAULT = 0x03,
+    ADAPTIVE_AES = 0x04,
+    CONTINUOUS_AES = 0x05,
+    EXTENSION_CONTINUOUS_AES = 0xA0,
+    EXTENSION_CONTINUOUS_DEFAULT = 0xA1,
+    EXTENSION_ADAPTIVE_AES = 0xA2,
+    EXTENSION_ADAPTIVE_DEFAULT = 0xA3,
 }
 
 struct ResultReportConfig {
