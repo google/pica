@@ -703,7 +703,7 @@ impl Device {
             UpdateMulticastListAction::AddControlee
             | UpdateMulticastListAction::AddControleeWithShortSubSessionKey
             | UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
-                new_controlees.iter().for_each(|controlee| {
+                for controlee in new_controlees {
                     let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
                     if (action == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
                         || action
@@ -739,10 +739,10 @@ impl Device {
                             status: update_status,
                         });
                     }
-                });
+                }
             }
             UpdateMulticastListAction::RemoveControlee => {
-                new_controlees.iter().for_each(|controlee: &Controlee| {
+                for controlee in new_controlees {
                     let pica_tx = self.pica_tx.clone();
                     let address = MacAddress::Short(controlee.short_address);
                     let attempt_count = session.app_config.in_band_termination_attempt_count();
@@ -783,7 +783,7 @@ impl Device {
                         mac_address: controlee.short_address,
                         status: update_status,
                     });
-                });
+                }
             }
         }
 
@@ -846,7 +846,7 @@ impl Device {
         assert!(session.ranging_task.is_none());
 
         let ranging_interval =
-            time::Duration::from_millis(session.app_config.ranging_duration() as u64);
+            time::Duration::from_millis(u64::from(session.app_config.ranging_duration()));
 
         let tx = self.pica_tx.clone();
         let handle = self.handle;
@@ -965,8 +965,7 @@ impl Device {
             .payload
             .get(0..4)
             .and_then(|bytes| bytes.try_into().ok())
-            .map(u32::from_le_bytes)
-            .unwrap_or(0);
+            .map_or(0, u32::from_le_bytes);
 
         let (status, uci_sequence_number) = match data.dpf {
             DataPacketFormat::DataSnd => {
@@ -1025,20 +1024,17 @@ impl Device {
             .unwrap();
         }
 
-        let child = match cmd.specialize() {
-            Ok(child) => child,
-            Err(_) => {
-                let status = if cmd.payload.len() >= 3 {
-                    uci::Status::UnknownOid
-                } else {
-                    uci::Status::SyntaxError
-                };
-                return command_error_response(
-                    cmd.gid,
-                    cmd.payload.first().copied().unwrap_or(0),
-                    status,
-                );
-            }
+        let Ok(child) = cmd.specialize() else {
+            let status = if cmd.payload.len() >= 3 {
+                uci::Status::UnknownOid
+            } else {
+                uci::Status::SyntaxError
+            };
+            return command_error_response(
+                cmd.gid,
+                cmd.payload.first().copied().unwrap_or(0),
+                status,
+            );
         };
 
         match child {

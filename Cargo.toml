@@ -41,6 +41,14 @@ required-features = ["web"]
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("serde"))'] }
 
+[lints.clippy]
+cast_lossless = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+match_same_arms = "warn"
+needless_for_each = "warn"
+unreadable_literal = "warn"
+
 [features]
 default = ["cli", "web"]
 log = ["tracing/log"]

@@ -481,7 +481,7 @@ impl Pica {
             if self.get_category(&mac_address).is_none() {
                 break (handle, mac_address);
             }
-            if self.counter as u16 == initial_counter as u16 {
+            if self.counter - initial_counter == 1 << 16 {
                 self.counter = initial_counter;
                 return Err(PicaError::NoAvailableMacAddress);
             }

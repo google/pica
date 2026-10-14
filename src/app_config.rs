@@ -407,7 +407,8 @@ impl AppConfig {
             | uci::AppConfigTlvType::AliroMacMode
             | uci::AppConfigTlvType::MinFramesPerRr
             | uci::AppConfigTlvType::InterFrameInterval
-            | uci::AppConfigTlvType::ApplicationDataEndpoint => try_parse_u8(id, value),
+            | uci::AppConfigTlvType::ApplicationDataEndpoint
+            | uci::AppConfigTlvType::CccPulseshapeCombo => try_parse_u8(id, value),
             uci::AppConfigTlvType::HoppingMode => match self.session_type {
                 uci::SessionType::Ccc | uci::SessionType::Aliro => {
                     try_parse_enum::<uci::CccHoppingMode>(id, value)
@@ -447,10 +448,13 @@ impl AppConfig {
             | uci::AppConfigTlvType::VendorId
             | uci::AppConfigTlvType::MaxRrRetry
             | uci::AppConfigTlvType::MaxNumberOfMeasurements
-            | uci::AppConfigTlvType::MtuSize => try_parse_u16(id, value),
+            | uci::AppConfigTlvType::MtuSize
+            | uci::AppConfigTlvType::CccUwbConfigId
+            | uci::AppConfigTlvType::CccUrskTtl => try_parse_u16(id, value),
             uci::AppConfigTlvType::RangingDuration
             | uci::AppConfigTlvType::StsIndex
-            | uci::AppConfigTlvType::SubSessionId => try_parse_u32(id, value),
+            | uci::AppConfigTlvType::SubSessionId
+            | uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
             uci::AppConfigTlvType::MacFcsType => try_parse_enum::<uci::MacFcsType>(id, value),
             uci::AppConfigTlvType::AoaResultReq => try_parse_enum::<uci::AoaResultReq>(id, value),
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
@@ -469,7 +473,8 @@ impl AppConfig {
             }
             uci::AppConfigTlvType::AoaBoundConfig => try_parse_array::<8>(id, value),
             uci::AppConfigTlvType::PrfMode => try_parse_enum::<uci::PrfMode>(id, value),
-            uci::AppConfigTlvType::CapSizeRange => try_parse_array::<2>(id, value),
+            uci::AppConfigTlvType::CapSizeRange
+            | uci::AppConfigTlvType::CccRangingProtocolVer => try_parse_array::<2>(id, value),
             uci::AppConfigTlvType::ScheduleMode => try_parse_enum::<uci::ScheduleMode>(id, value),
             uci::AppConfigTlvType::KeyRotation => try_parse_enum::<uci::KeyRotation>(id, value),
             uci::AppConfigTlvType::MacAddressMode => {
@@ -518,12 +523,6 @@ impl AppConfig {
                 Ok(Bytes::copy_from_slice(value))
             }
             uci::AppConfigTlvType::CccUwbTime0 => try_parse_u64(id, value),
-            uci::AppConfigTlvType::CccRangingProtocolVer => try_parse_array::<2>(id, value),
-            uci::AppConfigTlvType::CccUwbConfigId | uci::AppConfigTlvType::CccUrskTtl => {
-                try_parse_u16(id, value)
-            }
-            uci::AppConfigTlvType::CccPulseshapeCombo => try_parse_u8(id, value),
-            uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
             _ => Err(AppConfigError::UnsupportedParameter(id)),
         }
     }

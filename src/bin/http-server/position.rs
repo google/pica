@@ -85,12 +85,12 @@ fn elevation(delta: Vec3) -> f32 {
 impl Position {
     pub fn new(x: i16, y: i16, z: i16, yaw: i16, pitch: i8, roll: i16) -> Self {
         Self {
-            position: Vec3::new(x as f32, y as f32, z as f32),
+            position: Vec3::new(f32::from(x), f32::from(y), f32::from(z)),
             rotation: Quat::from_euler(
                 EulerRot::ZXY, // Rotation performed from right to left order
-                (roll as f32).to_radians(),
-                (pitch as f32).to_radians(),
-                (yaw as f32).to_radians(),
+                f32::from(roll).to_radians(),
+                f32::from(pitch).to_radians(),
+                f32::from(yaw).to_radians(),
             ),
         }
     }
@@ -108,7 +108,7 @@ impl Position {
         assert!((-90. ..=90.).contains(&elevation));
 
         (
-            f32::min(distance, u16::MAX as f32) as u16,
+            f32::min(distance, f32::from(u16::MAX)) as u16,
             azimuth as i16,
             elevation as i8,
         )
