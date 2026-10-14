@@ -371,18 +371,24 @@ impl AppConfig {
             Ok(Bytes::copy_from_slice(value))
         }
 
-        fn try_parse_u8(id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
-            try_parse_array::<1>(id, value)
+        fn try_parse_u8(id: uci::AppConfigTlvType, value: &[u8]) -> Result<u8, AppConfigError> {
+            let &[byte] = value else {
+                return Err(AppConfigError::InvalidLength {
+                    id,
+                    expected: 1,
+                    actual: value.len(),
+                });
+            };
+            Ok(byte)
         }
 
         fn try_parse_enum<T: TryFrom<u8, Error = u8>>(
             id: uci::AppConfigTlvType,
             value: &[u8],
         ) -> Result<Bytes, AppConfigError> {
-            let bytes = try_parse_u8(id, value)?;
-            T::try_from(bytes[0])
-                .map_err(|value| AppConfigError::InvalidEnumValue { id, value })?;
-            Ok(bytes)
+            let byte = try_parse_u8(id, value)?;
+            T::try_from(byte).map_err(|value| AppConfigError::InvalidEnumValue { id, value })?;
+            Ok(Bytes::copy_from_slice(value))
         }
 
         fn try_parse_u16(id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
@@ -423,7 +429,8 @@ impl AppConfig {
             | uci::AppConfigTlvType::InterFrameInterval
             | uci::AppConfigTlvType::SecureRangingNefaLevel
             | uci::AppConfigTlvType::SecureRangingCswLength
-            | uci::AppConfigTlvType::ApplicationDataEndpoint => try_parse_u8(id, value),
+            | uci::AppConfigTlvType::ApplicationDataEndpoint
+            | uci::AppConfigTlvType::CccPulseshapeCombo => try_parse_array::<1>(id, value),
             uci::AppConfigTlvType::HoppingMode => match self.session_type {
                 uci::SessionType::Ccc | uci::SessionType::Aliro => {
                     try_parse_enum::<uci::CccHoppingMode>(id, value)
@@ -463,10 +470,13 @@ impl AppConfig {
             | uci::AppConfigTlvType::VendorId
             | uci::AppConfigTlvType::MaxRrRetry
             | uci::AppConfigTlvType::MaxNumberOfMeasurements
-            | uci::AppConfigTlvType::MtuSize => try_parse_u16(id, value),
+            | uci::AppConfigTlvType::MtuSize
+            | uci::AppConfigTlvType::CccUwbConfigId
+            | uci::AppConfigTlvType::CccUrskTtl => try_parse_u16(id, value),
             uci::AppConfigTlvType::RangingDuration
             | uci::AppConfigTlvType::StsIndex
-            | uci::AppConfigTlvType::SubSessionId => try_parse_u32(id, value),
+            | uci::AppConfigTlvType::SubSessionId
+            | uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
             uci::AppConfigTlvType::MacFcsType => try_parse_enum::<uci::MacFcsType>(id, value),
             uci::AppConfigTlvType::AoaResultReq => try_parse_enum::<uci::AoaResultReq>(id, value),
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
@@ -485,7 +495,9 @@ impl AppConfig {
             }
             uci::AppConfigTlvType::AoaBoundConfig => try_parse_array::<8>(id, value),
             uci::AppConfigTlvType::PrfMode => try_parse_enum::<uci::PrfMode>(id, value),
-            uci::AppConfigTlvType::CapSizeRange => try_parse_array::<2>(id, value),
+            uci::AppConfigTlvType::CapSizeRange | uci::AppConfigTlvType::CccRangingProtocolVer => {
+                try_parse_array::<2>(id, value)
+            }
             uci::AppConfigTlvType::ScheduleMode => try_parse_enum::<uci::ScheduleMode>(id, value),
             uci::AppConfigTlvType::KeyRotation => try_parse_enum::<uci::KeyRotation>(id, value),
             uci::AppConfigTlvType::MacAddressMode => {
@@ -537,12 +549,6 @@ impl AppConfig {
                 Ok(Bytes::copy_from_slice(value))
             }
             uci::AppConfigTlvType::CccUwbTime0 => try_parse_u64(id, value),
-            uci::AppConfigTlvType::CccRangingProtocolVer => try_parse_array::<2>(id, value),
-            uci::AppConfigTlvType::CccUwbConfigId | uci::AppConfigTlvType::CccUrskTtl => {
-                try_parse_u16(id, value)
-            }
-            uci::AppConfigTlvType::CccPulseshapeCombo => try_parse_u8(id, value),
-            uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
             _ => Err(AppConfigError::UnsupportedParameter(id)),
         }
     }
@@ -570,12 +576,12 @@ impl AppConfig {
 
     fn get_u16(&self, id: uci::AppConfigTlvType) -> Option<u16> {
         self.get(id)
-            .and_then(|v| v.as_ref().try_into().ok().map(u16::from_le_bytes))
+            .and_then(|v| v.first_chunk::<2>().copied().map(u16::from_le_bytes))
     }
 
     fn get_u32(&self, id: uci::AppConfigTlvType) -> Option<u32> {
         self.get(id)
-            .and_then(|v| v.as_ref().try_into().ok().map(u32::from_le_bytes))
+            .and_then(|v| v.first_chunk::<4>().copied().map(u32::from_le_bytes))
     }
 
     pub fn device_type(&self) -> Option<uci::DeviceType> {
@@ -593,8 +599,8 @@ impl AppConfig {
     pub fn device_mac_address(&self) -> Option<MacAddress> {
         let v = self.tlvs.get(&uci::AppConfigTlvType::DeviceMacAddress)?;
         match v.len() {
-            2 => Some(MacAddress::Short(v.as_ref().try_into().ok()?)),
-            8 => Some(MacAddress::Extended(v.as_ref().try_into().ok()?)),
+            2 => Some(MacAddress::Short(v.first_chunk::<2>().copied()?)),
+            8 => Some(MacAddress::Extended(v.first_chunk::<8>().copied()?)),
             _ => None,
         }
     }
@@ -631,13 +637,13 @@ impl AppConfig {
         ) {
             (Some(v), uci::MacAddressMode::Mode0) => (v.as_ref(), 2),
             (Some(v), uci::MacAddressMode::Mode2) => (v.as_ref(), 8),
-            _ => (&[][..], 2),
+            _ => (&[] as &[u8], 2),
         };
         slice
             .chunks_exact(chunk_size)
             .filter_map(|c| match c.len() {
-                2 => c.try_into().ok().map(MacAddress::Short),
-                8 => c.try_into().ok().map(MacAddress::Extended),
+                2 => c.first_chunk::<2>().copied().map(MacAddress::Short),
+                8 => c.first_chunk::<8>().copied().map(MacAddress::Extended),
                 _ => None,
             })
     }
@@ -706,15 +712,24 @@ impl AppConfig {
     }
 
     fn aoa_bound_config(&self) -> AoaBounds {
-        let bytes = self
+        let [
+            min_az_lo,
+            min_az_hi,
+            max_az_lo,
+            max_az_hi,
+            min_el_lo,
+            min_el_hi,
+            max_el_lo,
+            max_el_hi,
+        ] = self
             .get(uci::AppConfigTlvType::AoaBoundConfig)
-            .and_then(|v| <[u8; 8]>::try_from(v.as_ref()).ok())
+            .and_then(|v| v.first_chunk::<8>().copied())
             .unwrap_or(DEFAULT_AOA_BOUND_CONFIG);
         AoaBounds {
-            min_azimuth: i16::from_le_bytes([bytes[0], bytes[1]]),
-            max_azimuth: i16::from_le_bytes([bytes[2], bytes[3]]),
-            min_elevation: i16::from_le_bytes([bytes[4], bytes[5]]),
-            max_elevation: i16::from_le_bytes([bytes[6], bytes[7]]),
+            min_azimuth: i16::from_le_bytes([min_az_lo, min_az_hi]),
+            max_azimuth: i16::from_le_bytes([max_az_lo, max_az_hi]),
+            min_elevation: i16::from_le_bytes([min_el_lo, min_el_hi]),
+            max_elevation: i16::from_le_bytes([max_el_lo, max_el_hi]),
         }
     }
 

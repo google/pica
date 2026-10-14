@@ -14,12 +14,13 @@
 
 #![allow(clippy::unused_io_amount)]
 
+use parking_lot::Mutex;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
 pub struct File {
-    file: std::sync::Mutex<std::fs::File>,
+    file: Mutex<std::fs::File>,
     start_time: Instant,
 }
 
@@ -33,17 +34,17 @@ impl File {
         let mut file = std::fs::File::create(path)?;
 
         // PCAPng files must start with a Section Header Block.
-        file.write(&u32::to_le_bytes(0x0A0D0D0A))?; // Block Type
+        file.write(&u32::to_le_bytes(0x0A0D_0D0A))?; // Block Type
         file.write(&u32::to_le_bytes(28))?; // Block Total Length
-        file.write(&u32::to_le_bytes(0x1A2B3C4D))?; // Byte-Order Magic
+        file.write(&u32::to_le_bytes(0x1A2B_3C4D))?; // Byte-Order Magic
         file.write(&u16::to_le_bytes(1))?; // Major Version
         file.write(&u16::to_le_bytes(0))?; // Minor Version
-        file.write(&u64::to_le_bytes(0xFFFFFFFFFFFFFFFF))?; // Section Length (not specified)
+        file.write(&u64::to_le_bytes(0xFFFF_FFFF_FFFF_FFFF))?; // Section Length (not specified)
         file.write(&u32::to_le_bytes(28))?; // Block Total Length
 
         // Write the Interface Description Block used for all
         // UCI records.
-        file.write(&u32::to_le_bytes(0x00000001))?; // Block Type
+        file.write(&u32::to_le_bytes(0x0000_0001))?; // Block Type
         file.write(&u32::to_le_bytes(20))?; // Block Total Length
         file.write(&u16::to_le_bytes(293))?; // LinkType
         file.write(&u16::to_le_bytes(0))?; // Reserved
@@ -51,19 +52,19 @@ impl File {
         file.write(&u32::to_le_bytes(20))?; // Block Total Length
 
         Ok(File {
-            file: std::sync::Mutex::new(file),
+            file: Mutex::new(file),
             start_time: Instant::now(),
         })
     }
 
     pub fn write(&self, packet: &[u8], _dir: Direction) -> std::io::Result<()> {
-        let packet_data_padding: usize = 4 - packet.len() % 4;
-        let block_total_length: u32 = packet.len() as u32 + packet_data_padding as u32 + 32;
+        let packet_data_padding = 4 - (packet.len() % 4);
+        let block_total_length = (packet.len() + packet_data_padding + 32) as u32;
         let timestamp = self.start_time.elapsed().as_micros();
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.file.lock();
 
         // Wrap the packet inside an Enhanced Packet Block.
-        file.write(&u32::to_le_bytes(0x00000006))?; // Block Type
+        file.write(&u32::to_le_bytes(0x0000_0006))?; // Block Type
         file.write(&u32::to_le_bytes(block_total_length))?;
         file.write(&u32::to_le_bytes(0))?; // Interface ID
         file.write(&u32::to_le_bytes((timestamp >> 32) as u32))?; // Timestamp (High)

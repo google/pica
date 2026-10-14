@@ -12,6 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![cfg_attr(
+    test,
+    allow(
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        clippy::unwrap_used,
+    )
+)]
+
 use pdl_runtime::Packet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -87,6 +97,14 @@ pub enum PicaError {
     NoAvailableMacAddress,
     #[error("pica is already running")]
     AlreadyRunning,
+    #[error("pica mutex poisoned")]
+    MutexPoisoned,
+}
+
+impl<T> From<std::sync::PoisonError<T>> for PicaError {
+    fn from(_: std::sync::PoisonError<T>) -> Self {
+        Self::MutexPoisoned
+    }
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -371,8 +389,10 @@ impl Pica {
                 let Some(packet) = uci_stream.next().await else {
                     return;
                 };
-                let Ok(header) =
-                    packets::uci::CommonPacketHeader::decode_full(&packet[0..COMMON_HEADER_SIZE])
+                let Some(common_header_bytes) = packet.get(..COMMON_HEADER_SIZE) else {
+                    return;
+                };
+                let Ok(header) = packets::uci::CommonPacketHeader::decode_full(common_header_bytes)
                 else {
                     return;
                 };
@@ -385,7 +405,10 @@ impl Pica {
 
                 match &mut complete_packet {
                     Some(complete_packet) => {
-                        complete_packet.extend_from_slice(&packet[HEADER_SIZE..])
+                        let Some(payload) = packet.get(HEADER_SIZE..) else {
+                            return;
+                        };
+                        complete_packet.extend_from_slice(payload);
                     }
                     None => complete_packet = Some(packet),
                 }
@@ -397,10 +420,16 @@ impl Pica {
                 }
             }
 
-            cmd_tx
-                .send(PicaCommand::UciPacket(handle, complete_packet.unwrap()))
+            let Some(complete_packet) = complete_packet else {
+                return;
+            };
+            if let Err(e) = cmd_tx
+                .send(PicaCommand::UciPacket(handle, complete_packet))
                 .await
-                .unwrap()
+            {
+                tracing::debug!("Channel closed: {e}");
+                return;
+            }
         }
     }
 
@@ -417,8 +446,12 @@ impl Pica {
             let Some(complete_packet) = packet_rx.recv().await else {
                 return;
             };
+            let Some(&[common_header, oid, rfu, _]) = complete_packet.first_chunk::<HEADER_SIZE>()
+            else {
+                return;
+            };
             let mut offset = HEADER_SIZE;
-            let mt = parse_message_type(complete_packet[0]);
+            let mt = parse_message_type(common_header);
 
             while offset < complete_packet.len() {
                 let remaining_length = complete_packet.len() - offset;
@@ -436,21 +469,24 @@ impl Pica {
                     PacketBoundaryFlag::NotComplete
                 };
 
-                let mut packet = Vec::with_capacity(HEADER_SIZE + fragment_length);
+                let Some(payload_chunk) = complete_packet.get(offset..offset + fragment_length)
+                else {
+                    return;
+                };
 
-                packet.extend_from_slice(&complete_packet[0..HEADER_SIZE]);
                 const PBF_MASK: u8 = 0x10;
-                packet[0] &= !PBF_MASK;
-                packet[0] |= (pbf as u8) << 4;
-
-                match mt {
+                let common_header = (common_header & !PBF_MASK) | ((pbf as u8) << 4);
+                let header = match mt {
                     MessageType::Data => {
-                        packet[2..4].copy_from_slice(&(fragment_length as u16).to_le_bytes())
+                        let [len_lo, len_hi] = (fragment_length as u16).to_le_bytes();
+                        [common_header, oid, len_lo, len_hi]
                     }
-                    _ => packet[3] = fragment_length as u8,
-                }
-
-                packet.extend_from_slice(&complete_packet[offset..offset + fragment_length]);
+                    _ => [common_header, oid, rfu, fragment_length as u8],
+                };
+                let packet: Vec<u8> = header
+                    .into_iter()
+                    .chain(payload_chunk.iter().copied())
+                    .collect();
 
                 if let Some(file) = pcapng_file
                     && file.write(&packet, pcapng::Direction::Rx).is_err()
@@ -481,7 +517,7 @@ impl Pica {
             if self.get_category(&mac_address).is_none() {
                 break (handle, mac_address);
             }
-            if self.counter as u16 == initial_counter as u16 {
+            if self.counter - initial_counter == 1 << 16 {
                 self.counter = initial_counter;
                 return Err(PicaError::NoAvailableMacAddress);
             }
@@ -506,7 +542,9 @@ impl Pica {
             let pcapng_file = if let Some(dir) = pcapng_dir {
                 let full_path = dir.join(format!("device-{handle}.pcapng"));
                 tracing::debug!("Recording pcapng to file {}", full_path.as_path().display());
-                Some(pcapng::File::create(full_path).unwrap())
+                pcapng::File::create(full_path)
+                    .inspect_err(|err| tracing::error!("Failed to create pcapng file: {err}"))
+                    .ok()
             } else {
                 None
             };
@@ -516,10 +554,9 @@ impl Pica {
                 () = Self::write_routine(sink, packet_rx, handle, pcapng_file.as_ref()) => (),
             }
 
-            disconnect_tx
-                .send(PicaCommand::Disconnect(handle))
-                .await
-                .unwrap()
+            if let Err(e) = disconnect_tx.send(PicaCommand::Disconnect(handle)).await {
+                tracing::debug!("Channel closed: {e}");
+            }
         });
 
         Ok(handle)
@@ -591,22 +628,30 @@ impl Pica {
             measurements.push(measurement);
         }
 
-        if let Some(data_transfer) = &session.data_transfer {
+        let peer_tx = if let Some(data_transfer) = &session.data_transfer
+            && session.can_start_data_transfer()
+        {
             let dst_mac_address = data_transfer.dst_mac_address;
-            let peer_tx = if session.can_start_data_transfer() {
-                self.devices
-                    .values()
-                    .find(|peer_device| {
-                        peer_device.handle != device_handle
-                            && peer_device.can_receive_data_transfer(session_id, dst_mac_address)
-                    })
-                    .map(|peer_device| peer_device.tx.clone())
-            } else {
-                None
-            };
-            let device = self.get_device_mut(device_handle).unwrap();
-            let session = device.session_mut(session_id).unwrap();
-            let data_transfer = session.data_transfer.as_mut().unwrap();
+            self.devices
+                .values()
+                .find(|peer_device| {
+                    peer_device.handle != device_handle
+                        && peer_device.can_receive_data_transfer(session_id, dst_mac_address)
+                })
+                .map(|peer_device| peer_device.tx.clone())
+        } else {
+            None
+        };
+
+        let Some(device) = self.get_device_mut(device_handle) else {
+            return;
+        };
+        let tx = device.tx.clone();
+        let Some(session) = device.session_mut(session_id) else {
+            return;
+        };
+
+        if let Some(data_transfer) = session.data_transfer.as_mut() {
             data_transfer.tx_count = data_transfer.tx_count.saturating_add(1);
             let tx_count = data_transfer.tx_count;
             let sequence_number = data_transfer.sequence_number;
@@ -614,21 +659,23 @@ impl Pica {
             let repetition_count = session.app_config.data_repetition_count();
             let is_status_ntf_enabled = session.is_session_data_transfer_status_ntf_enabled();
 
-            let (status, is_complete) = if let Some(peer_tx) = peer_tx {
-                peer_tx
-                    .send(
-                        DataMessageRcv {
-                            application_data: payload.into(),
-                            data_sequence_number: sequence_number,
-                            pbf: PacketBoundaryFlag::Complete,
-                            session_handle: session_id,
-                            source_address: session.app_config.device_mac_address().unwrap().into(),
-                            status: uci::DataRcvStatusCode::UciStatusSuccess,
-                        }
-                        .encode_to_vec()
-                        .unwrap(),
-                    )
-                    .unwrap();
+            let (status, is_complete) = if let Some((peer_tx, source_address)) =
+                peer_tx.zip(session.app_config.device_mac_address())
+            {
+                if let Err(e) = peer_tx.send(
+                    DataMessageRcv {
+                        application_data: payload.into(),
+                        data_sequence_number: sequence_number,
+                        pbf: PacketBoundaryFlag::Complete,
+                        session_handle: session_id,
+                        source_address: source_address.into(),
+                        status: uci::DataRcvStatusCode::UciStatusSuccess,
+                    }
+                    .encode_to_vec()
+                    .expect("failed to encode DataMessageRcv"),
+                ) {
+                    tracing::debug!("Channel closed: {e}");
+                }
 
                 if tx_count <= repetition_count {
                     (
@@ -647,42 +694,33 @@ impl Pica {
 
             if is_complete {
                 session.clear_data();
-                device
-                    .tx
-                    .send(
-                        SessionDataCreditNtf {
-                            credit_availability: CreditAvailability::CreditAvailable,
-                            session_token: session_id,
-                        }
-                        .encode_to_vec()
-                        .unwrap(),
-                    )
-                    .unwrap();
+                if let Err(e) = tx.send(
+                    SessionDataCreditNtf {
+                        credit_availability: CreditAvailability::CreditAvailable,
+                        session_token: session_id,
+                    }
+                    .encode_to_vec()
+                    .expect("failed to encode SessionDataCreditNtf"),
+                ) {
+                    tracing::debug!("Channel closed: {e}");
+                }
             }
 
             if is_status_ntf_enabled || is_complete {
-                device
-                    .tx
-                    .send(
-                        SessionDataTransferStatusNtf {
-                            session_token: session_id,
-                            uci_sequence_number: sequence_number,
-                            status,
-                            tx_count,
-                        }
-                        .encode_to_vec()
-                        .unwrap(),
-                    )
-                    .unwrap();
+                if let Err(e) = tx.send(
+                    SessionDataTransferStatusNtf {
+                        session_token: session_id,
+                        uci_sequence_number: sequence_number,
+                        status,
+                        tx_count,
+                    }
+                    .encode_to_vec()
+                    .expect("failed to encode SessionDataTransferStatusNtf"),
+                ) {
+                    tracing::debug!("Channel closed: {e}");
+                }
             }
         }
-        let Some(device) = self.get_device_mut(device_handle) else {
-            return;
-        };
-        let tx = device.tx.clone();
-        let Some(session) = device.session_mut(session_id) else {
-            return;
-        };
 
         if session.session_type() == SessionType::FiraDataTransferSession {
             return;
@@ -735,7 +773,7 @@ impl Pica {
                         vendor_data: vec![],
                     }
                     .encode_to_vec()
-                    .unwrap(),
+                    .expect("failed to encode SessionInfoNtf"),
                 ),
                 uci::MacAddressMode::Mode2 => Some(
                     ExtendedMacTwoWaySessionInfoNtf {
@@ -753,7 +791,7 @@ impl Pica {
                         vendor_data: vec![],
                     }
                     .encode_to_vec()
-                    .unwrap(),
+                    .expect("failed to encode SessionInfoNtf"),
                 ),
                 mode => {
                     tracing::warn!("Unsupported MAC address mode {mode:?}");
@@ -762,7 +800,9 @@ impl Pica {
             };
 
             if let Some(packet) = ntf_packet {
-                tx.send(packet).unwrap();
+                if let Err(e) = tx.send(packet) {
+                    tracing::debug!("Channel closed: {e}");
+                }
                 session.sequence_number += 1;
             }
         }
@@ -852,7 +892,6 @@ impl Pica {
         }
     }
 
-    #[allow(clippy::map_entry)]
     fn create_anchor(
         &mut self,
         mac_address: MacAddress,
@@ -867,16 +906,12 @@ impl Pica {
             let handle = self.counter;
             self.counter += 1;
 
-            assert!(
-                self.anchors
-                    .insert(
-                        mac_address,
-                        Anchor {
-                            handle,
-                            mac_address,
-                        },
-                    )
-                    .is_none()
+            self.anchors.insert(
+                mac_address,
+                Anchor {
+                    handle,
+                    mac_address,
+                },
             );
 
             Ok(handle)
@@ -912,13 +947,13 @@ impl Pica {
 pub async fn run(this: &std::sync::Mutex<Pica>) -> Result<(), PicaError> {
     // Extract the mpsc receiver from the Pica context.
     // The receiver cannot be cloned.
-    let Some(mut command_rx) = this.lock().unwrap().command_rx.take() else {
+    let Some(mut command_rx) = this.lock()?.command_rx.take() else {
         return Err(PicaError::AlreadyRunning);
     };
 
     loop {
         if let Some(command) = command_rx.recv().await {
-            this.lock().unwrap().pica_command(command)
+            this.lock()?.pica_command(command)
         }
     }
 }

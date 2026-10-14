@@ -16,7 +16,7 @@ use crate::MacAddress;
 use crate::PicaCommand;
 use crate::packets::uci::{self, *};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::time::{Duration, Instant};
 
 use pdl_runtime::Packet;
@@ -174,12 +174,13 @@ impl Device {
         let tx = self.tx.clone();
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(5)).await;
-            tx.send(
+            if let Err(e) = tx.send(
                 CoreDeviceStatusNtf { device_state }
                     .encode_to_vec()
-                    .unwrap(),
-            )
-            .unwrap()
+                    .expect("failed to encode CoreDeviceStatusNtf"),
+            ) {
+                tracing::debug!("Channel closed: {e}");
+            }
         });
     }
 
@@ -188,7 +189,6 @@ impl Device {
     }
 
     pub(crate) fn on_session_deactivated(&mut self) {
-        debug_assert!(self.n_active_sessions > 0);
         self.n_active_sessions = self.n_active_sessions.saturating_sub(1);
         if self.n_active_sessions == 0 {
             self.set_state(DeviceState::DeviceStateReady);
@@ -229,7 +229,11 @@ impl Device {
 
     // Send a response or notification to the Host.
     fn send_control(&mut self, packet: impl Packet) {
-        self.send_raw_control(packet.encode_to_vec().unwrap());
+        self.send_raw_control(
+            packet
+                .encode_to_vec()
+                .expect("failed to encode control packet"),
+        );
     }
 
     // The fira norm specify to send a response, then reset, then
@@ -386,23 +390,24 @@ impl Device {
         tracing::debug!("  session_id=0x{session_id:x}");
         tracing::debug!("  session_type={session_type:?}");
 
-        let status = if self.sessions.len() >= MAX_SESSION {
-            uci::Status::ErrorMaxSessionsExceeded
-        } else {
-            match self.sessions.insert(
-                session_id,
-                Session::new(session_id, session_type, self.handle, self.tx.clone()),
-            ) {
-                Some(_) => uci::Status::ErrorSessionDuplicate,
-                None => {
-                    // Should not fail
-                    self.session_mut(session_id).unwrap().init();
-                    uci::Status::Ok
+        if self.sessions.len() >= MAX_SESSION {
+            return SessionInitRsp {
+                status: uci::Status::ErrorMaxSessionsExceeded,
+            };
+        }
+
+        match self.sessions.entry(session_id) {
+            Entry::Occupied(_) => SessionInitRsp {
+                status: uci::Status::ErrorSessionDuplicate,
+            },
+            Entry::Vacant(entry) => {
+                let session = Session::new(session_id, session_type, self.handle, self.tx.clone());
+                entry.insert(session).init();
+                SessionInitRsp {
+                    status: uci::Status::Ok,
                 }
             }
-        };
-
-        SessionInitRsp { status }
+        }
     }
 
     fn session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
@@ -702,7 +707,7 @@ impl Device {
             UpdateMulticastListAction::AddControlee
             | UpdateMulticastListAction::AddControleeWithShortSubSessionKey
             | UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
-                new_controlees.iter().for_each(|controlee| {
+                for controlee in new_controlees {
                     let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
                     if (action == UpdateMulticastListAction::AddControleeWithShortSubSessionKey
                         || action
@@ -738,10 +743,10 @@ impl Device {
                             status: update_status,
                         });
                     }
-                });
+                }
             }
             UpdateMulticastListAction::RemoveControlee => {
-                new_controlees.iter().for_each(|controlee: &Controlee| {
+                for controlee in new_controlees {
                     let pica_tx = self.pica_tx.clone();
                     let address = MacAddress::Short(controlee.short_address);
                     let attempt_count = session.app_config.in_band_termination_attempt_count();
@@ -758,10 +763,13 @@ impl Device {
                         if attempt_count != 0 {
                             tokio::spawn(async move {
                                 for _ in 0..attempt_count {
-                                    pica_tx
+                                    if let Err(e) = pica_tx
                                         .send(PicaCommand::StopRanging(address, session_handle))
                                         .await
-                                        .unwrap()
+                                    {
+                                        tracing::debug!("Channel closed: {e}");
+                                        return;
+                                    }
                                 }
                             });
                         }
@@ -782,7 +790,7 @@ impl Device {
                         mac_address: controlee.short_address,
                         status: update_status,
                     });
-                });
+                }
             }
         }
 
@@ -793,15 +801,16 @@ impl Device {
                 // sent before the response.
                 // TODO(#84) remove the sleep.
                 time::sleep(Duration::from_millis(5)).await;
-                tx.send(
+                if let Err(e) = tx.send(
                     SessionUpdateControllerMulticastListNtf {
                         controlee_status: controlee_status_ntf,
                         session_token: session_handle,
                     }
                     .encode_to_vec()
-                    .unwrap(),
-                )
-                .unwrap()
+                    .expect("failed to encode SessionUpdateControllerMulticastListNtf"),
+                ) {
+                    tracing::debug!("Channel closed: {e}");
+                }
             });
         }
         session
@@ -842,19 +851,18 @@ impl Device {
             };
         }
 
-        assert!(session.ranging_task.is_none());
-
         let ranging_interval =
-            time::Duration::from_millis(session.app_config.ranging_duration() as u64);
+            time::Duration::from_millis(u64::from(session.app_config.ranging_duration()));
 
         let tx = self.pica_tx.clone();
         let handle = self.handle;
         session.ranging_task = Some(tokio::spawn(async move {
             loop {
                 time::sleep(ranging_interval).await;
-                tx.send(PicaCommand::Ranging(handle, session_id))
-                    .await
-                    .unwrap();
+                if let Err(e) = tx.send(PicaCommand::Ranging(handle, session_id)).await {
+                    tracing::debug!("Channel closed: {e}");
+                    return;
+                }
             }
         }));
 
@@ -929,12 +937,14 @@ impl Device {
         &mut self,
         cmd: AndroidSetCountryCodeCmd,
     ) -> AndroidSetCountryCodeRsp {
-        let country_code = cmd.country_code;
-
         tracing::debug!("[{}] Set country code", self.handle);
-        tracing::debug!("  country_code={},{}", country_code[0], country_code[1]);
+        tracing::debug!(
+            "  country_code={},{}",
+            char::from(cmd.country_code[0]),
+            char::from(cmd.country_code[1])
+        );
 
-        self.country_code = country_code;
+        self.country_code = cmd.country_code;
         AndroidSetCountryCodeRsp {
             status: uci::Status::Ok,
         }
@@ -958,14 +968,16 @@ impl Device {
         }
     }
 
-    pub fn data_message_snd(&mut self, data: DataPacket) -> ControlPacket {
+    pub fn data_message_snd(
+        &mut self,
+        data: DataPacket,
+    ) -> Result<ControlPacket, pdl_runtime::EncodeError> {
         tracing::debug!("[{}] data_message_send", self.handle);
         let session_token = data
             .payload
-            .get(0..4)
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(u32::from_le_bytes)
-            .unwrap_or(0);
+            .first_chunk::<4>()
+            .copied()
+            .map_or(0, u32::from_le_bytes);
 
         let (status, uci_sequence_number) = match data.dpf {
             DataPacketFormat::DataSnd => {
@@ -982,8 +994,12 @@ impl Device {
                     if let Some(session) = self.session_mut(session_token) {
                         return session.data_message_snd(data);
                     }
-                    let uci_sequence_number =
-                        u16::from_le_bytes([data.payload[12], data.payload[13]]);
+                    let uci_sequence_number = data
+                        .payload
+                        .get(12..)
+                        .and_then(|s| s.first_chunk::<2>())
+                        .copied()
+                        .map_or(0, u16::from_le_bytes);
                     (
                         DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
                         uci_sequence_number,
@@ -1003,10 +1019,12 @@ impl Device {
             uci_sequence_number,
         }
         .try_into()
-        .unwrap()
     }
 
-    fn receive_command(&mut self, cmd: ControlPacket) -> ControlPacket {
+    fn receive_command(
+        &mut self,
+        cmd: ControlPacket,
+    ) -> Result<ControlPacket, pdl_runtime::EncodeError> {
         use AndroidPacketChild::*;
         use ControlPacketChild::*;
         use CorePacketChild::*;
@@ -1020,98 +1038,76 @@ impl Device {
             return uci::CoreDeviceStatusNtf {
                 device_state: DeviceState::DeviceStateError,
             }
-            .try_into()
-            .unwrap();
+            .try_into();
         }
 
-        let child = match cmd.specialize() {
-            Ok(child) => child,
-            Err(_) => {
-                let status = if cmd.payload.len() >= 3 {
-                    uci::Status::UnknownOid
-                } else {
-                    uci::Status::SyntaxError
-                };
-                return command_error_response(
-                    cmd.gid,
-                    cmd.payload.first().copied().unwrap_or(0),
-                    status,
-                );
-            }
+        let Ok(child) = cmd.specialize() else {
+            let status = if cmd.payload.len() >= 3 {
+                uci::Status::UnknownOid
+            } else {
+                uci::Status::SyntaxError
+            };
+            return Ok(command_error_response(
+                cmd.gid,
+                cmd.payload.first().copied().unwrap_or(0),
+                status,
+            ));
         };
 
         match child {
             CorePacket(cmd) => match cmd.specialize() {
-                Ok(CoreDeviceResetCmd(cmd)) => self.core_device_reset(cmd).try_into().unwrap(),
-                Ok(CoreGetDeviceInfoCmd(cmd)) => self.core_get_device_info(cmd).try_into().unwrap(),
-                Ok(CoreGetCapsInfoCmd(cmd)) => self.core_get_caps_info(cmd).try_into().unwrap(),
-                Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).try_into().unwrap(),
-                Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).try_into().unwrap(),
-                Ok(CoreQueryTimeStampCmd(_)) => self.core_query_timestamp().try_into().unwrap(),
-                child => command_error_response(
+                Ok(CoreDeviceResetCmd(cmd)) => self.core_device_reset(cmd).try_into(),
+                Ok(CoreGetDeviceInfoCmd(cmd)) => self.core_get_device_info(cmd).try_into(),
+                Ok(CoreGetCapsInfoCmd(cmd)) => self.core_get_caps_info(cmd).try_into(),
+                Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).try_into(),
+                Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).try_into(),
+                Ok(CoreQueryTimeStampCmd(_)) => self.core_query_timestamp().try_into(),
+                child => Ok(command_error_response(
                     GroupId::Core,
                     cmd.oid.into(),
                     packet_error_status(child),
-                ),
+                )),
             },
             SessionConfigPacket(cmd) => match cmd.specialize() {
-                Ok(SessionInitCmd(cmd)) => self.session_init(cmd).try_into().unwrap(),
-                Ok(SessionDeinitCmd(cmd)) => self.session_deinit(cmd).try_into().unwrap(),
-                Ok(SessionGetCountCmd(cmd)) => self.session_get_count(cmd).try_into().unwrap(),
-                Ok(SessionSetAppConfigCmd(cmd)) => {
-                    self.session_set_app_config(cmd).try_into().unwrap()
-                }
-                Ok(SessionGetAppConfigCmd(cmd)) => {
-                    self.session_get_app_config(cmd).try_into().unwrap()
-                }
-                Ok(SessionGetStateCmd(cmd)) => self.session_get_state(cmd).try_into().unwrap(),
+                Ok(SessionInitCmd(cmd)) => self.session_init(cmd).try_into(),
+                Ok(SessionDeinitCmd(cmd)) => self.session_deinit(cmd).try_into(),
+                Ok(SessionGetCountCmd(cmd)) => self.session_get_count(cmd).try_into(),
+                Ok(SessionSetAppConfigCmd(cmd)) => self.session_set_app_config(cmd).try_into(),
+                Ok(SessionGetAppConfigCmd(cmd)) => self.session_get_app_config(cmd).try_into(),
+                Ok(SessionGetStateCmd(cmd)) => self.session_get_state(cmd).try_into(),
                 Ok(SessionUpdateControllerMulticastListCmd(cmd)) => self
                     .session_update_controller_multicast_list(cmd)
-                    .try_into()
-                    .unwrap(),
-                Ok(SessionQueryMaxDataSizeInRangingCmd(cmd)) => self
-                    .session_query_max_data_size_in_ranging(cmd)
-                    .try_into()
-                    .unwrap(),
-                child => command_error_response(
+                    .try_into(),
+                Ok(SessionQueryMaxDataSizeInRangingCmd(cmd)) => {
+                    self.session_query_max_data_size_in_ranging(cmd).try_into()
+                }
+                child => Ok(command_error_response(
                     GroupId::SessionConfig,
                     cmd.oid.into(),
                     packet_error_status(child),
-                ),
+                )),
             },
             SessionControlPacket(cmd) => match cmd.specialize() {
-                Ok(SessionStartCmd(cmd)) => self.session_start(cmd).try_into().unwrap(),
-                Ok(SessionStopCmd(cmd)) => self.session_stop(cmd).try_into().unwrap(),
+                Ok(SessionStartCmd(cmd)) => self.session_start(cmd).try_into(),
+                Ok(SessionStopCmd(cmd)) => self.session_stop(cmd).try_into(),
                 Ok(SessionGetRangingCountCmd(cmd)) => {
-                    self.session_get_ranging_count(cmd).try_into().unwrap()
+                    self.session_get_ranging_count(cmd).try_into()
                 }
-                child => command_error_response(
+                child => Ok(command_error_response(
                     GroupId::SessionControl,
                     cmd.oid.into(),
                     packet_error_status(child),
-                ),
+                )),
             },
             AndroidPacket(cmd) => match cmd.specialize() {
-                Ok(AndroidSetCountryCodeCmd(cmd)) => {
-                    self.android_set_country_code(cmd).try_into().unwrap()
-                }
-                Ok(AndroidGetPowerStatsCmd(cmd)) => {
-                    self.android_get_power_stats(cmd).try_into().unwrap()
-                }
-                child => command_error_response(
+                Ok(AndroidSetCountryCodeCmd(cmd)) => self.android_set_country_code(cmd).try_into(),
+                Ok(AndroidGetPowerStatsCmd(cmd)) => self.android_get_power_stats(cmd).try_into(),
+                child => Ok(command_error_response(
                     GroupId::VendorAndroid,
                     cmd.oid.into(),
                     packet_error_status(child),
-                ),
+                )),
             },
-            ControlPacketChild::None
-                if matches!(
-                    cmd.mt,
-                    uci::MessageType::Response | uci::MessageType::Notification
-                ) =>
-            {
-                unreachable!("Unhandled control messsage with type {:?}", cmd.mt);
-            }
             ControlPacketChild::None => {
                 // [UCI] 4.3.2 Exception Handling for Control Messages
                 // The UWBS shall respond to an unknown Command (unknown GID
@@ -1120,22 +1116,27 @@ impl Device {
                 // value of STATUS_UNKNOWN_GID/STATUS_UNKNOWN_OID respectively
                 // and no additional fields.
                 tracing::error!("Unsupported gid {:?}", cmd.gid);
-                command_error_response(
+                Ok(command_error_response(
                     cmd.gid,
                     cmd.payload.first().copied().unwrap_or(0),
                     uci::Status::UnknownGid,
-                )
+                ))
             }
         }
     }
 
     pub fn receive_packet(&mut self, packet: Vec<u8>) {
-        let mt = parse_message_type(packet[0]);
+        let Some(&[mt_gid, oid]) = packet.first_chunk::<2>() else {
+            return;
+        };
+        let mt = parse_message_type(mt_gid);
         match mt {
             MessageType::Data => match DataPacket::decode_full(&packet) {
                 Ok(packet) => {
-                    let notification = self.data_message_snd(packet);
-                    self.send_control(notification)
+                    let notification = self
+                        .data_message_snd(packet)
+                        .expect("failed to encode data transfer notification");
+                    self.send_control(notification);
                 }
                 Err(err) => tracing::error!("failed to parse incoming Data packet: {err}"),
             },
@@ -1150,8 +1151,8 @@ impl Device {
                     //      get the same status code, instead of
                     //      STATUS_SYNTAX_ERROR.
                     Err(_) => {
-                        let group_id = packet[0] & 0xf;
-                        let opcode_id = packet[1] & 0x3f;
+                        let group_id = mt_gid & 0xf;
+                        let opcode_id = oid & 0x3f;
 
                         let status = if GroupId::try_from(group_id).is_ok() {
                             uci::Status::UnknownOid
@@ -1172,8 +1173,10 @@ impl Device {
 
                     // Parsing success, ignore non command packets.
                     Ok(cmd) => {
-                        let response = self.receive_command(cmd);
-                        self.send_control(response)
+                        let response = self
+                            .receive_command(cmd)
+                            .expect("failed to encode command response");
+                        self.send_control(response);
                     }
                 }
             }
