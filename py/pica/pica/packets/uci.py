@@ -388,6 +388,8 @@ class AppConfigTlvType(enum.IntEnum):
 class DeviceType(enum.IntEnum):
     CONTROLEE = 0x0
     CONTROLLER = 0x1
+    CCC_CONTROLLER = 0xA0
+    CCC_CONTROLEE = 0xA1
 
     @staticmethod
     def from_int(v: int) -> Union[int, 'DeviceType']:
@@ -707,6 +709,25 @@ class HoppingMode(enum.IntEnum):
             raise exn
 
 
+class CccHoppingMode(enum.IntEnum):
+    DISABLE = 0x00
+    ADAPTIVE_DEFAULT = 0x02
+    CONTINUOUS_DEFAULT = 0x03
+    ADAPTIVE_AES = 0x04
+    CONTINUOUS_AES = 0x05
+    EXTENSION_CONTINUOUS_AES = 0xA0
+    EXTENSION_CONTINUOUS_DEFAULT = 0xA1
+    EXTENSION_ADAPTIVE_AES = 0xA2
+    EXTENSION_ADAPTIVE_DEFAULT = 0xA3
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'CccHoppingMode']:
+        try:
+            return CccHoppingMode(v)
+        except ValueError as exn:
+            raise exn
+
+
 @dataclass
 class ResultReportConfig(Packet):
     tof: int = field(kw_only=True, default=0)
@@ -981,6 +1002,7 @@ class SessionType(enum.IntEnum):
     FIRA_IN_BAND_DATA_PHASE = 0x4
     FIRA_RANGING_WITH_DATA_PHASE = 0x5
     CCC = 0xa0
+    ALIRO = 0xa2
     DEVICE_TEST_MODE = 0xd0
 
     @staticmethod
@@ -3378,34 +3400,6 @@ class SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload(Packet):
         return sum([elt.size for elt in self.controlees]) + 1
 
 @dataclass
-class SessionUpdateControllerMulticastListRsp(SessionConfigPacket):
-    status: Status = field(kw_only=True, default=Status.OK)
-
-    def __post_init__(self):
-        self.mt = MessageType.RESPONSE
-        self.oid = SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST
-        self.gid = GroupId.SESSION_CONFIG
-
-    @staticmethod
-    def parse(fields: dict, span: bytes) -> Tuple['SessionUpdateControllerMulticastListRsp', bytes]:
-        if fields['mt'] != MessageType.RESPONSE or fields['oid'] != SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST or fields['gid'] != GroupId.SESSION_CONFIG:
-            raise Exception("Invalid constraint field values")
-        if len(span) < 1:
-            raise Exception('Invalid packet size')
-        fields['status'] = Status.from_int(span[0])
-        span = span[1:]
-        return SessionUpdateControllerMulticastListRsp(**fields), span
-
-    def serialize(self, payload: bytes = None) -> bytes:
-        _span = bytearray()
-        _span.append((self.status << 0))
-        return SessionConfigPacket.serialize(self, payload = bytes(_span))
-
-    @property
-    def size(self) -> int:
-        return 1
-
-@dataclass
 class ControleeStatus(Packet):
     mac_address: bytearray = field(kw_only=True, default_factory=bytearray)
     status: MulticastUpdateStatus = field(kw_only=True, default=MulticastUpdateStatus.OK_MULTICAST_LIST_UPDATE)
@@ -3435,6 +3429,49 @@ class ControleeStatus(Packet):
     @property
     def size(self) -> int:
         return 3
+
+@dataclass
+class SessionUpdateControllerMulticastListRsp(SessionConfigPacket):
+    status: Status = field(kw_only=True, default=Status.OK)
+    controlee_status: List[ControleeStatus] = field(kw_only=True, default_factory=list)
+
+    def __post_init__(self):
+        self.mt = MessageType.RESPONSE
+        self.oid = SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST
+        self.gid = GroupId.SESSION_CONFIG
+
+    @staticmethod
+    def parse(fields: dict, span: bytes) -> Tuple['SessionUpdateControllerMulticastListRsp', bytes]:
+        if fields['mt'] != MessageType.RESPONSE or fields['oid'] != SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST or fields['gid'] != GroupId.SESSION_CONFIG:
+            raise Exception("Invalid constraint field values")
+        if len(span) < 2:
+            raise Exception('Invalid packet size')
+        fields['status'] = Status.from_int(span[0])
+        controlee_status_count = span[1]
+        span = span[2:]
+        if len(span) < controlee_status_count * 3:
+            raise Exception('Invalid packet size')
+        controlee_status = []
+        for n in range(controlee_status_count):
+            controlee_status.append(ControleeStatus.parse_all(span[n * 3:(n + 1) * 3]))
+        fields['controlee_status'] = controlee_status
+        span = span[controlee_status_count * 3:]
+        return SessionUpdateControllerMulticastListRsp(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        _span.append((self.status << 0))
+        if len(self.controlee_status) > 255:
+            print(f"Invalid length for field SessionUpdateControllerMulticastListRsp::controlee_status:  {len(self.controlee_status)} > 255; the array will be truncated")
+            del self.controlee_status[255:]
+        _span.append((len(self.controlee_status) << 0))
+        for _elt in self.controlee_status:
+            _span.extend(_elt.serialize())
+        return SessionConfigPacket.serialize(self, payload = bytes(_span))
+
+    @property
+    def size(self) -> int:
+        return sum([elt.size for elt in self.controlee_status]) + 2
 
 @dataclass
 class SessionUpdateControllerMulticastListNtf(SessionConfigPacket):
