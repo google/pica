@@ -40,15 +40,35 @@ pub enum SubSessionKey {
 }
 
 const DEFAULT_STS_CONFIG: uci::StsConfig = uci::StsConfig::Static;
+const DEFAULT_CHANNEL_NUMBER: uci::ChannelNumber = uci::ChannelNumber::ChannelNumber9;
 const DEFAULT_NUMBER_OF_CONTROLEES: u8 = 1;
 const DEFAULT_RANGING_DURATION: u32 = 200;
 const DEFAULT_SESSION_INFO_NTF_CONFIG: uci::SessionInfoNtfConfig =
     uci::SessionInfoNtfConfig::Enable;
+const DEFAULT_NEAR_PROXIMITY_CONFIG: u16 = 0;
+const DEFAULT_FAR_PROXIMITY_CONFIG: u16 = 20000;
 const DEFAULT_MAC_ADDRESS_MODE: uci::MacAddressMode = uci::MacAddressMode::Mode0;
 const DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT: u8 = 1;
+const DEFAULT_MAX_NUMBER_OF_MEASUREMENTS: u16 = 0;
 const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferStatusNtfConfig =
     uci::SessionDataTransferStatusNtfConfig::Disable;
 const DEFAULT_DATA_REPETITION_COUNT: u8 = 0;
+const DEFAULT_AOA_BOUND_CONFIG: [u8; 8] = [0x00, 0xa6, 0x00, 0x5a, 0x00, 0xd3, 0x00, 0x2d];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AoaBounds {
+    min_azimuth: i16,
+    max_azimuth: i16,
+    min_elevation: i16,
+    max_elevation: i16,
+}
+
+impl AoaBounds {
+    fn contains(&self, azimuth: i16, elevation: i16) -> bool {
+        (self.min_azimuth..=self.max_azimuth).contains(&azimuth)
+            && (self.min_elevation..=self.max_elevation).contains(&elevation)
+    }
+}
 const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
     (
         uci::AppConfigTlvType::RangingDuration,
@@ -88,7 +108,7 @@ impl AppConfig {
         let mut tlvs = HashMap::from([
             (
                 uci::AppConfigTlvType::ChannelNumber,
-                Bytes::from_static(&[uci::ChannelNumber::ChannelNumber9 as u8]),
+                Bytes::from_static(&[DEFAULT_CHANNEL_NUMBER as u8]),
             ),
             (
                 uci::AppConfigTlvType::NumberOfControlees,
@@ -104,11 +124,11 @@ impl AppConfig {
             ),
             (
                 uci::AppConfigTlvType::NearProximityConfig,
-                Bytes::from_static(const { &0u16.to_le_bytes() }),
+                Bytes::from_static(const { &DEFAULT_NEAR_PROXIMITY_CONFIG.to_le_bytes() }),
             ),
             (
                 uci::AppConfigTlvType::FarProximityConfig,
-                Bytes::from_static(const { &20000u16.to_le_bytes() }),
+                Bytes::from_static(const { &DEFAULT_FAR_PROXIMITY_CONFIG.to_le_bytes() }),
             ),
             (
                 uci::AppConfigTlvType::PreambleCodeIndex,
@@ -116,7 +136,7 @@ impl AppConfig {
             ),
             (
                 uci::AppConfigTlvType::AoaBoundConfig,
-                Bytes::from_static(&[0u8; 8]),
+                Bytes::from_static(&DEFAULT_AOA_BOUND_CONFIG),
             ),
             (
                 uci::AppConfigTlvType::UwbInitiationTime,
@@ -259,7 +279,7 @@ impl AppConfig {
                 ),
                 (
                     uci::AppConfigTlvType::MaxNumberOfMeasurements,
-                    Bytes::from_static(const { &0u16.to_le_bytes() }),
+                    Bytes::from_static(const { &DEFAULT_MAX_NUMBER_OF_MEASUREMENTS.to_le_bytes() }),
                 ),
                 (
                     uci::AppConfigTlvType::StsLength,
@@ -529,6 +549,11 @@ impl AppConfig {
         self.get(id).and_then(|v| v.first().copied())
     }
 
+    fn get_u16(&self, id: uci::AppConfigTlvType) -> Option<u16> {
+        self.get(id)
+            .and_then(|v| v.as_ref().try_into().ok().map(u16::from_le_bytes))
+    }
+
     fn get_u32(&self, id: uci::AppConfigTlvType) -> Option<u32> {
         self.get(id)
             .and_then(|v| v.as_ref().try_into().ok().map(u32::from_le_bytes))
@@ -631,15 +656,66 @@ impl AppConfig {
             .unwrap_or(DEFAULT_NUMBER_OF_CONTROLEES)
     }
 
+    fn channel_number(&self) -> uci::ChannelNumber {
+        self.get_enum(uci::AppConfigTlvType::ChannelNumber)
+            .unwrap_or(DEFAULT_CHANNEL_NUMBER)
+    }
+
+    fn near_proximity_config(&self) -> u16 {
+        self.get_u16(uci::AppConfigTlvType::NearProximityConfig)
+            .unwrap_or(DEFAULT_NEAR_PROXIMITY_CONFIG)
+    }
+
+    fn far_proximity_config(&self) -> u16 {
+        self.get_u16(uci::AppConfigTlvType::FarProximityConfig)
+            .unwrap_or(DEFAULT_FAR_PROXIMITY_CONFIG)
+    }
+
+    pub fn max_number_of_measurements(&self) -> u16 {
+        self.get_u16(uci::AppConfigTlvType::MaxNumberOfMeasurements)
+            .unwrap_or(DEFAULT_MAX_NUMBER_OF_MEASUREMENTS)
+    }
+
     pub fn mac_address_mode(&self) -> uci::MacAddressMode {
         self.get_enum(uci::AppConfigTlvType::MacAddressMode)
             .unwrap_or(DEFAULT_MAC_ADDRESS_MODE)
+    }
+
+    fn aoa_bound_config(&self) -> AoaBounds {
+        let bytes = self
+            .get(uci::AppConfigTlvType::AoaBoundConfig)
+            .and_then(|v| <[u8; 8]>::try_from(v.as_ref()).ok())
+            .unwrap_or(DEFAULT_AOA_BOUND_CONFIG);
+        AoaBounds {
+            min_azimuth: i16::from_le_bytes([bytes[0], bytes[1]]),
+            max_azimuth: i16::from_le_bytes([bytes[2], bytes[3]]),
+            min_elevation: i16::from_le_bytes([bytes[4], bytes[5]]),
+            max_elevation: i16::from_le_bytes([bytes[6], bytes[7]]),
+        }
+    }
+
+    pub fn is_within_bounds(&self, distance: u16, azimuth: i16, elevation: i16) -> bool {
+        let within_proximity =
+            (self.near_proximity_config()..=self.far_proximity_config()).contains(&distance);
+        let within_aoa = self.aoa_bound_config().contains(azimuth, elevation);
+        match self.session_info_ntf_config() {
+            uci::SessionInfoNtfConfig::EnableProximityTrigger
+            | uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger => within_proximity,
+            uci::SessionInfoNtfConfig::EnableAoaTrigger
+            | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger => within_aoa,
+            uci::SessionInfoNtfConfig::EnableProximityAoaTrigger
+            | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
+                within_proximity && within_aoa
+            }
+            uci::SessionInfoNtfConfig::Enable | uci::SessionInfoNtfConfig::Disable => true,
+        }
     }
 
     pub fn is_compatible_for_ranging(&self, peer_config: &Self) -> bool {
         self.device_role() != peer_config.device_role()
             && self.device_type() != peer_config.device_type()
             && self.mac_address_mode() == peer_config.mac_address_mode()
+            && self.channel_number() == peer_config.channel_number()
             && self
                 .device_mac_address()
                 .is_some_and(|mac| peer_config.dst_mac_address().any(|a| a == mac))

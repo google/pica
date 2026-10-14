@@ -187,7 +187,7 @@ impl Device {
         self.set_state(DeviceState::DeviceStateReady);
     }
 
-    fn on_session_deactivated(&mut self) {
+    pub(crate) fn on_session_deactivated(&mut self) {
         debug_assert!(self.n_active_sessions > 0);
         self.n_active_sessions = self.n_active_sessions.saturating_sub(1);
         if self.n_active_sessions == 0 {
@@ -922,7 +922,7 @@ impl Device {
 
         SessionGetRangingCountRsp {
             status: uci::Status::Ok,
-            count: session.sequence_number,
+            count: session.ranging_count,
         }
     }
 
