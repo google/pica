@@ -75,6 +75,8 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
         CapTlvType::CccSupportedHoppingConfigModesAndSequences,
         &[0xff],
     ),
+    (CapTlvType::AliroSupportedMacModes, &[0x03]),
+    (CapTlvType::AliroSupportedProtocolVersion, &[1, 0]),
 ];
 
 /// [UCI] 8.2 Device Configuration Parameters

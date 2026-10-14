@@ -1002,6 +1002,7 @@ class SessionType(enum.IntEnum):
     FIRA_IN_BAND_DATA_PHASE = 0x4
     FIRA_RANGING_WITH_DATA_PHASE = 0x5
     CCC = 0xa0
+    ALIRO = 0xa2
     DEVICE_TEST_MODE = 0xd0
 
     @staticmethod

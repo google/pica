@@ -658,6 +658,7 @@ async def run(address: str, uci_port: int):
 
         await verify_command_error_fallbacks(host0)
         await ccc_ranging_session(host0)
+        await aliro_ranging_session(host0)
     finally:
         host0.disconnect()
         host1.disconnect()
@@ -703,9 +704,17 @@ async def verify_command_error_fallbacks(host: Host):
 
 
 async def ccc_ranging_session(host: Host):
-    host.send_control(
-        uci.SessionInitCmd(session_id=2, session_type=uci.SessionType.CCC)
-    )
+    await ccc_or_aliro_ranging_session(host, uci.SessionType.CCC)
+
+
+async def aliro_ranging_session(host: Host):
+    await ccc_or_aliro_ranging_session(host, uci.SessionType.ALIRO)
+
+
+async def ccc_or_aliro_ranging_session(
+    host: Host, session_type: uci.SessionType = uci.SessionType.CCC
+):
+    host.send_control(uci.SessionInitCmd(session_id=2, session_type=session_type))
     await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -715,67 +724,78 @@ async def ccc_ranging_session(host: Host):
         )
     )
 
+    app_configs = [
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+            v=bytes([uci.DeviceType.CCC_CONTROLLER]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+            v=bytes([uci.DeviceRole.INITIATOR]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+            v=bytes([uci.MultiNodeMode.ONE_TO_MANY]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.CHANNEL_NUMBER,
+            v=bytes([uci.ChannelNumber.CHANNEL_NUMBER_9]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+            v=bytes([1]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.SLOT_DURATION,
+            v=int(2400).to_bytes(2, "little"),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+            v=int(96).to_bytes(4, "little"),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.PREAMBLE_CODE_INDEX,
+            v=bytes([9]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.SLOTS_PER_RR,
+            v=bytes([6]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.HOPPING_MODE,
+            v=bytes([uci.CccHoppingMode.EXTENSION_CONTINUOUS_AES]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA3,
+            v=bytes([1, 0]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA4,
+            v=int(0).to_bytes(2, "little"),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA5,
+            v=bytes([0]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA6,
+            v=int(720).to_bytes(2, "little"),
+        ),
+    ]
+    if session_type == uci.SessionType.ALIRO:
+        app_configs.extend(
+            [
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SESSION_KEY,
+                    v=bytes([1] * 16),
+                ),
+            ]
+        )
+
     host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=2,
-            tlvs=[
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
-                    v=bytes([uci.DeviceType.CCC_CONTROLLER]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
-                    v=bytes([uci.DeviceRole.INITIATOR]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
-                    v=bytes([uci.MultiNodeMode.ONE_TO_MANY]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.CHANNEL_NUMBER,
-                    v=bytes([uci.ChannelNumber.CHANNEL_NUMBER_9]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
-                    v=bytes([1]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.SLOT_DURATION,
-                    v=int(2400).to_bytes(2, "little"),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
-                    v=int(96).to_bytes(4, "little"),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.PREAMBLE_CODE_INDEX,
-                    v=bytes([9]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.SLOTS_PER_RR,
-                    v=bytes([6]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.HOPPING_MODE,
-                    v=bytes([uci.CccHoppingMode.EXTENSION_CONTINUOUS_AES]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=0xA3,
-                    v=bytes([1, 0]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=0xA4,
-                    v=int(0).to_bytes(2, "little"),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=0xA5,
-                    v=bytes([0]),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=0xA6,
-                    v=int(720).to_bytes(2, "little"),
-                ),
-            ],
+            tlvs=app_configs,
         )
     )
     await host.expect_control(
@@ -796,20 +816,31 @@ async def ccc_ranging_session(host: Host):
     assert tlvs[0xA0] == bytes([0, 0, 0, 0])
     assert tlvs[0xA8] == bytes([0, 0, 0, 0])
     assert 0xA1 not in tlvs
+    if session_type == uci.SessionType.ALIRO:
+        assert tlvs[0xA9] == bytes([0])
+        assert tlvs.get(uci.AppConfigTlvType.SESSION_KEY) == bytes([1] * 16)
 
+    second_app_configs = [
+        uci.AppConfigTlv(
+            cfg_id=0xA0,
+            v=bytes(16),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.STS_INDEX,
+            v=int(10).to_bytes(4, "little"),
+        ),
+    ]
+    if session_type == uci.SessionType.ALIRO:
+        second_app_configs.append(
+            uci.AppConfigTlv(
+                cfg_id=0xA9,
+                v=bytes([(1 << 6) | 1]),
+            )
+        )
     host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=2,
-            tlvs=[
-                uci.AppConfigTlv(
-                    cfg_id=0xA0,
-                    v=bytes(16),
-                ),
-                uci.AppConfigTlv(
-                    cfg_id=uci.AppConfigTlvType.STS_INDEX,
-                    v=int(10).to_bytes(4, "little"),
-                ),
-            ],
+            tlvs=second_app_configs,
         )
     )
     await host.expect_control(
@@ -824,6 +855,9 @@ async def ccc_ranging_session(host: Host):
     assert tlvs[0xA8] == bytes([0, 0, 0, 0])
     assert tlvs[uci.AppConfigTlvType.STS_INDEX] == int(10).to_bytes(4, "little")
     assert 0xA1 not in tlvs
+    if session_type == uci.SessionType.ALIRO:
+        assert tlvs.get(0xA9) == bytes([(1 << 6) | 1])
+        assert tlvs.get(uci.AppConfigTlvType.SESSION_KEY) == bytes([1] * 16)
 
     host.send_control(uci.SessionStartCmd(session_id=2))
     await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
@@ -845,6 +879,9 @@ async def ccc_ranging_session(host: Host):
     assert tlvs[0xA0] == bytes(16)
     assert tlvs[0xA8] == bytes([0, 0, 0, 0])
     assert 0xA1 not in tlvs
+    if session_type == uci.SessionType.ALIRO:
+        assert tlvs.get(0xA9) == bytes([(1 << 6) | 1])
+        assert tlvs.get(uci.AppConfigTlvType.SESSION_KEY) == bytes([1] * 16)
 
     host.send_control(uci.SessionStopCmd(session_id=2))
     await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))

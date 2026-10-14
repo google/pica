@@ -48,6 +48,25 @@ const DEFAULT_MAC_ADDRESS_MODE: uci::MacAddressMode = uci::MacAddressMode::Mode0
 const DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT: u8 = 1;
 const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferStatusNtfConfig =
     uci::SessionDataTransferStatusNtfConfig::Disable;
+const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
+    (
+        uci::AppConfigTlvType::RangingDuration,
+        Bytes::from_static(const { &96u32.to_le_bytes() }),
+    ),
+    (
+        uci::AppConfigTlvType::SessionInfoNtfConfig,
+        Bytes::from_static(&[uci::SessionInfoNtfConfig::Disable as u8]),
+    ),
+    (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[6])),
+    (
+        uci::AppConfigTlvType::CccHopModeKey,
+        Bytes::from_static(&[0, 0, 0, 0]),
+    ),
+    (
+        uci::AppConfigTlvType::CccLastIndexUsed,
+        Bytes::from_static(&[0, 0, 0, 0]),
+    ),
+];
 
 /// [UCI] 8.3 Application Configuration Parameters.
 /// The configuration is initially filled with default values from the
@@ -272,25 +291,11 @@ impl AppConfig {
                     Bytes::from_static(&[0]),
                 ),
             ]),
-            uci::SessionType::Ccc => tlvs.extend([
-                (
-                    uci::AppConfigTlvType::RangingDuration,
-                    Bytes::from_static(const { &96u32.to_le_bytes() }),
-                ),
-                (
-                    uci::AppConfigTlvType::SessionInfoNtfConfig,
-                    Bytes::from_static(&[uci::SessionInfoNtfConfig::Disable as u8]),
-                ),
-                (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[6])),
-                (
-                    uci::AppConfigTlvType::CccHopModeKey,
-                    Bytes::from_static(&[0, 0, 0, 0]),
-                ),
-                (
-                    uci::AppConfigTlvType::CccLastIndexUsed,
-                    Bytes::from_static(&[0, 0, 0, 0]),
-                ),
-            ]),
+            uci::SessionType::Ccc => tlvs.extend(DEFAULT_CCC_TLVS),
+            uci::SessionType::Aliro => tlvs.extend(DEFAULT_CCC_TLVS.into_iter().chain([(
+                uci::AppConfigTlvType::AliroMacMode,
+                Bytes::from_static(&[0]),
+            )])),
             uci::SessionType::DeviceTestMode => {
                 return Self {
                     session_type,
@@ -378,11 +383,14 @@ impl AppConfig {
             | uci::AppConfigTlvType::BlockStrideLength
             | uci::AppConfigTlvType::ResultReportConfig
             | uci::AppConfigTlvType::InBandTerminationAttemptCount
+            | uci::AppConfigTlvType::AliroMacMode
             | uci::AppConfigTlvType::MinFramesPerRr
             | uci::AppConfigTlvType::InterFrameInterval
             | uci::AppConfigTlvType::ApplicationDataEndpoint => try_parse_u8(id, value),
             uci::AppConfigTlvType::HoppingMode => match self.session_type {
-                uci::SessionType::Ccc => try_parse_enum::<uci::CccHoppingMode>(id, value),
+                uci::SessionType::Ccc | uci::SessionType::Aliro => {
+                    try_parse_enum::<uci::CccHoppingMode>(id, value)
+                }
                 _ => try_parse_enum::<uci::HoppingMode>(id, value),
             },
             uci::AppConfigTlvType::DeviceMacAddress => match self.mac_address_mode() {
@@ -647,8 +655,8 @@ impl AppConfig {
     /// - DEVICE_TYPE (see Note1)
     /// - SCHEDULE_MODE
     ///
-    /// For CCC sessions (`SessionType::Ccc`), only `DEVICE_ROLE` and `MULTI_NODE_MODE`
-    /// are required.
+    /// For CCC and Aliro sessions (`SessionType::Ccc | SessionType::Aliro`), only
+    /// `DEVICE_ROLE` and `MULTI_NODE_MODE` are required.
     pub fn has_mandatory_parameters(&self) -> bool {
         match self.session_type {
             uci::SessionType::FiraRangingSession
@@ -663,7 +671,7 @@ impl AppConfig {
                     && self.device_mac_address().is_some()
                     && self.schedule_mode().is_some()
             }
-            uci::SessionType::Ccc => {
+            uci::SessionType::Ccc | uci::SessionType::Aliro => {
                 self.device_role().is_some() && self.multi_node_mode().is_some()
             }
             uci::SessionType::DeviceTestMode => true,
