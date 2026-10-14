@@ -603,7 +603,7 @@ impl Pica {
                     .unwrap();
             }
 
-            if is_status_ntf_enabled {
+            if is_status_ntf_enabled || is_complete {
                 device
                     .tx
                     .send(

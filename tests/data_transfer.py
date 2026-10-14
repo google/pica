@@ -94,17 +94,19 @@ async def controller(
         uci.AppConfigTlv(
             cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS, v=peer.mac_address
         ),
-        uci.AppConfigTlv(
-            cfg_id=uci.AppConfigTlvType.SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG,
-            v=bytes([uci.SessionDataTransferStatusNtfConfig.ENABLE]),
-        ),
     ]
     if data_repetition_count > 0:
-        tlvs.append(
-            uci.AppConfigTlv(
-                cfg_id=uci.AppConfigTlvType.DATA_REPETITION_COUNT,
-                v=bytes([data_repetition_count]),
-            )
+        tlvs.extend(
+            [
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG,
+                    v=bytes([uci.SessionDataTransferStatusNtfConfig.ENABLE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DATA_REPETITION_COUNT,
+                    v=bytes([data_repetition_count]),
+                ),
+            ]
         )
 
     host.send_control(

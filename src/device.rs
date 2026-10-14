@@ -980,11 +980,11 @@ impl Device {
                         0,
                     )
                 } else {
-                    let uci_sequence_number =
-                        u16::from_le_bytes([data.payload[12], data.payload[13]]);
                     if let Some(session) = self.session_mut(session_token) {
                         return session.data_message_snd(data);
                     }
+                    let uci_sequence_number =
+                        u16::from_le_bytes([data.payload[12], data.payload[13]]);
                     (
                         DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
                         uci_sequence_number,
