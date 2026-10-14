@@ -681,7 +681,7 @@ packet DataMessageSnd : DataPacket (dpf = DATA_SND, mt = DATA) {
 
 packet DataMessageRcv : DataPacket (dpf = DATA_RCV, mt = DATA) {
     session_handle: 32,
-    status: Status,
+    status: DataRcvStatusCode,
     source_address: 64,
     data_sequence_number: 16,
     _size_(application_data): 16,
@@ -1124,13 +1124,13 @@ test SessionDataCreditNtf {
 
 packet SessionDataTransferStatusNtf : SessionControlPacket (mt = NOTIFICATION, oid = DATA_TRANSFER_STATUS) {
     session_token: 32, // Session ID or Session Handle (based on UWBS version)
-    uci_sequence_number: 8,
+    uci_sequence_number: 16,
     status: DataTransferNtfStatusCode,
     tx_count: 8,
 }
 
 test SessionDataTransferStatusNtf {
-    "\x62\x05\x00\x07\x00\x00\x00\x01\x01\x00\x00",
+    "\x62\x05\x00\x08\x00\x00\x00\x01\x01\x00\x00\x00",
 }
 
 packet SessionQueryMaxDataSizeInRangingCmd : SessionConfigPacket (mt = COMMAND, oid = QUERY_DATA_SIZE_IN_RANGING) {

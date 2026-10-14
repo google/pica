@@ -52,6 +52,7 @@ const DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT: u8 = 1;
 const DEFAULT_MAX_NUMBER_OF_MEASUREMENTS: u16 = 0;
 const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferStatusNtfConfig =
     uci::SessionDataTransferStatusNtfConfig::Disable;
+const DEFAULT_DATA_REPETITION_COUNT: u8 = 0;
 const DEFAULT_AOA_BOUND_CONFIG: [u8; 8] = [0x00, 0xa6, 0x00, 0x5a, 0x00, 0xd3, 0x00, 0x2d];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +69,6 @@ impl AoaBounds {
             && (self.min_elevation..=self.max_elevation).contains(&elevation)
     }
 }
-
 const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
     (
         uci::AppConfigTlvType::RangingDuration,
@@ -206,7 +206,7 @@ impl AppConfig {
                 ),
                 (
                     uci::AppConfigTlvType::DataRepetitionCount,
-                    Bytes::from_static(&[0]),
+                    Bytes::from_static(&[DEFAULT_DATA_REPETITION_COUNT]),
                 ),
                 (
                     uci::AppConfigTlvType::RangingTimeStruct,
@@ -637,6 +637,11 @@ impl AppConfig {
     pub fn in_band_termination_attempt_count(&self) -> u8 {
         self.get_u8(uci::AppConfigTlvType::InBandTerminationAttemptCount)
             .unwrap_or(DEFAULT_IN_BAND_TERMINATION_ATTEMPT_COUNT)
+    }
+
+    pub fn data_repetition_count(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::DataRepetitionCount)
+            .unwrap_or(DEFAULT_DATA_REPETITION_COUNT)
     }
 
     pub fn session_data_transfer_status_ntf_config(

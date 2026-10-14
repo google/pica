@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pica import Host
 from pica.packets import uci
 
-MAX_DATA_PACKET_PAYLOAD_SIZE = 1024
+MAX_DATA_PACKET_PAYLOAD_SIZE = 1020
 
 
 def encode_short_mac_address(mac_address: str) -> bytes:

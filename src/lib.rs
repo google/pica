@@ -553,7 +553,6 @@ impl Pica {
             return;
         }
 
-        let mut data_transfer = Vec::new();
         let mut measurements = Vec::new();
 
         for mac_address in session.get_dst_mac_address() {
@@ -588,37 +587,90 @@ impl Pica {
             measurements.push(measurement);
         }
 
-        // Look for compatible data transfer sessions in other devices.
-        for peer_device in self.devices.values() {
-            if peer_device.handle == device_handle {
-                continue;
-            }
+        if let Some(data_transfer) = &session.data_transfer {
+            let dst_mac_address = data_transfer.dst_mac_address;
+            let peer_tx = if session.can_start_data_transfer() {
+                self.devices
+                    .values()
+                    .find(|peer_device| {
+                        peer_device.handle != device_handle
+                            && peer_device.can_receive_data_transfer(session_id, dst_mac_address)
+                    })
+                    .map(|peer_device| peer_device.tx.clone())
+            } else {
+                None
+            };
+            let device = self.get_device_mut(device_handle).unwrap();
+            let session = device.session_mut(session_id).unwrap();
+            let data_transfer = session.data_transfer.as_mut().unwrap();
+            data_transfer.tx_count = data_transfer.tx_count.saturating_add(1);
+            let tx_count = data_transfer.tx_count;
+            let sequence_number = data_transfer.sequence_number;
+            let payload = data_transfer.payload.clone();
+            let repetition_count = session.app_config.data_repetition_count();
+            let is_status_ntf_enabled = session.is_session_data_transfer_status_ntf_enabled();
 
-            if device.can_start_data_transfer(session_id)
-                && peer_device.can_receive_data_transfer(session_id)
-            {
-                data_transfer.push(peer_device);
-            }
-        }
+            let (status, is_complete) = if let Some(peer_tx) = peer_tx {
+                peer_tx
+                    .send(
+                        DataMessageRcv {
+                            application_data: payload.into(),
+                            data_sequence_number: sequence_number,
+                            pbf: PacketBoundaryFlag::Complete,
+                            session_handle: session_id,
+                            source_address: session.app_config.device_mac_address().unwrap().into(),
+                            status: uci::DataRcvStatusCode::UciStatusSuccess,
+                        }
+                        .encode_to_vec()
+                        .unwrap(),
+                    )
+                    .unwrap();
 
-        // TODO: Data transfer should be limited in size for
-        // each round of ranging
-        for peer_device in data_transfer.iter() {
-            peer_device
-                .tx
-                .send(
-                    DataMessageRcv {
-                        application_data: session.data().clone().into(),
-                        data_sequence_number: 0x01,
-                        pbf: PacketBoundaryFlag::Complete,
-                        session_handle: session_id,
-                        source_address: session.app_config.device_mac_address().unwrap().into(),
-                        status: uci::Status::Ok,
-                    }
-                    .encode_to_vec()
-                    .unwrap(),
+                if tx_count <= repetition_count {
+                    (
+                        DataTransferNtfStatusCode::UciDataTransferStatusRepetitionOk,
+                        false,
+                    )
+                } else {
+                    (DataTransferNtfStatusCode::UciDataTransferStatusOk, true)
+                }
+            } else {
+                (
+                    DataTransferNtfStatusCode::UciDataTransferStatusErrorDataTransfer,
+                    true,
                 )
-                .unwrap();
+            };
+
+            if is_complete {
+                session.clear_data();
+                device
+                    .tx
+                    .send(
+                        SessionDataCreditNtf {
+                            credit_availability: CreditAvailability::CreditAvailable,
+                            session_token: session_id,
+                        }
+                        .encode_to_vec()
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+
+            if is_status_ntf_enabled || is_complete {
+                device
+                    .tx
+                    .send(
+                        SessionDataTransferStatusNtf {
+                            session_token: session_id,
+                            uci_sequence_number: sequence_number,
+                            status,
+                            tx_count,
+                        }
+                        .encode_to_vec()
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
         }
         let Some(device) = self.get_device_mut(device_handle) else {
             return;
@@ -627,6 +679,10 @@ impl Pica {
         let Some(session) = device.session_mut(session_id) else {
             return;
         };
+
+        if session.session_type() == SessionType::FiraDataTransferSession {
+            return;
+        }
 
         let (send_ntf, measurements) = match session.app_config.session_info_ntf_config() {
             uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
@@ -706,10 +762,6 @@ impl Pica {
                 session.sequence_number += 1;
             }
         }
-
-        // TODO: Clean the data only when all the data is transfered
-        session.clear_data();
-
         session.ranging_count += 1;
         let max_measurements = u32::from(session.app_config.max_number_of_measurements());
         let max_reached = max_measurements > 0 && session.ranging_count >= max_measurements;
