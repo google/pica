@@ -67,7 +67,7 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::CccSupportedVersions, &[1, 0]),
     (CapTlvType::CccSupportedUwbConfigs, &[0]),
     (CapTlvType::CccSupportedPulseShapeCombos, &[0]),
-    (CapTlvType::CccSupportedRanMultiplier, &[0, 0, 0, 0]),
+    (CapTlvType::CccSupportedRanMultiplier, &[1, 0, 0, 0]),
     (CapTlvType::CccSupportedChapsPerSlot, &[0xff]),
     (CapTlvType::CccSupportedSyncCodes, &[0xff, 0xff, 0xff, 0xff]),
     (CapTlvType::CccSupportedChannels, &[0xff]),
@@ -75,6 +75,8 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
         CapTlvType::CccSupportedHoppingConfigModesAndSequences,
         &[0xff],
     ),
+    (CapTlvType::AliroSupportedMacModes, &[0x03]),
+    (CapTlvType::AliroSupportedProtocolVersion, &[1, 0]),
 ];
 
 /// [UCI] 8.2 Device Configuration Parameters
@@ -471,9 +473,7 @@ impl Device {
             };
         };
 
-        if session.session_type != SessionType::FiraRangingSession
-            && session.session_type != SessionType::FiraRangingAndInBandDataSession
-        {
+        if !session.is_supported_session_type() {
             return SessionSetAppConfigRsp {
                 status: uci::Status::Rejected,
                 cfg_status: vec![],
@@ -524,24 +524,7 @@ impl Device {
                 }
             }
 
-            // [UCI] 7.5.1 Configuration of a Session
-            // This section defines the mandatory APP Configuration Parameters to be applied
-            // by the Host for FiRa defined UWB Session types. The Host shall apply these
-            // mandatory configurations to move the Session State from SESSION_STATE_INIT
-            // to SESSION_STATE_IDLE.
-            //
-            // - DEVICE_ROLE
-            // - MULTI_NODE_MODE
-            // - RANGING_ROUND_USAGE
-            // - DEVICE_MAC_ADDRESS
-            // - DEVICE_TYPE (see Note1)
-            // - SCHEDULE_MODE
-            if app_config.device_role().is_none()
-                || app_config.multi_node_mode().is_none()
-                || app_config.ranging_round_usage().is_none()
-                || app_config.device_mac_address().is_none()
-                || app_config.schedule_mode().is_none()
-            {
+            if !app_config.has_mandatory_parameters() {
                 tracing::error!(
                     "[{}:0x{session_handle:x}] missing mandatory APP config parameters",
                     self.handle

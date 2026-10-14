@@ -317,7 +317,17 @@ async def multicast_empty_stop(host: Host, peer: Host):
         )
     )
 
-    await host.expect_control(uci.SessionConfigPacket)
+    await host.expect_control(
+        uci.SessionUpdateControllerMulticastListRsp(
+            status=uci.Status.OK,
+            controlee_status=[
+                uci.ControleeStatus(
+                    mac_address=list(peer.mac_address),
+                    status=uci.MulticastUpdateStatus.OK_MULTICAST_LIST_UPDATE,
+                )
+            ],
+        )
+    )
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -431,9 +441,12 @@ async def multicast_list_ntf(host: Host, peer: Host):
             ).serialize(),
         )
     )
-    rsp = await host.expect_control(uci.SessionConfigPacket)
-    assert rsp.oid == uci.SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST
-    assert rsp.payload[0] == uci.Status.FAILED
+    await host.expect_control(
+        uci.SessionUpdateControllerMulticastListRsp(
+            status=uci.Status.FAILED,
+            controlee_status=[],
+        )
+    )
 
     await host.expect_control(
         uci.SessionUpdateControllerMulticastListNtf(
@@ -897,6 +910,8 @@ async def run(address: str, uci_port: int):
         assert rsp2.timeStamp >= rsp1.timeStamp
 
         await verify_command_error_fallbacks(host0)
+        await ccc_ranging_session(host0)
+        await aliro_ranging_session(host0)
     finally:
         host0.disconnect()
         host1.disconnect()
@@ -906,7 +921,7 @@ async def run(address: str, uci_port: int):
 
 async def verify_command_error_fallbacks(host: Host):
     host.send_control(
-        uci.SessionInitCmd(session_id=1, session_type=uci.SessionType.CCC)
+        uci.SessionInitCmd(session_id=1, session_type=uci.SessionType.DEVICE_TEST_MODE)
     )
     await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
     await host.expect_control(
@@ -939,6 +954,210 @@ async def verify_command_error_fallbacks(host: Host):
     assert rsp.mt == uci.MessageType.RESPONSE
     assert rsp.oid == uci.SessionConfigOpcodeId.UPDATE_DT_TAG_RANGING_ROUNDS
     assert rsp.payload == bytes([uci.Status.UNKNOWN_OID])
+
+
+async def ccc_ranging_session(host: Host):
+    await ccc_or_aliro_ranging_session(host, uci.SessionType.CCC)
+
+
+async def aliro_ranging_session(host: Host):
+    await ccc_or_aliro_ranging_session(host, uci.SessionType.ALIRO)
+
+
+async def ccc_or_aliro_ranging_session(
+    host: Host, session_type: uci.SessionType = uci.SessionType.CCC
+):
+    host.send_control(uci.SessionInitCmd(session_id=2, session_type=session_type))
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+
+    app_configs = [
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+            v=bytes([uci.DeviceType.CCC_CONTROLLER]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+            v=bytes([uci.DeviceRole.INITIATOR]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+            v=bytes([uci.MultiNodeMode.ONE_TO_MANY]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.CHANNEL_NUMBER,
+            v=bytes([uci.ChannelNumber.CHANNEL_NUMBER_9]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+            v=bytes([1]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.SLOT_DURATION,
+            v=int(2400).to_bytes(2, "little"),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+            v=int(96).to_bytes(4, "little"),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.PREAMBLE_CODE_INDEX,
+            v=bytes([9]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.SLOTS_PER_RR,
+            v=bytes([6]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.HOPPING_MODE,
+            v=bytes([uci.CccHoppingMode.EXTENSION_CONTINUOUS_AES]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA3,
+            v=bytes([1, 0]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA4,
+            v=int(0).to_bytes(2, "little"),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA5,
+            v=bytes([0]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=0xA6,
+            v=int(720).to_bytes(2, "little"),
+        ),
+    ]
+    if session_type == uci.SessionType.ALIRO:
+        app_configs.extend(
+            [
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SESSION_KEY,
+                    v=bytes([1] * 16),
+                ),
+            ]
+        )
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=2,
+            tlvs=app_configs,
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[]))
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    tlvs = {tlv.cfg_id: bytes(tlv.v) for tlv in rsp.tlvs}
+    assert tlvs[0xA0] == bytes([0, 0, 0, 0])
+    assert tlvs[0xA8] == bytes([0, 0, 0, 0])
+    assert 0xA1 not in tlvs
+    if session_type == uci.SessionType.ALIRO:
+        assert tlvs[0xA9] == bytes([0])
+        assert tlvs.get(uci.AppConfigTlvType.SESSION_KEY) == bytes([1] * 16)
+
+    second_app_configs = [
+        uci.AppConfigTlv(
+            cfg_id=0xA0,
+            v=bytes(16),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.STS_INDEX,
+            v=int(10).to_bytes(4, "little"),
+        ),
+    ]
+    if session_type == uci.SessionType.ALIRO:
+        second_app_configs.append(
+            uci.AppConfigTlv(
+                cfg_id=0xA9,
+                v=bytes([(1 << 6) | 1]),
+            )
+        )
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=2,
+            tlvs=second_app_configs,
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[]))
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    tlvs = {tlv.cfg_id: bytes(tlv.v) for tlv in rsp.tlvs}
+    assert tlvs[0xA0] == bytes(16)
+    assert tlvs[0xA8] == bytes([0, 0, 0, 0])
+    assert tlvs[uci.AppConfigTlvType.STS_INDEX] == int(10).to_bytes(4, "little")
+    assert 0xA1 not in tlvs
+    if session_type == uci.SessionType.ALIRO:
+        assert tlvs.get(0xA9) == bytes([(1 << 6) | 1])
+        assert tlvs.get(uci.AppConfigTlvType.SESSION_KEY) == bytes([1] * 16)
+
+    host.send_control(uci.SessionStartCmd(session_id=2))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[]))
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    tlvs = {tlv.cfg_id: bytes(tlv.v) for tlv in rsp.tlvs}
+    assert tlvs[0xA0] == bytes(16)
+    assert tlvs[0xA8] == bytes([0, 0, 0, 0])
+    assert 0xA1 not in tlvs
+    if session_type == uci.SessionType.ALIRO:
+        assert tlvs.get(0xA9) == bytes([(1 << 6) | 1])
+        assert tlvs.get(uci.AppConfigTlvType.SESSION_KEY) == bytes([1] * 16)
+
+    host.send_control(uci.SessionStopCmd(session_id=2))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    host.send_control(uci.SessionDeinitCmd(session_token=2))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
 
 
 def main():

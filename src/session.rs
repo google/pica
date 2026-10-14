@@ -60,7 +60,7 @@ impl Session {
             session_type,
             sequence_number: 0,
             ranging_count: 0,
-            app_config: AppConfig::default(),
+            app_config: AppConfig::new(session_type),
             ranging_task: None,
             in_range_peers: HashSet::new(),
             tx,
@@ -112,6 +112,16 @@ impl Session {
 
     pub fn session_type(&self) -> SessionType {
         self.session_type
+    }
+
+    pub fn is_supported_session_type(&self) -> bool {
+        matches!(
+            self.session_type,
+            SessionType::FiraRangingSession
+                | SessionType::FiraRangingAndInBandDataSession
+                | SessionType::Ccc
+                | SessionType::Aliro
+        )
     }
 
     pub fn session_state(&self) -> SessionState {
