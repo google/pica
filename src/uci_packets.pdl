@@ -218,6 +218,7 @@ enum AppConfigTlvType : 8 {
     BPRF_PHR_DATA_RATE = 0x31,
     MAX_NUMBER_OF_MEASUREMENTS = 0x32,
     STS_LENGTH = 0x35,
+    SUSPEND_RANGING_ROUNDS = 0x36,
     MIN_FRAMES_PER_RR = 0x3A,
     MTU_SIZE = 0x3B,
     INTER_FRAME_INTERVAL = 0x3C,
@@ -448,6 +449,11 @@ enum StsLength : 8 {
     LENGTH_32_SYMBOLS = 0x00, // Default
     LENGTH_64_SYMBOLS = 0x01,
     LENGTH_128_SYMBOLS = 0x02,
+}
+
+enum SuspendRangingRounds : 8 {
+    DISABLE = 0x00,
+    ENABLE = 0x01,
 }
 
 enum DlTdoaRangingMethod : 8 {

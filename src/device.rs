@@ -566,7 +566,7 @@ impl Device {
             };
         };
 
-        let (status, valid_parameters) = if cmd.app_cfg.is_empty() {
+        let (status, tlvs) = if cmd.app_cfg.is_empty() {
             (uci::Status::Ok, session.app_config.to_tlvs())
         } else {
             let mut valid_parameters = vec![];
@@ -587,14 +587,11 @@ impl Device {
             if invalid_parameters.is_empty() {
                 (uci::Status::Ok, valid_parameters)
             } else {
-                (uci::Status::Failed, Vec::new())
+                (uci::Status::InvalidParam, invalid_parameters)
             }
         };
 
-        SessionGetAppConfigRsp {
-            status,
-            tlvs: valid_parameters,
-        }
+        SessionGetAppConfigRsp { status, tlvs }
     }
 
     fn session_get_state(&self, cmd: SessionGetStateCmd) -> SessionGetStateRsp {
@@ -893,7 +890,7 @@ impl Device {
 
         if session.state != SessionState::SessionStateActive {
             return SessionStopRsp {
-                status: uci::Status::ErrorSessionActive,
+                status: uci::Status::Rejected,
             };
         }
 

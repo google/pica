@@ -356,6 +356,7 @@ class AppConfigTlvType(enum.IntEnum):
     BPRF_PHR_DATA_RATE = 0x31
     MAX_NUMBER_OF_MEASUREMENTS = 0x32
     STS_LENGTH = 0x35
+    SUSPEND_RANGING_ROUNDS = 0x36
     MIN_FRAMES_PER_RR = 0x3a
     MTU_SIZE = 0x3b
     INTER_FRAME_INTERVAL = 0x3c
@@ -798,6 +799,18 @@ class StsLength(enum.IntEnum):
     def from_int(v: int) -> Union[int, 'StsLength']:
         try:
             return StsLength(v)
+        except ValueError as exn:
+            raise exn
+
+
+class SuspendRangingRounds(enum.IntEnum):
+    DISABLE = 0x0
+    ENABLE = 0x1
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'SuspendRangingRounds']:
+        try:
+            return SuspendRangingRounds(v)
         except ValueError as exn:
             raise exn
 

@@ -17,6 +17,7 @@
 import asyncio
 import argparse
 import logging
+import pytest
 
 from pica import Host
 from pica.packets import uci
@@ -45,6 +46,24 @@ async def controller(
             session_token=0,
             session_state=uci.SessionState.SESSION_STATE_INIT,
             reason_code=0,
+        )
+    )
+
+    host.send_control(
+        uci.SessionGetAppConfigCmd(
+            session_token=0,
+            app_cfg=[uci.AppConfigTlvType.DEVICE_ROLE],
+        )
+    )
+    await host.expect_control(
+        uci.SessionGetAppConfigRsp(
+            status=uci.Status.INVALID_PARAM,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                    v=[],
+                )
+            ],
         )
     )
 
@@ -128,7 +147,7 @@ async def controller(
 
     rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
     assert rsp.status == uci.Status.OK
-    assert len(rsp.tlvs) == 58
+    assert len(rsp.tlvs) == 61
     assert (
         uci.AppConfigTlv(
             cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
@@ -182,8 +201,57 @@ async def controller(
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SUSPEND_RANGING_ROUNDS,
+                    v=[uci.SuspendRangingRounds.ENABLE],
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SECURE_RANGING_NEFA_LEVEL,
+                    v=[0x01],
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SECURE_RANGING_CSW_LENGTH,
+                    v=[0x04],
+                ),
+            ],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    with pytest.raises(TimeoutError):
+        await host.expect_control(ntf_type, timeout=0.8)
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SUSPEND_RANGING_ROUNDS,
+                    v=[uci.SuspendRangingRounds.DISABLE],
+                ),
+            ],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
     event = await host.expect_control(ntf_type, timeout=2.0)
     event.show()
+    assert event.sequence_number == 2
+    assert len(event.two_way_ranging_measurements) == 1
+    assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+    assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+
+    event = await host.expect_control(ntf_type, timeout=2.0)
+    event.show()
+    assert event.sequence_number == 3
     assert len(event.two_way_ranging_measurements) == 1
     assert event.two_way_ranging_measurements[0].status == uci.Status.RANGING_RX_TIMEOUT
     assert event.two_way_ranging_measurements[0].mac_address == expected_mac
@@ -203,6 +271,9 @@ async def controller(
     await host.expect_control(
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
+
+    host.send_control(uci.SessionStopCmd(session_id=0))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.REJECTED))
 
     host.send_control(uci.SessionDeinitCmd(session_token=0))
 
@@ -586,6 +657,16 @@ async def controlee(
         assert len(event.two_way_ranging_measurements) == 1
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+
+    with pytest.raises(TimeoutError):
+        await host.expect_control(ntf_type, timeout=0.8)
+
+    event = await host.expect_control(ntf_type, timeout=2.0)
+    event.show()
+    assert event.sequence_number == 2
+    assert len(event.two_way_ranging_measurements) == 1
+    assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+    assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
     await asyncio.sleep(0.1)
 
