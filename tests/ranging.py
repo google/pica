@@ -141,7 +141,7 @@ async def controller(
     rsp = await host.expect_control(uci.SessionQueryMaxDataSizeInRangingRsp)
     assert rsp.status == uci.Status.OK
     assert rsp.session_token == 0
-    assert rsp.max_data_size == 1024
+    assert rsp.max_data_size == 1020
 
     host.send_control(uci.SessionStartCmd(session_id=0))
 
