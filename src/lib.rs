@@ -597,23 +597,30 @@ impl Pica {
         let mut measurements = Vec::new();
 
         for mac_address in session.get_dst_mac_address() {
-            let peer_handle = self
-                .anchors
-                .get(&mac_address)
-                .map(|anchor| anchor.handle)
-                .or_else(|| {
-                    self.devices
-                        .values()
-                        .find(|peer_device| {
-                            peer_device.handle != device_handle
-                                && peer_device.can_start_ranging(session, session_id)
-                                && peer_device
-                                    .session(session_id)
-                                    .and_then(|s| s.app_config.device_mac_address())
-                                    == Some(mac_address)
-                        })
-                        .map(|peer_device| peer_device.handle)
-                });
+            let peer_handle = if let Some(anchor) = self.anchors.get(&mac_address) {
+                Some(anchor.handle)
+            } else if let Some(peer_device) = self.devices.values().find(|peer_device| {
+                peer_device.handle != device_handle
+                    && peer_device.can_start_ranging(session, session_id)
+                    && peer_device
+                        .session(session_id)
+                        .and_then(|s| s.app_config.device_mac_address())
+                        == Some(mac_address)
+            }) {
+                if peer_device.session(session_id).is_some_and(|peer_session| {
+                    peer_session.app_config.suspend_ranging_rounds()
+                        == uci::SuspendRangingRounds::Enable
+                }) {
+                    if session.app_config.device_type() == Some(uci::DeviceType::Controlee) {
+                        return;
+                    }
+                    None
+                } else {
+                    Some(peer_device.handle)
+                }
+            } else {
+                None
+            };
             let measurement = peer_handle
                 .and_then(|peer_handle| {
                     let local = self

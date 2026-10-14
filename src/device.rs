@@ -207,8 +207,6 @@ impl Device {
         match self.session(session_id) {
             Some(session) => {
                 session.session_state() == SessionState::SessionStateActive
-                    && session.app_config.suspend_ranging_rounds()
-                        == uci::SuspendRangingRounds::Disable
                     && session
                         .app_config
                         .is_compatible_for_ranging(&peer_session.app_config)

@@ -201,12 +201,6 @@ async def controller(
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
-    event = await host.expect_control(ntf_type, timeout=2.0)
-    event.show()
-    assert len(event.two_way_ranging_measurements) == 1
-    assert event.two_way_ranging_measurements[0].status == uci.Status.RANGING_RX_TIMEOUT
-    assert event.two_way_ranging_measurements[0].mac_address == expected_mac
-
     host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=0,
@@ -248,8 +242,19 @@ async def controller(
         uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
     )
 
-    event = await host.expect_control(ntf_type)
+    event = await host.expect_control(ntf_type, timeout=2.0)
+    event.show()
+    assert event.sequence_number == 2
+    assert len(event.two_way_ranging_measurements) == 1
+    assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+    assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+
+    event = await host.expect_control(ntf_type, timeout=2.0)
+    event.show()
     assert event.sequence_number == 3
+    assert len(event.two_way_ranging_measurements) == 1
+    assert event.two_way_ranging_measurements[0].status == uci.Status.RANGING_RX_TIMEOUT
+    assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
@@ -652,6 +657,16 @@ async def controlee(
         assert len(event.two_way_ranging_measurements) == 1
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+
+    with pytest.raises(TimeoutError):
+        await host.expect_control(ntf_type, timeout=0.8)
+
+    event = await host.expect_control(ntf_type, timeout=2.0)
+    event.show()
+    assert event.sequence_number == 2
+    assert len(event.two_way_ranging_measurements) == 1
+    assert event.two_way_ranging_measurements[0].status == uci.Status.OK
+    assert event.two_way_ranging_measurements[0].mac_address == expected_mac
 
     await asyncio.sleep(0.1)
 
