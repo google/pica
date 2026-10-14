@@ -14,12 +14,13 @@
 
 #![allow(clippy::unused_io_amount)]
 
+use parking_lot::Mutex;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
 pub struct File {
-    file: std::sync::Mutex<std::fs::File>,
+    file: Mutex<std::fs::File>,
     start_time: Instant,
 }
 
@@ -51,7 +52,7 @@ impl File {
         file.write(&u32::to_le_bytes(20))?; // Block Total Length
 
         Ok(File {
-            file: std::sync::Mutex::new(file),
+            file: Mutex::new(file),
             start_time: Instant::now(),
         })
     }
@@ -60,7 +61,7 @@ impl File {
         let packet_data_padding = 4 - (packet.len() % 4);
         let block_total_length = (packet.len() + packet_data_padding + 32) as u32;
         let timestamp = self.start_time.elapsed().as_micros();
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.file.lock();
 
         // Wrap the packet inside an Enhanced Packet Block.
         file.write(&u32::to_le_bytes(0x0000_0006))?; // Block Type

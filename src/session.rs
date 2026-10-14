@@ -111,16 +111,17 @@ impl Session {
         let session_id = self.id;
         tokio::spawn(async move {
             time::sleep(Duration::from_millis(1)).await;
-            tx.send(
+            if let Err(e) = tx.send(
                 SessionStatusNtf {
                     session_token: session_id,
                     session_state,
                     reason_code: reason_code.into(),
                 }
                 .encode_to_vec()
-                .unwrap(),
-            )
-            .unwrap()
+                .expect("failed to encode SessionStatusNtf"),
+            ) {
+                tracing::debug!("Channel closed: {e}");
+            }
         });
     }
 
@@ -199,16 +200,23 @@ impl Session {
         self.clear_data();
     }
 
-    pub fn data_message_snd(&mut self, data: DataPacket) -> ControlPacket {
+    pub fn data_message_snd(
+        &mut self,
+        data: DataPacket,
+    ) -> Result<ControlPacket, pdl_runtime::EncodeError> {
         tracing::debug!("[{}] data_message_snd", self.device_handle);
         let session_token = self.id;
-        let uci_sequence_number = if self.pending_data.len() >= 14 {
-            u16::from_le_bytes([self.pending_data[12], self.pending_data[13]])
-        } else if data.payload.len() >= 14 {
-            u16::from_le_bytes([data.payload[12], data.payload[13]])
-        } else {
-            0
-        };
+        let uci_sequence_number = self
+            .pending_data
+            .get(12..)
+            .and_then(|bytes| bytes.first_chunk::<2>())
+            .or_else(|| {
+                data.payload
+                    .get(12..)
+                    .and_then(|bytes| bytes.first_chunk::<2>())
+            })
+            .copied()
+            .map_or(0, u16::from_le_bytes);
 
         let status_ntf = |status| {
             SessionDataTransferStatusNtf {
@@ -218,7 +226,6 @@ impl Session {
                 uci_sequence_number,
             }
             .try_into()
-            .unwrap()
         };
 
         if !self.supports_data_transfer() {
@@ -283,7 +290,6 @@ impl Session {
             session_token,
         }
         .try_into()
-        .unwrap()
     }
 }
 

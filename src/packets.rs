@@ -18,6 +18,7 @@
 pub mod uci {
     #![allow(clippy::all)]
     #![allow(clippy::pedantic)]
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used)]
     #![allow(non_upper_case_globals)]
     #![allow(non_camel_case_types)]
     #![allow(non_snake_case)]
@@ -63,27 +64,33 @@ pub mod uci {
         let mut packet = vec![0; HEADER_SIZE];
 
         // Read the common packet header.
-        socket.read_exact(&mut packet[0..HEADER_SIZE]).await.ok()?;
+        socket
+            .read_exact(packet.get_mut(..HEADER_SIZE)?)
+            .await
+            .ok()?;
 
         let common_packet_header =
-            CommonPacketHeader::decode_full(&packet[0..COMMON_HEADER_SIZE]).ok()?;
+            CommonPacketHeader::decode_full(packet.get(..COMMON_HEADER_SIZE)?).ok()?;
 
         let payload_length = match common_packet_header.mt {
             MessageType::Data => {
                 let data_packet_header =
-                    DataPacketHeader::decode_full(&packet[0..HEADER_SIZE]).ok()?;
+                    DataPacketHeader::decode_full(packet.get(..HEADER_SIZE)?).ok()?;
                 data_packet_header.payload_length as usize
             }
             _ => {
                 let control_packet_header =
-                    ControlPacketHeader::decode_full(&packet[0..HEADER_SIZE]).ok()?;
+                    ControlPacketHeader::decode_full(packet.get(..HEADER_SIZE)?).ok()?;
                 control_packet_header.payload_length as usize
             }
         };
 
         // Read the packet payload.
         packet.resize(payload_length + HEADER_SIZE, 0);
-        socket.read_exact(&mut packet[HEADER_SIZE..]).await.ok()?;
+        socket
+            .read_exact(packet.get_mut(HEADER_SIZE..)?)
+            .await
+            .ok()?;
 
         Some((packet, socket))
     }
