@@ -12,10 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![cfg_attr(
+    test,
+    allow(
+        clippy::indexing_slicing,
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        clippy::unwrap_used,
+    )
+)]
+
 use clap::Parser;
 use futures::TryFutureExt;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode as HttpStatusCode, body};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::error::Category as SerdeErrorCategory;
 use std::collections::HashMap;
@@ -23,7 +34,6 @@ use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::Mutex;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -42,6 +52,8 @@ enum Error {
     EventRecv(#[from] tokio::sync::broadcast::error::RecvError),
     #[error("pica command stream closed")]
     CommandStreamClosed,
+    #[error("UCI port and web port must be different")]
+    PortConflict,
     #[error(transparent)]
     Pica(#[from] pica::PicaError),
 }
@@ -148,7 +160,7 @@ impl Context {
                     mac_address,
                     handle,
                 }) => {
-                    let mut devices = self.devices.lock().unwrap();
+                    let mut devices = self.devices.lock();
                     devices.insert(
                         handle,
                         DeviceInformation {
@@ -157,26 +169,22 @@ impl Context {
                             position: Default::default(),
                         },
                     );
-                    self.events
-                        .send(Event::DeviceAdded {
-                            category: Category::Uci,
-                            mac_address,
-                            position: Default::default(),
-                        })
-                        .unwrap();
+                    let _ = self.events.send(Event::DeviceAdded {
+                        category: Category::Uci,
+                        mac_address,
+                        position: Default::default(),
+                    });
                 }
                 Ok(PicaEvent::Disconnected {
                     mac_address,
                     handle,
                 }) => {
-                    let mut devices = self.devices.lock().unwrap();
+                    let mut devices = self.devices.lock();
                     devices.remove(&handle);
-                    self.events
-                        .send(Event::DeviceRemoved {
-                            category: Category::Uci,
-                            mac_address,
-                        })
-                        .unwrap();
+                    let _ = self.events.send(Event::DeviceRemoved {
+                        category: Category::Uci,
+                        mac_address,
+                    });
                 }
                 Err(err) => return Err(Error::EventRecv(err)),
             }
@@ -186,23 +194,20 @@ impl Context {
     fn http_events(&self) -> Response<Body> {
         let stream = BroadcastStream::new(self.events.subscribe()).map(|result| {
             result.map(|event| {
-                format!(
-                    "event: {}\ndata: {}\n\n",
-                    event.name(),
-                    serde_json::to_string(&event).unwrap()
-                )
+                let data = serde_json::to_string(&event).expect("failed to serialize JSON");
+                format!("event: {}\ndata: {data}\n\n", event.name())
             })
         });
         Response::builder()
             .header("content-type", "text/event-stream")
             .body(Body::wrap_stream(stream))
-            .unwrap()
+            .expect("failed to build HTTP response")
     }
 
     fn http_set_position(&self, mac_address: MacAddress, position: Position) -> Response<Body> {
         tracing::info!("set-position({mac_address}, {position})");
 
-        let mut devices = self.devices.lock().unwrap();
+        let mut devices = self.devices.lock();
         let mut found_device = None;
         for device in devices.values_mut() {
             if device.mac_address == mac_address {
@@ -215,17 +220,15 @@ impl Context {
         let Some(device) = found_device else {
             return Response::builder()
                 .status(HttpStatusCode::NOT_FOUND)
-                .body("".into())
-                .unwrap();
+                .body(Body::empty())
+                .expect("failed to build HTTP response");
         };
 
-        self.events
-            .send(Event::DeviceUpdated {
-                category: device.category,
-                mac_address,
-                position,
-            })
-            .unwrap();
+        let _ = self.events.send(Event::DeviceUpdated {
+            category: device.category,
+            mac_address,
+            position,
+        });
 
         for other in devices.values() {
             if other.mac_address != device.mac_address {
@@ -236,39 +239,32 @@ impl Context {
                     .position
                     .compute_range_azimuth_elevation(&device.position);
 
-                assert!(local.0 == remote.0);
+                let _ = self.events.send(Event::NeighborUpdated {
+                    source_category: device.category,
+                    source_mac_address: device.mac_address,
+                    destination_category: other.category,
+                    destination_mac_address: other.mac_address,
+                    distance: local.0,
+                    azimuth: local.1,
+                    elevation: local.2,
+                });
 
-                self.events
-                    .send(Event::NeighborUpdated {
-                        source_category: device.category,
-                        source_mac_address: device.mac_address,
-                        destination_category: other.category,
-                        destination_mac_address: other.mac_address,
-                        distance: local.0,
-                        azimuth: local.1,
-                        elevation: local.2,
-                    })
-                    .unwrap();
-
-                let _ = self
-                    .events
-                    .send(Event::NeighborUpdated {
-                        source_category: other.category,
-                        source_mac_address: other.mac_address,
-                        destination_category: device.category,
-                        destination_mac_address: device.mac_address,
-                        distance: remote.0,
-                        azimuth: remote.1,
-                        elevation: remote.2,
-                    })
-                    .unwrap();
+                let _ = self.events.send(Event::NeighborUpdated {
+                    source_category: other.category,
+                    source_mac_address: other.mac_address,
+                    destination_category: device.category,
+                    destination_mac_address: device.mac_address,
+                    distance: remote.0,
+                    azimuth: remote.1,
+                    elevation: remote.2,
+                });
             }
         }
 
         Response::builder()
             .status(HttpStatusCode::OK)
-            .body("".into())
-            .unwrap()
+            .body(Body::empty())
+            .expect("failed to build HTTP response")
     }
 
     async fn http_create_anchor(
@@ -280,14 +276,20 @@ impl Context {
         tracing::info!("create-anchor({mac_address}, {position})");
 
         let (rsp_tx, rsp_rx) = oneshot::channel::<Result<pica::Handle, PicaCommandError>>();
-        cmd_tx
+        if let Err(e) = cmd_tx
             .send(PicaCommand::CreateAnchor(mac_address, rsp_tx))
             .await
-            .unwrap();
+        {
+            tracing::debug!("Channel closed: {e}");
+            return Response::builder()
+                .status(HttpStatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .expect("failed to build HTTP response");
+        }
 
         let status = match rsp_rx.await {
             Ok(Ok(handle)) => {
-                let mut devices = self.devices.lock().unwrap();
+                let mut devices = self.devices.lock();
                 devices.insert(
                     handle,
                     DeviceInformation {
@@ -296,13 +298,11 @@ impl Context {
                         category: Category::Anchor,
                     },
                 );
-                self.events
-                    .send(Event::DeviceAdded {
-                        category: Category::Anchor,
-                        mac_address,
-                        position,
-                    })
-                    .unwrap();
+                let _ = self.events.send(Event::DeviceAdded {
+                    category: Category::Anchor,
+                    mac_address,
+                    position,
+                });
                 HttpStatusCode::OK
             }
             Ok(Err(PicaCommandError::DeviceAlreadyExists(_))) => HttpStatusCode::CONFLICT,
@@ -310,7 +310,10 @@ impl Context {
             Err(_) => HttpStatusCode::INTERNAL_SERVER_ERROR,
         };
 
-        Response::builder().status(status).body("".into()).unwrap()
+        Response::builder()
+            .status(status)
+            .body(Body::empty())
+            .expect("failed to build HTTP response")
     }
 
     async fn http_destroy_anchor(
@@ -321,21 +324,25 @@ impl Context {
         tracing::info!("destroy-anchor({mac_address})");
 
         let (rsp_tx, rsp_rx) = oneshot::channel::<Result<pica::Handle, PicaCommandError>>();
-        cmd_tx
+        if let Err(e) = cmd_tx
             .send(PicaCommand::DestroyAnchor(mac_address, rsp_tx))
             .await
-            .unwrap();
+        {
+            tracing::debug!("Channel closed: {e}");
+            return Response::builder()
+                .status(HttpStatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .expect("failed to build HTTP response");
+        }
 
         let status = match rsp_rx.await {
             Ok(Ok(handle)) => {
-                let mut devices = self.devices.lock().unwrap();
+                let mut devices = self.devices.lock();
                 devices.remove(&handle);
-                self.events
-                    .send(Event::DeviceRemoved {
-                        category: Category::Anchor,
-                        mac_address,
-                    })
-                    .unwrap();
+                let _ = self.events.send(Event::DeviceRemoved {
+                    category: Category::Anchor,
+                    mac_address,
+                });
                 HttpStatusCode::OK
             }
             Ok(Err(PicaCommandError::DeviceAlreadyExists(_))) => HttpStatusCode::CONFLICT,
@@ -343,7 +350,10 @@ impl Context {
             Err(_) => HttpStatusCode::INTERNAL_SERVER_ERROR,
         };
 
-        Response::builder().status(status).body("".into()).unwrap()
+        Response::builder()
+            .status(status)
+            .body(Body::empty())
+            .expect("failed to build HTTP response")
     }
 
     fn http_get_state(&self) -> Response<Body> {
@@ -354,15 +364,15 @@ impl Context {
             devices: Vec<DeviceInformation>,
         }
 
-        let devices = self.devices.lock().unwrap();
+        let devices = self.devices.lock();
         let response = GetStateResponse {
             devices: devices.values().cloned().collect::<Vec<_>>(),
         };
-        let body = serde_json::to_string(&response).unwrap();
+        let body = serde_json::to_string(&response).expect("failed to serialize JSON");
         Response::builder()
             .status(HttpStatusCode::OK)
             .body(body.into())
-            .unwrap()
+            .expect("failed to build HTTP response")
     }
 }
 
@@ -372,7 +382,7 @@ impl pica::RangingEstimator for Context {
         left: &pica::Handle,
         right: &pica::Handle,
     ) -> Option<pica::RangingMeasurement> {
-        let devices = self.devices.lock().ok()?;
+        let devices = self.devices.lock();
         let left_pos = devices.get(left)?.position;
         let right_pos = devices.get(right)?.position;
         let (range, azimuth, elevation) = left_pos.compute_range_azimuth_elevation(&right_pos);
@@ -405,9 +415,12 @@ macro_rules! position {
                 if !$mandatory && err.classify() == SerdeErrorCategory::Eof {
                     Position::default()
                 } else {
-                    let reason = format!("Error while deserializing position: {}", err);
+                    let reason = format!("Error while deserializing position: {err}");
                     tracing::error!("{reason}");
-                    return Ok(Response::builder().status(406).body(reason.into()).unwrap());
+                    return Ok(Response::builder()
+                        .status(HttpStatusCode::NOT_ACCEPTABLE)
+                        .body(reason.into())
+                        .expect("failed to build HTTP response"));
                 }
             }
         }
@@ -419,9 +432,12 @@ macro_rules! mac_address {
         match MacAddress::new($mac_address.to_string()) {
             Ok(mac_address) => mac_address,
             Err(err) => {
-                let reason = format!("Error mac_address: {}", err);
+                let reason = format!("Error mac_address: {err}");
                 tracing::error!("{reason}");
-                return Ok(Response::builder().status(406).body(reason.into()).unwrap());
+                return Ok(Response::builder()
+                    .status(HttpStatusCode::NOT_ACCEPTABLE)
+                    .body(reason.into())
+                    .expect("failed to build HTTP response"));
             }
         }
     };
@@ -451,17 +467,22 @@ async fn http_request(
         return Ok(Response::builder()
             .header("content-type", *mime)
             .body((*content).into())
-            .unwrap());
+            .expect("failed to build HTTP response"));
     }
 
-    let body = body::to_bytes(req.body_mut()).await.unwrap();
-    let response = match req
+    let Ok(body) = body::to_bytes(req.body_mut()).await else {
+        return Ok(Response::builder()
+            .status(HttpStatusCode::BAD_REQUEST)
+            .body(Body::empty())
+            .expect("failed to build HTTP response"));
+    };
+    let path_segments = req
         .uri_mut()
         .path()
         .trim_start_matches('/')
         .split('/')
-        .collect::<Vec<_>>()[..]
-    {
+        .collect::<Vec<_>>();
+    let response = match path_segments.as_slice() {
         ["events"] => context.http_events(),
         ["init-uci-device", mac_address] => {
             context.http_set_position(mac_address!(mac_address), position!(body))
@@ -483,8 +504,8 @@ async fn http_request(
 
         _ => Response::builder()
             .status(HttpStatusCode::NOT_FOUND)
-            .body("".into())
-            .unwrap(),
+            .body(Body::empty())
+            .expect("failed to build HTTP response"),
     };
 
     Ok(response)
@@ -561,10 +582,9 @@ async fn main() -> Result<(), Error> {
         .init();
 
     let args = Args::parse();
-    assert_ne!(
-        args.uci_port, args.web_port,
-        "UCI port and WEB port must be different."
-    );
+    if args.uci_port == args.web_port {
+        return Err(Error::PortConflict);
+    }
 
     let context = Context::new();
 

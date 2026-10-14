@@ -40,6 +40,22 @@ required-features = ["web"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("serde"))'] }
+unsafe_code = "forbid"
+
+[lints.clippy]
+cast_lossless = "warn"
+indexing_slicing = "deny"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+match_same_arms = "warn"
+needless_for_each = "warn"
+panic = "deny"
+panic_in_result_fn = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unreadable_literal = "warn"
+unwrap_used = "deny"
 
 [features]
 default = ["cli", "web"]
@@ -68,6 +84,7 @@ clap = { version = "4.1.8", default-features = false, features = ["derive", "err
 glam = { version = "0.25.0", optional = true }
 hex = "0.4.3"
 hyper = { version = "0.14", features = ["server", "stream", "http1", "tcp"], optional = true }
+parking_lot = "0.12"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"], optional = true }
 pdl-runtime = "0.5.2"
