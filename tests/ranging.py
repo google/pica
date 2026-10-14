@@ -317,7 +317,17 @@ async def multicast_empty_stop(host: Host, peer: Host):
         )
     )
 
-    await host.expect_control(uci.SessionConfigPacket)
+    await host.expect_control(
+        uci.SessionUpdateControllerMulticastListRsp(
+            status=uci.Status.OK,
+            controlee_status=[
+                uci.ControleeStatus(
+                    mac_address=list(peer.mac_address),
+                    status=uci.MulticastUpdateStatus.OK_MULTICAST_LIST_UPDATE,
+                )
+            ],
+        )
+    )
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -431,9 +441,12 @@ async def multicast_list_ntf(host: Host, peer: Host):
             ).serialize(),
         )
     )
-    rsp = await host.expect_control(uci.SessionConfigPacket)
-    assert rsp.oid == uci.SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST
-    assert rsp.payload[0] == uci.Status.FAILED
+    await host.expect_control(
+        uci.SessionUpdateControllerMulticastListRsp(
+            status=uci.Status.FAILED,
+            controlee_status=[],
+        )
+    )
 
     await host.expect_control(
         uci.SessionUpdateControllerMulticastListNtf(
