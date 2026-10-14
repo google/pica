@@ -961,45 +961,50 @@ impl Device {
 
     pub fn data_message_snd(&mut self, data: DataPacket) -> ControlPacket {
         tracing::debug!("[{}] data_message_send", self.handle);
-        if data.dpf == DataPacketFormat::DataSnd {
-            if let Some(session) = self.sessions.values_mut().find(|s| s.has_pending_data()) {
-                return session.data_message_snd(data);
-            }
-        }
+        let session_token = data
+            .payload
+            .get(0..4)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_le_bytes)
+            .unwrap_or(0);
 
-        if data.dpf != DataPacketFormat::DataSnd
-            || data.payload.len() < DATA_MESSAGE_SND_HEADER_SIZE
-        {
-            let session_token = data
-                .payload
-                .get(0..4)
-                .and_then(|bytes| bytes.try_into().ok())
-                .map(u32::from_le_bytes)
-                .unwrap_or(0);
-            return SessionDataTransferStatusNtf {
-                session_token,
-                status: DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
-                tx_count: 1,
-                uci_sequence_number: 0,
-            }
-            .try_into()
-            .unwrap();
-        }
+        let (status, uci_sequence_number) = match data.dpf {
+            DataPacketFormat::DataSnd => {
+                if let Some(session) = self.sessions.values_mut().find(|s| s.has_pending_data()) {
+                    return session.data_message_snd(data);
+                }
 
-        let session_token = u32::from_le_bytes(data.payload[0..4].try_into().unwrap());
-        let uci_sequence_number = u16::from_le_bytes(data.payload[12..14].try_into().unwrap());
-        if let Some(session) = self.session_mut(session_token) {
-            session.data_message_snd(data)
-        } else {
-            SessionDataTransferStatusNtf {
-                session_token,
-                status: DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
-                tx_count: 1,
-                uci_sequence_number,
+                if data.payload.len() < DATA_MESSAGE_SND_HEADER_SIZE {
+                    (
+                        DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
+                        0,
+                    )
+                } else {
+                    let uci_sequence_number =
+                        u16::from_le_bytes([data.payload[12], data.payload[13]]);
+                    if let Some(session) = self.session_mut(session_token) {
+                        return session.data_message_snd(data);
+                    }
+                    (
+                        DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
+                        uci_sequence_number,
+                    )
+                }
             }
-            .try_into()
-            .unwrap()
+            DataPacketFormat::DataRcv => (
+                DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
+                0,
+            ),
+        };
+
+        SessionDataTransferStatusNtf {
+            session_token,
+            status,
+            tx_count: 1,
+            uci_sequence_number,
         }
+        .try_into()
+        .unwrap()
     }
 
     fn receive_command(&mut self, cmd: ControlPacket) -> ControlPacket {
