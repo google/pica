@@ -1,6 +1,6 @@
 [package]
 name = "pica"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 rust-version = "1.88"
 description = "Pica is a virtual UWB Controller implementing the FiRa UCI specification."
