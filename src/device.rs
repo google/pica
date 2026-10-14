@@ -63,11 +63,19 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedAoa, &[0xff]),
     (CapTlvType::SupportedAoaResultReqAntennaInterleaving, &[0x1]),
     (CapTlvType::SupportedExtendedMacAddress, &[0x1]),
+    (
+        CapTlvType::SupportedMaxMessageSize,
+        &(MAX_DATA_MESSAGE_SIZE as u16).to_le_bytes(),
+    ),
+    (
+        CapTlvType::SupportedMaxDataPacketPayloadSize,
+        &(MAX_DATA_PACKET_PAYLOAD_SIZE as u16).to_le_bytes(),
+    ),
     // CCC params
     (CapTlvType::CccSupportedVersions, &[1, 0]),
     (CapTlvType::CccSupportedUwbConfigs, &[0]),
     (CapTlvType::CccSupportedPulseShapeCombos, &[0]),
-    (CapTlvType::CccSupportedRanMultiplier, &[0, 0, 0, 0]),
+    (CapTlvType::CccSupportedRanMultiplier, &[1, 0, 0, 0]),
     (CapTlvType::CccSupportedChapsPerSlot, &[0xff]),
     (CapTlvType::CccSupportedSyncCodes, &[0xff, 0xff, 0xff, 0xff]),
     (CapTlvType::CccSupportedChannels, &[0xff]),
@@ -75,6 +83,8 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
         CapTlvType::CccSupportedHoppingConfigModesAndSequences,
         &[0xff],
     ),
+    (CapTlvType::AliroSupportedMacModes, &[0x03]),
+    (CapTlvType::AliroSupportedProtocolVersion, &[1, 0]),
 ];
 
 /// [UCI] 8.2 Device Configuration Parameters
@@ -177,7 +187,7 @@ impl Device {
         self.set_state(DeviceState::DeviceStateReady);
     }
 
-    fn on_session_deactivated(&mut self) {
+    pub(crate) fn on_session_deactivated(&mut self) {
         debug_assert!(self.n_active_sessions > 0);
         self.n_active_sessions = self.n_active_sessions.saturating_sub(1);
         if self.n_active_sessions == 0 {
@@ -207,26 +217,9 @@ impl Device {
         }
     }
 
-    pub fn can_start_data_transfer(&self, session_id: u32) -> bool {
-        match self.session(session_id) {
-            Some(session) => {
-                session.session_state() == SessionState::SessionStateActive
-                    && session.session_type() == SessionType::FiraRangingAndInBandDataSession
-                    && session.app_config.can_start_data_transfer()
-            }
-            None => false,
-        }
-    }
-
-    pub fn can_receive_data_transfer(&self, session_id: u32) -> bool {
-        match self.session(session_id) {
-            Some(session) => {
-                session.session_state() == SessionState::SessionStateActive
-                    && session.session_type() == SessionType::FiraRangingAndInBandDataSession
-                    && session.app_config.can_receive_data_transfer()
-            }
-            None => false,
-        }
+    pub fn can_receive_data_transfer(&self, session_id: u32, dst_mac_address: MacAddress) -> bool {
+        self.session(session_id)
+            .is_some_and(|session| session.can_receive_data_transfer(dst_mac_address))
     }
 
     // Send a response or notification to the Host.
@@ -473,9 +466,7 @@ impl Device {
             };
         };
 
-        if session.session_type != SessionType::FiraRangingSession
-            && session.session_type != SessionType::FiraRangingAndInBandDataSession
-        {
+        if !session.is_supported_session_type() {
             return SessionSetAppConfigRsp {
                 status: uci::Status::Rejected,
                 cfg_status: vec![],
@@ -526,24 +517,7 @@ impl Device {
                 }
             }
 
-            // [UCI] 7.5.1 Configuration of a Session
-            // This section defines the mandatory APP Configuration Parameters to be applied
-            // by the Host for FiRa defined UWB Session types. The Host shall apply these
-            // mandatory configurations to move the Session State from SESSION_STATE_INIT
-            // to SESSION_STATE_IDLE.
-            //
-            // - DEVICE_ROLE
-            // - MULTI_NODE_MODE
-            // - RANGING_ROUND_USAGE
-            // - DEVICE_MAC_ADDRESS
-            // - DEVICE_TYPE (see Note1)
-            // - SCHEDULE_MODE
-            if app_config.device_role().is_none()
-                || app_config.multi_node_mode().is_none()
-                || app_config.ranging_round_usage().is_none()
-                || app_config.device_mac_address().is_none()
-                || app_config.schedule_mode().is_none()
-            {
+            if !app_config.has_mandatory_parameters() {
                 tracing::error!(
                     "[{}:0x{session_handle:x}] missing mandatory APP config parameters",
                     self.handle
@@ -947,7 +921,7 @@ impl Device {
 
         SessionGetRangingCountRsp {
             status: uci::Status::Ok,
-            count: session.sequence_number,
+            count: session.ranging_count,
         }
     }
 
@@ -986,43 +960,50 @@ impl Device {
 
     pub fn data_message_snd(&mut self, data: DataPacket) -> ControlPacket {
         tracing::debug!("[{}] data_message_send", self.handle);
-        match data.specialize() {
-            Ok(DataPacketChild::DataMessageSnd(data_msg_snd)) => {
-                let session_token = data_msg_snd.session_handle;
-                if let Some(session) = self.session_mut(session_token) {
-                    session.data_message_snd(data_msg_snd)
+        let session_token = data
+            .payload
+            .get(0..4)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_le_bytes)
+            .unwrap_or(0);
+
+        let (status, uci_sequence_number) = match data.dpf {
+            DataPacketFormat::DataSnd => {
+                if let Some(session) = self.sessions.values_mut().find(|s| s.has_pending_data()) {
+                    return session.data_message_snd(data);
+                }
+
+                if data.payload.len() < DATA_MESSAGE_SND_HEADER_SIZE {
+                    (
+                        DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
+                        0,
+                    )
                 } else {
-                    SessionDataTransferStatusNtf {
-                        session_token,
-                        status: DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
-                        tx_count: 1, // TODO: support for retries?
-                        uci_sequence_number: 0,
+                    if let Some(session) = self.session_mut(session_token) {
+                        return session.data_message_snd(data);
                     }
-                    .try_into()
-                    .unwrap()
+                    let uci_sequence_number =
+                        u16::from_le_bytes([data.payload[12], data.payload[13]]);
+                    (
+                        DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected,
+                        uci_sequence_number,
+                    )
                 }
             }
-            Ok(DataPacketChild::DataMessageRcv(data_msg_rcv)) => {
-                // This function should not be passed anything besides DataMessageSnd
-                let session_token = data_msg_rcv.session_handle;
-                SessionDataTransferStatusNtf {
-                    session_token,
-                    status: DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
-                    tx_count: 1, // TODO: support for retries?
-                    uci_sequence_number: 0,
-                }
-                .try_into()
-                .unwrap()
-            }
-            Ok(DataPacketChild::None) | Err(_) => SessionDataTransferStatusNtf {
-                session_token: 0,
-                status: DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
-                tx_count: 1,
-                uci_sequence_number: 0,
-            }
-            .try_into()
-            .unwrap(),
+            DataPacketFormat::DataRcv => (
+                DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat,
+                0,
+            ),
+        };
+
+        SessionDataTransferStatusNtf {
+            session_token,
+            status,
+            tx_count: 1,
+            uci_sequence_number,
         }
+        .try_into()
+        .unwrap()
     }
 
     fn receive_command(&mut self, cmd: ControlPacket) -> ControlPacket {

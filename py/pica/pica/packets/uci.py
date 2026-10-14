@@ -389,6 +389,8 @@ class AppConfigTlvType(enum.IntEnum):
 class DeviceType(enum.IntEnum):
     CONTROLEE = 0x0
     CONTROLLER = 0x1
+    CCC_CONTROLLER = 0xA0
+    CCC_CONTROLEE = 0xA1
 
     @staticmethod
     def from_int(v: int) -> Union[int, 'DeviceType']:
@@ -708,6 +710,25 @@ class HoppingMode(enum.IntEnum):
             raise exn
 
 
+class CccHoppingMode(enum.IntEnum):
+    DISABLE = 0x00
+    ADAPTIVE_DEFAULT = 0x02
+    CONTINUOUS_DEFAULT = 0x03
+    ADAPTIVE_AES = 0x04
+    CONTINUOUS_AES = 0x05
+    EXTENSION_CONTINUOUS_AES = 0xA0
+    EXTENSION_CONTINUOUS_DEFAULT = 0xA1
+    EXTENSION_ADAPTIVE_AES = 0xA2
+    EXTENSION_ADAPTIVE_DEFAULT = 0xA3
+
+    @staticmethod
+    def from_int(v: int) -> Union[int, 'CccHoppingMode']:
+        try:
+            return CccHoppingMode(v)
+        except ValueError as exn:
+            raise exn
+
+
 @dataclass
 class ResultReportConfig(Packet):
     tof: int = field(kw_only=True, default=0)
@@ -994,6 +1015,7 @@ class SessionType(enum.IntEnum):
     FIRA_IN_BAND_DATA_PHASE = 0x4
     FIRA_RANGING_WITH_DATA_PHASE = 0x5
     CCC = 0xa0
+    ALIRO = 0xa2
     DEVICE_TEST_MODE = 0xd0
 
     @staticmethod
@@ -1288,7 +1310,7 @@ class DataMessageSnd(DataPacket):
 @dataclass
 class DataMessageRcv(DataPacket):
     session_handle: int = field(kw_only=True, default=0)
-    status: Status = field(kw_only=True, default=Status.OK)
+    status: DataRcvStatusCode = field(kw_only=True, default=DataRcvStatusCode.UCI_STATUS_SUCCESS)
     source_address: int = field(kw_only=True, default=0)
     data_sequence_number: int = field(kw_only=True, default=0)
     application_data: bytearray = field(kw_only=True, default_factory=bytearray)
@@ -1305,7 +1327,7 @@ class DataMessageRcv(DataPacket):
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_handle'] = value_
-        fields['status'] = Status.from_int(span[4])
+        fields['status'] = DataRcvStatusCode.from_int(span[4])
         value_ = int.from_bytes(span[5:13], byteorder='little')
         fields['source_address'] = value_
         value_ = int.from_bytes(span[13:15], byteorder='little')
@@ -3391,34 +3413,6 @@ class SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload(Packet):
         return sum([elt.size for elt in self.controlees]) + 1
 
 @dataclass
-class SessionUpdateControllerMulticastListRsp(SessionConfigPacket):
-    status: Status = field(kw_only=True, default=Status.OK)
-
-    def __post_init__(self):
-        self.mt = MessageType.RESPONSE
-        self.oid = SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST
-        self.gid = GroupId.SESSION_CONFIG
-
-    @staticmethod
-    def parse(fields: dict, span: bytes) -> Tuple['SessionUpdateControllerMulticastListRsp', bytes]:
-        if fields['mt'] != MessageType.RESPONSE or fields['oid'] != SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST or fields['gid'] != GroupId.SESSION_CONFIG:
-            raise Exception("Invalid constraint field values")
-        if len(span) < 1:
-            raise Exception('Invalid packet size')
-        fields['status'] = Status.from_int(span[0])
-        span = span[1:]
-        return SessionUpdateControllerMulticastListRsp(**fields), span
-
-    def serialize(self, payload: bytes = None) -> bytes:
-        _span = bytearray()
-        _span.append((self.status << 0))
-        return SessionConfigPacket.serialize(self, payload = bytes(_span))
-
-    @property
-    def size(self) -> int:
-        return 1
-
-@dataclass
 class ControleeStatus(Packet):
     mac_address: bytearray = field(kw_only=True, default_factory=bytearray)
     status: MulticastUpdateStatus = field(kw_only=True, default=MulticastUpdateStatus.OK_MULTICAST_LIST_UPDATE)
@@ -3448,6 +3442,49 @@ class ControleeStatus(Packet):
     @property
     def size(self) -> int:
         return 3
+
+@dataclass
+class SessionUpdateControllerMulticastListRsp(SessionConfigPacket):
+    status: Status = field(kw_only=True, default=Status.OK)
+    controlee_status: List[ControleeStatus] = field(kw_only=True, default_factory=list)
+
+    def __post_init__(self):
+        self.mt = MessageType.RESPONSE
+        self.oid = SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST
+        self.gid = GroupId.SESSION_CONFIG
+
+    @staticmethod
+    def parse(fields: dict, span: bytes) -> Tuple['SessionUpdateControllerMulticastListRsp', bytes]:
+        if fields['mt'] != MessageType.RESPONSE or fields['oid'] != SessionConfigOpcodeId.UPDATE_CONTROLLER_MULTICAST_LIST or fields['gid'] != GroupId.SESSION_CONFIG:
+            raise Exception("Invalid constraint field values")
+        if len(span) < 2:
+            raise Exception('Invalid packet size')
+        fields['status'] = Status.from_int(span[0])
+        controlee_status_count = span[1]
+        span = span[2:]
+        if len(span) < controlee_status_count * 3:
+            raise Exception('Invalid packet size')
+        controlee_status = []
+        for n in range(controlee_status_count):
+            controlee_status.append(ControleeStatus.parse_all(span[n * 3:(n + 1) * 3]))
+        fields['controlee_status'] = controlee_status
+        span = span[controlee_status_count * 3:]
+        return SessionUpdateControllerMulticastListRsp(**fields), span
+
+    def serialize(self, payload: bytes = None) -> bytes:
+        _span = bytearray()
+        _span.append((self.status << 0))
+        if len(self.controlee_status) > 255:
+            print(f"Invalid length for field SessionUpdateControllerMulticastListRsp::controlee_status:  {len(self.controlee_status)} > 255; the array will be truncated")
+            del self.controlee_status[255:]
+        _span.append((len(self.controlee_status) << 0))
+        for _elt in self.controlee_status:
+            _span.extend(_elt.serialize())
+        return SessionConfigPacket.serialize(self, payload = bytes(_span))
+
+    @property
+    def size(self) -> int:
+        return sum([elt.size for elt in self.controlee_status]) + 2
 
 @dataclass
 class SessionUpdateControllerMulticastListNtf(SessionConfigPacket):
@@ -3547,14 +3584,15 @@ class SessionDataTransferStatusNtf(SessionControlPacket):
     def parse(fields: dict, span: bytes) -> Tuple['SessionDataTransferStatusNtf', bytes]:
         if fields['mt'] != MessageType.NOTIFICATION or fields['oid'] != SessionControlOpcodeId.DATA_TRANSFER_STATUS or fields['gid'] != GroupId.SESSION_CONTROL:
             raise Exception("Invalid constraint field values")
-        if len(span) < 7:
+        if len(span) < 8:
             raise Exception('Invalid packet size')
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
-        fields['uci_sequence_number'] = span[4]
-        fields['status'] = DataTransferNtfStatusCode.from_int(span[5])
-        fields['tx_count'] = span[6]
-        span = span[7:]
+        value_ = int.from_bytes(span[4:6], byteorder='little')
+        fields['uci_sequence_number'] = value_
+        fields['status'] = DataTransferNtfStatusCode.from_int(span[6])
+        fields['tx_count'] = span[7]
+        span = span[8:]
         return SessionDataTransferStatusNtf(**fields), span
 
     def serialize(self, payload: bytes = None) -> bytes:
@@ -3563,10 +3601,10 @@ class SessionDataTransferStatusNtf(SessionControlPacket):
             print(f"Invalid value for field SessionDataTransferStatusNtf::session_token: {self.session_token} > 4294967295; the value will be truncated")
             self.session_token &= 4294967295
         _span.extend(int.to_bytes((self.session_token << 0), length=4, byteorder='little'))
-        if self.uci_sequence_number > 255:
-            print(f"Invalid value for field SessionDataTransferStatusNtf::uci_sequence_number: {self.uci_sequence_number} > 255; the value will be truncated")
-            self.uci_sequence_number &= 255
-        _span.append((self.uci_sequence_number << 0))
+        if self.uci_sequence_number > 65535:
+            print(f"Invalid value for field SessionDataTransferStatusNtf::uci_sequence_number: {self.uci_sequence_number} > 65535; the value will be truncated")
+            self.uci_sequence_number &= 65535
+        _span.extend(int.to_bytes((self.uci_sequence_number << 0), length=2, byteorder='little'))
         _span.append((self.status << 0))
         if self.tx_count > 255:
             print(f"Invalid value for field SessionDataTransferStatusNtf::tx_count: {self.tx_count} > 255; the value will be truncated")
@@ -3576,7 +3614,7 @@ class SessionDataTransferStatusNtf(SessionControlPacket):
 
     @property
     def size(self) -> int:
-        return 7
+        return 8
 
 @dataclass
 class SessionQueryMaxDataSizeInRangingCmd(SessionConfigPacket):

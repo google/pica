@@ -250,6 +250,7 @@ enum AppConfigTlvType : 8 {
         CCC_PULSESHAPE_COMBO = 0xA5,
         CCC_URSK_TTL = 0xA6,
         CCC_LAST_INDEX_USED  = 0xA8,
+        ALIRO_MAC_MODE = 0xA9,
     },
 
     // Reserved for extension IDs.
@@ -273,6 +274,8 @@ enum DeviceType : 8 {
     // [MAC] 5.1.1
     // Device controlling the ranging features through Control Messages
     CONTROLLER = 0x01,
+    CCC_CONTROLLER = 0xA0,
+    CCC_CONTROLEE = 0xA1,
 }
 
 enum RangingRoundUsage : 8 {
@@ -417,6 +420,18 @@ enum HoppingMode : 8 {
     ENABLE = 0x01,
 }
 
+enum CccHoppingMode : 8 {
+    DISABLE = 0x00,
+    ADAPTIVE_DEFAULT = 0x02,
+    CONTINUOUS_DEFAULT = 0x03,
+    ADAPTIVE_AES = 0x04,
+    CONTINUOUS_AES = 0x05,
+    EXTENSION_CONTINUOUS_AES = 0xA0,
+    EXTENSION_CONTINUOUS_DEFAULT = 0xA1,
+    EXTENSION_ADAPTIVE_AES = 0xA2,
+    EXTENSION_ADAPTIVE_DEFAULT = 0xA3,
+}
+
 struct ResultReportConfig {
     tof : 1, // Default 1
     aoa_azimuth : 1,
@@ -490,6 +505,8 @@ enum CapTlvType : 8 {
         CCC_SUPPORTED_PULSE_SHAPE_COMBOS = 0xA6,
         CCC_SUPPORTED_RAN_MULTIPLIER = 0xA7,
         CCC_SUPPORTED_MAX_RANGING_SESSION_NUMBER = 0xA8,
+        ALIRO_SUPPORTED_MAC_MODES = 0xAC,
+        ALIRO_SUPPORTED_PROTOCOL_VERSION = 0xAD,
     },
 
     SUPPORTED_POWER_STATS = 0xC0,
@@ -612,6 +629,7 @@ enum SessionType: 8 {
     FIRA_IN_BAND_DATA_PHASE = 0x04,
     FIRA_RANGING_WITH_DATA_PHASE = 0x05,
     CCC = 0xA0,
+    ALIRO = 0xA2,
     DEVICE_TEST_MODE = 0xD0,
 }
 
@@ -669,7 +687,7 @@ packet DataMessageSnd : DataPacket (dpf = DATA_SND, mt = DATA) {
 
 packet DataMessageRcv : DataPacket (dpf = DATA_RCV, mt = DATA) {
     session_handle: 32,
-    status: Status,
+    status: DataRcvStatusCode,
     source_address: 64,
     data_sequence_number: 16,
     _size_(application_data): 16,
@@ -1074,6 +1092,11 @@ struct SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload {
     controlees: Controlee_V2_0_32_Byte_Version[],
 }
 
+struct ControleeStatus {
+    mac_address: 8[2],
+    status: MulticastUpdateStatus,
+}
+
 packet SessionUpdateControllerMulticastListRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
     status: Status,
     _count_(controlee_status): 8,
@@ -1082,11 +1105,6 @@ packet SessionUpdateControllerMulticastListRsp : SessionConfigPacket (mt = RESPO
 
 test SessionUpdateControllerMulticastListRsp {
     "\x41\x07\x00\x02\x00\x00",
-}
-
-struct ControleeStatus {
-    mac_address: 8[2],
-    status: MulticastUpdateStatus,
 }
 
 packet SessionUpdateControllerMulticastListNtf : SessionConfigPacket (mt = NOTIFICATION, oid = UPDATE_CONTROLLER_MULTICAST_LIST) {
@@ -1112,13 +1130,13 @@ test SessionDataCreditNtf {
 
 packet SessionDataTransferStatusNtf : SessionControlPacket (mt = NOTIFICATION, oid = DATA_TRANSFER_STATUS) {
     session_token: 32, // Session ID or Session Handle (based on UWBS version)
-    uci_sequence_number: 8,
+    uci_sequence_number: 16,
     status: DataTransferNtfStatusCode,
     tx_count: 8,
 }
 
 test SessionDataTransferStatusNtf {
-    "\x62\x05\x00\x07\x00\x00\x00\x01\x01\x00\x00",
+    "\x62\x05\x00\x08\x00\x00\x00\x01\x01\x00\x00\x00",
 }
 
 packet SessionQueryMaxDataSizeInRangingCmd : SessionConfigPacket (mt = COMMAND, oid = QUERY_DATA_SIZE_IN_RANGING) {

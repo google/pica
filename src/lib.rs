@@ -164,7 +164,7 @@ struct Anchor {
 }
 
 const fn degrees_to_q9_7(deg: i16) -> i16 {
-    deg << 7
+    deg.saturating_mul(128)
 }
 
 #[derive(Debug)]
@@ -256,6 +256,50 @@ impl TwoWayRangingMeasurement {
                 })
             }
         }
+    }
+
+    fn status(&self) -> uci::Status {
+        match self {
+            Self::Short(m) => m.status,
+            Self::Extended(m) => m.status,
+        }
+    }
+
+    fn mac_address(&self) -> MacAddress {
+        match self {
+            Self::Short(m) => MacAddress::Short(m.mac_address.to_le_bytes()),
+            Self::Extended(m) => MacAddress::Extended(m.mac_address.to_le_bytes()),
+        }
+    }
+
+    fn distance(&self) -> u16 {
+        match self {
+            Self::Short(m) => m.distance,
+            Self::Extended(m) => m.distance,
+        }
+    }
+
+    fn aoa_azimuth(&self) -> i16 {
+        match self {
+            Self::Short(m) => m.aoa_azimuth as i16,
+            Self::Extended(m) => m.aoa_azimuth as i16,
+        }
+    }
+
+    fn aoa_elevation(&self) -> i16 {
+        match self {
+            Self::Short(m) => m.aoa_elevation as i16,
+            Self::Extended(m) => m.aoa_elevation as i16,
+        }
+    }
+
+    fn is_within_bounds(&self, app_config: &AppConfig) -> bool {
+        self.status() == uci::Status::Ok
+            && app_config.is_within_bounds(
+                self.distance(),
+                self.aoa_azimuth(),
+                self.aoa_elevation(),
+            )
     }
 }
 
@@ -497,14 +541,22 @@ impl Pica {
         tracing::debug!("[{device_handle}] Ranging event");
         tracing::debug!("  session_id={session_id}");
 
-        let device = self.get_device(device_handle).unwrap();
-        let session = device.session(session_id).unwrap();
+        let Some(device) = self.get_device(device_handle) else {
+            return;
+        };
+        let Some(session) = device.session(session_id) else {
+            return;
+        };
+        // A Ranging command queued before the ranging task was aborted can
+        // still be delivered after the session left the active state.
+        if session.session_state() != SessionState::SessionStateActive {
+            return;
+        }
 
         if session.app_config.suspend_ranging_rounds() == uci::SuspendRangingRounds::Enable {
             return;
         }
 
-        let mut data_transfer = Vec::new();
         let mut measurements = Vec::new();
 
         for mac_address in session.get_dst_mac_address() {
@@ -539,39 +591,133 @@ impl Pica {
             measurements.push(measurement);
         }
 
-        // Look for compatible data transfer sessions in other devices.
-        for peer_device in self.devices.values() {
-            if peer_device.handle == device_handle {
-                continue;
-            }
+        if let Some(data_transfer) = &session.data_transfer {
+            let dst_mac_address = data_transfer.dst_mac_address;
+            let peer_tx = if session.can_start_data_transfer() {
+                self.devices
+                    .values()
+                    .find(|peer_device| {
+                        peer_device.handle != device_handle
+                            && peer_device.can_receive_data_transfer(session_id, dst_mac_address)
+                    })
+                    .map(|peer_device| peer_device.tx.clone())
+            } else {
+                None
+            };
+            let device = self.get_device_mut(device_handle).unwrap();
+            let session = device.session_mut(session_id).unwrap();
+            let data_transfer = session.data_transfer.as_mut().unwrap();
+            data_transfer.tx_count = data_transfer.tx_count.saturating_add(1);
+            let tx_count = data_transfer.tx_count;
+            let sequence_number = data_transfer.sequence_number;
+            let payload = data_transfer.payload.clone();
+            let repetition_count = session.app_config.data_repetition_count();
+            let is_status_ntf_enabled = session.is_session_data_transfer_status_ntf_enabled();
 
-            if device.can_start_data_transfer(session_id)
-                && peer_device.can_receive_data_transfer(session_id)
-            {
-                data_transfer.push(peer_device);
-            }
-        }
+            let (status, is_complete) = if let Some(peer_tx) = peer_tx {
+                peer_tx
+                    .send(
+                        DataMessageRcv {
+                            application_data: payload.into(),
+                            data_sequence_number: sequence_number,
+                            pbf: PacketBoundaryFlag::Complete,
+                            session_handle: session_id,
+                            source_address: session.app_config.device_mac_address().unwrap().into(),
+                            status: uci::DataRcvStatusCode::UciStatusSuccess,
+                        }
+                        .encode_to_vec()
+                        .unwrap(),
+                    )
+                    .unwrap();
 
-        // TODO: Data transfer should be limited in size for
-        // each round of ranging
-        for peer_device in data_transfer.iter() {
-            peer_device
-                .tx
-                .send(
-                    DataMessageRcv {
-                        application_data: session.data().clone().into(),
-                        data_sequence_number: 0x01,
-                        pbf: PacketBoundaryFlag::Complete,
-                        session_handle: session_id,
-                        source_address: session.app_config.device_mac_address().unwrap().into(),
-                        status: uci::Status::Ok,
-                    }
-                    .encode_to_vec()
-                    .unwrap(),
+                if tx_count <= repetition_count {
+                    (
+                        DataTransferNtfStatusCode::UciDataTransferStatusRepetitionOk,
+                        false,
+                    )
+                } else {
+                    (DataTransferNtfStatusCode::UciDataTransferStatusOk, true)
+                }
+            } else {
+                (
+                    DataTransferNtfStatusCode::UciDataTransferStatusErrorDataTransfer,
+                    true,
                 )
-                .unwrap();
+            };
+
+            if is_complete {
+                session.clear_data();
+                device
+                    .tx
+                    .send(
+                        SessionDataCreditNtf {
+                            credit_availability: CreditAvailability::CreditAvailable,
+                            session_token: session_id,
+                        }
+                        .encode_to_vec()
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+
+            if is_status_ntf_enabled || is_complete {
+                device
+                    .tx
+                    .send(
+                        SessionDataTransferStatusNtf {
+                            session_token: session_id,
+                            uci_sequence_number: sequence_number,
+                            status,
+                            tx_count,
+                        }
+                        .encode_to_vec()
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
         }
-        if session.is_session_info_ntf_enabled() {
+        let Some(device) = self.get_device_mut(device_handle) else {
+            return;
+        };
+        let tx = device.tx.clone();
+        let Some(session) = device.session_mut(session_id) else {
+            return;
+        };
+
+        if session.session_type() == SessionType::FiraDataTransferSession {
+            return;
+        }
+
+        let (send_ntf, measurements) = match session.app_config.session_info_ntf_config() {
+            uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
+            uci::SessionInfoNtfConfig::Enable => (true, measurements),
+            uci::SessionInfoNtfConfig::EnableProximityTrigger
+            | uci::SessionInfoNtfConfig::EnableAoaTrigger
+            | uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
+                let filtered: Vec<_> = measurements
+                    .into_iter()
+                    .filter(|m| m.is_within_bounds(&session.app_config))
+                    .collect();
+                (!filtered.is_empty(), filtered)
+            }
+            uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
+            | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger
+            | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
+                let emitted: Vec<_> = measurements
+                    .into_iter()
+                    .filter(|m| {
+                        if m.is_within_bounds(&session.app_config) {
+                            session.in_range_peers.insert(m.mac_address())
+                        } else {
+                            session.in_range_peers.remove(&m.mac_address())
+                        }
+                    })
+                    .collect();
+                (!emitted.is_empty(), emitted)
+            }
+        };
+
+        if send_ntf {
             let ntf_packet = match session.app_config.mac_address_mode() {
                 uci::MacAddressMode::Mode0 => Some(
                     ShortMacTwoWaySessionInfoNtf {
@@ -616,20 +762,20 @@ impl Pica {
             };
 
             if let Some(packet) = ntf_packet {
-                device.tx.send(packet).unwrap();
-
-                let device = self.get_device_mut(device_handle).unwrap();
-                let session = device.session_mut(session_id).unwrap();
-
+                tx.send(packet).unwrap();
                 session.sequence_number += 1;
             }
         }
-
-        // TODO: Clean the data only when all the data is transfered
-        let device = self.get_device_mut(device_handle).unwrap();
-        let session = device.session_mut(session_id).unwrap();
-
-        session.clear_data();
+        session.ranging_count += 1;
+        let max_measurements = u32::from(session.app_config.max_number_of_measurements());
+        let max_reached = max_measurements > 0 && session.ranging_count >= max_measurements;
+        if max_reached {
+            Self::stop_active_session(
+                device,
+                session_id,
+                ReasonCode::MaxNumberOfMeasurementsReached,
+            );
+        }
     }
 
     fn uci_packet(&mut self, device_handle: usize, packet: Vec<u8>) {
@@ -672,11 +818,25 @@ impl Pica {
         }
     }
 
+    fn stop_active_session(device: &mut Device, session_id: u32, reason_code: ReasonCode) {
+        let Some(session) = device.session_mut(session_id) else {
+            return;
+        };
+
+        if session.session_state() == SessionState::SessionStateActive {
+            session.stop_ranging_task();
+            session.set_state(SessionState::SessionStateIdle, reason_code);
+            device.on_session_deactivated();
+        } else {
+            tracing::warn!("stop_active_session: session is not active !");
+        }
+    }
+
     // Handle the in-band StopRanging command sent from controller to the controlee with
     // corresponding mac_address and session_id.
     fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
         for device in self.devices.values_mut() {
-            let Some(session) = device.session_mut(session_id) else {
+            let Some(session) = device.session(session_id) else {
                 continue;
             };
 
@@ -684,19 +844,11 @@ impl Pica {
                 continue;
             }
 
-            if session.session_state() == SessionState::SessionStateActive {
-                session.stop_ranging_task();
-                session.set_state(
-                    SessionState::SessionStateIdle,
-                    ReasonCode::SessionStoppedDueToInbandSignal,
-                );
-                device.n_active_sessions = device.n_active_sessions.saturating_sub(1);
-                if device.n_active_sessions == 0 {
-                    device.set_state(DeviceState::DeviceStateReady);
-                }
-            } else {
-                tracing::warn!("stop_controlee_ranging: session is not active !");
-            }
+            Self::stop_active_session(
+                device,
+                session_id,
+                ReasonCode::SessionStoppedDueToInbandSignal,
+            );
         }
     }
 
