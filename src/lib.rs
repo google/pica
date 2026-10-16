@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -36,7 +37,7 @@ mod pcapng;
 use packets::uci::{self, *};
 
 mod device;
-use device::{Device, MAX_DEVICE, MAX_SESSION};
+use device::{Device, DeviceEffect, MAX_SESSION};
 
 mod session;
 
@@ -44,7 +45,7 @@ mod mac_address;
 pub use mac_address::MacAddress;
 
 mod app_config;
-pub use app_config::{AppConfig, AppConfigError};
+use app_config::AppConfig;
 
 pub type UciPacket = Vec<u8>;
 pub type UciStream = Pin<Box<dyn futures::stream::Stream<Item = Vec<u8>> + Send>>;
@@ -76,12 +77,17 @@ pub trait RangingEstimator: Send + Sync {
     fn estimate(&self, left: &Handle, right: &Handle) -> Option<RangingMeasurement>;
 }
 
+struct DeviceEntry {
+    device: Device,
+    tx: mpsc::UnboundedSender<UciPacket>,
+}
+
 /// Pica emulation environment.
 /// All the devices added to this environment are emulated as if they were
 /// from the same physical space.
 pub struct Pica {
     counter: usize,
-    devices: HashMap<Handle, Device>,
+    devices: HashMap<Handle, DeviceEntry>,
     anchors: HashMap<Handle, MacAddress>,
     command_rx: Option<mpsc::Receiver<PicaCommand>>,
     command_tx: mpsc::Sender<PicaCommand>,
@@ -114,10 +120,6 @@ pub enum PicaCommand {
     Connect(UciStream, UciSink),
     // Disconnect the selected device.
     Disconnect(usize),
-    // Execute ranging command for selected device and session.
-    Ranging(usize, u32),
-    // Send an in-band request to stop ranging to a peer controlee identified by address and session id.
-    StopRanging(MacAddress, u32),
     // UCI packet received for the selected device.
     UciPacket(usize, Vec<u8>),
     // Create Anchor
@@ -131,8 +133,6 @@ impl Display for PicaCommand {
         let cmd = match self {
             PicaCommand::Connect(_, _) => "Connect",
             PicaCommand::Disconnect(_) => "Disconnect",
-            PicaCommand::Ranging(_, _) => "Ranging",
-            PicaCommand::StopRanging(_, _) => "StopRanging",
             PicaCommand::UciPacket(_, _) => "UciPacket",
             PicaCommand::CreateAnchor(_, _) => "CreateAnchor",
             PicaCommand::DestroyAnchor(_, _) => "DestroyAnchor",
@@ -291,7 +291,7 @@ impl TwoWayRangingMeasurement {
 
 impl Pica {
     pub fn new(ranging_estimator: Box<dyn RangingEstimator>, pcapng_dir: Option<PathBuf>) -> Self {
-        let (command_tx, command_rx) = mpsc::channel(MAX_SESSION * MAX_DEVICE);
+        let (command_tx, command_rx) = mpsc::channel(MAX_SESSION * 4);
         let (event_tx, _) = broadcast::channel(16);
         Pica {
             devices: HashMap::new(),
@@ -314,11 +314,71 @@ impl Pica {
     }
 
     fn get_device_mut(&mut self, device_handle: usize) -> Option<&mut Device> {
-        self.devices.get_mut(&device_handle)
+        self.devices
+            .get_mut(&device_handle)
+            .map(|entry| &mut entry.device)
     }
 
     fn get_device(&self, device_handle: usize) -> Option<&Device> {
-        self.devices.get(&device_handle)
+        self.devices.get(&device_handle).map(|entry| &entry.device)
+    }
+
+    fn send_packet(&self, device_handle: Handle, packet: UciPacket) {
+        if let Some(entry) = self.devices.get(&device_handle) {
+            let _ = entry.tx.send(packet);
+        }
+    }
+
+    fn apply_device_effects(
+        &mut self,
+        device_handle: Handle,
+        effects: impl IntoIterator<Item = DeviceEffect>,
+    ) {
+        for effect in effects {
+            match effect {
+                DeviceEffect::SendPacket(packet) => {
+                    self.send_packet(device_handle, packet);
+                }
+                DeviceEffect::StopControleeRanging {
+                    mac_address,
+                    session_id,
+                } => {
+                    for (peer_handle, peer_effect) in
+                        self.stop_controlee_ranging(&mac_address, session_id)
+                    {
+                        if let DeviceEffect::SendPacket(packet) = peer_effect {
+                            self.send_packet(peer_handle, packet);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn next_tick(&self) -> Option<Duration> {
+        self.devices
+            .values()
+            .filter_map(|entry| entry.device.next_ranging_deadline())
+            .min()
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    }
+
+    fn tick(&mut self) {
+        let now = Instant::now();
+        let due_sessions: Vec<_> = self
+            .devices
+            .iter_mut()
+            .flat_map(|(&handle, entry)| {
+                entry
+                    .device
+                    .poll_ranging(now)
+                    .map(move |session_id| (handle, session_id))
+            })
+            .collect();
+
+        for (handle, session_id) in due_sessions {
+            self.ranging(handle, session_id);
+        }
     }
 
     fn anchor_handle(&self, mac_address: MacAddress) -> Option<Handle> {
@@ -474,12 +534,19 @@ impl Pica {
 
         tracing::debug!("[{handle}] Connecting device");
 
-        let mut device = Device::new(handle, packet_tx, self.command_tx.clone());
-        device.init();
+        let mut device = Device::new(handle);
+        let effects = device.init();
 
         self.send_event(PicaEvent::Connected { handle });
 
-        self.devices.insert(handle, device);
+        self.devices.insert(
+            handle,
+            DeviceEntry {
+                device,
+                tx: packet_tx,
+            },
+        );
+        self.apply_device_effects(handle, effects);
 
         // Spawn and detach the connection handling task.
         // The task notifies pica when exiting to let it clean
@@ -528,8 +595,6 @@ impl Pica {
         let Some(session) = device.session(session_id) else {
             return;
         };
-        // A Ranging command queued before the ranging task was aborted can
-        // still be delivered after the session left the active state.
         if session.session_state() != SessionState::SessionStateActive {
             return;
         }
@@ -543,24 +608,29 @@ impl Pica {
         for mac_address in session.get_dst_mac_address() {
             let peer_handle = if let Some(anchor_handle) = self.anchor_handle(mac_address) {
                 Some(anchor_handle)
-            } else if let Some(peer_device) = self.devices.values().find(|peer_device| {
-                peer_device.handle != device_handle
-                    && peer_device.can_start_ranging(session, session_id)
-                    && peer_device
+            } else if let Some(peer_entry) = self.devices.values().find(|peer_entry| {
+                peer_entry.device.handle != device_handle
+                    && peer_entry.device.can_start_ranging(session, session_id)
+                    && peer_entry
+                        .device
                         .session(session_id)
                         .and_then(|s| s.app_config.device_mac_address())
                         == Some(mac_address)
             }) {
-                if peer_device.session(session_id).is_some_and(|peer_session| {
-                    peer_session.app_config.suspend_ranging_rounds()
-                        == uci::SuspendRangingRounds::Enable
-                }) {
+                if peer_entry
+                    .device
+                    .session(session_id)
+                    .is_some_and(|peer_session| {
+                        peer_session.app_config.suspend_ranging_rounds()
+                            == uci::SuspendRangingRounds::Enable
+                    })
+                {
                     if session.app_config.device_type() == Some(uci::DeviceType::Controlee) {
                         return;
                     }
                     None
                 } else {
-                    Some(peer_device.handle)
+                    Some(peer_entry.device.handle)
                 }
             } else {
                 None
@@ -579,28 +649,33 @@ impl Pica {
             measurements.push(measurement);
         }
 
-        let peer_tx = if let Some(data_transfer) = &session.data_transfer
+        let peer_handle = if let Some(data_transfer) = &session.data_transfer
             && session.can_start_data_transfer()
         {
             let dst_mac_address = data_transfer.dst_mac_address;
             self.devices
                 .values()
-                .find(|peer_device| {
-                    peer_device.handle != device_handle
-                        && peer_device.can_receive_data_transfer(session_id, dst_mac_address)
+                .find(|peer_entry| {
+                    peer_entry.device.handle != device_handle
+                        && peer_entry
+                            .device
+                            .can_receive_data_transfer(session_id, dst_mac_address)
                 })
-                .map(|peer_device| peer_device.tx.clone())
+                .map(|peer_entry| peer_entry.device.handle)
         } else {
             None
         };
 
-        let Some(device) = self.get_device_mut(device_handle) else {
+        let Some(entry) = self.devices.get_mut(&device_handle) else {
             return;
         };
-        let tx = device.tx.clone();
+        let device = &mut entry.device;
         let Some(session) = device.session_mut(session_id) else {
             return;
         };
+
+        let mut peer_data_packet: Option<(Handle, UciPacket)> = None;
+        let mut local_packets: Vec<UciPacket> = Vec::new();
 
         if let Some(data_transfer) = session.data_transfer.as_mut() {
             data_transfer.tx_count = data_transfer.tx_count.saturating_add(1);
@@ -610,23 +685,21 @@ impl Pica {
             let repetition_count = session.app_config.data_repetition_count();
             let is_status_ntf_enabled = session.is_session_data_transfer_status_ntf_enabled();
 
-            let (status, is_complete) = if let Some((peer_tx, source_address)) =
-                peer_tx.zip(session.app_config.device_mac_address())
+            let (status, is_complete) = if let Some((peer_handle, source_address)) =
+                peer_handle.zip(session.app_config.device_mac_address())
             {
-                if let Err(e) = peer_tx.send(
-                    DataMessageRcv {
-                        application_data: payload.into(),
-                        data_sequence_number: sequence_number,
-                        pbf: PacketBoundaryFlag::Complete,
-                        session_handle: session_id,
-                        source_address: source_address.into(),
-                        status: uci::DataRcvStatusCode::UciStatusSuccess,
-                    }
-                    .encode_to_vec()
-                    .expect("failed to encode DataMessageRcv"),
-                ) {
-                    tracing::debug!("Channel closed: {e}");
+                let packet = DataMessageRcv {
+                    application_data: payload.into(),
+                    data_sequence_number: sequence_number,
+                    pbf: PacketBoundaryFlag::Complete,
+                    session_handle: session_id,
+                    source_address: source_address.into(),
+                    status: uci::DataRcvStatusCode::UciStatusSuccess,
                 }
+                .encode_to_vec()
+                .expect("failed to encode DataMessageRcv");
+
+                peer_data_packet = Some((peer_handle, packet));
 
                 if tx_count <= repetition_count {
                     (
@@ -645,135 +718,139 @@ impl Pica {
 
             if is_complete {
                 session.clear_data();
-                if let Err(e) = tx.send(
-                    SessionDataCreditNtf {
-                        credit_availability: CreditAvailability::CreditAvailable,
-                        session_token: session_id,
-                    }
-                    .encode_to_vec()
-                    .expect("failed to encode SessionDataCreditNtf"),
-                ) {
-                    tracing::debug!("Channel closed: {e}");
+                let packet = SessionDataCreditNtf {
+                    credit_availability: CreditAvailability::CreditAvailable,
+                    session_token: session_id,
                 }
+                .encode_to_vec()
+                .expect("failed to encode SessionDataCreditNtf");
+
+                local_packets.push(packet);
             }
 
             if is_status_ntf_enabled || is_complete {
-                if let Err(e) = tx.send(
-                    SessionDataTransferStatusNtf {
-                        session_token: session_id,
-                        uci_sequence_number: sequence_number,
-                        status,
-                        tx_count,
-                    }
-                    .encode_to_vec()
-                    .expect("failed to encode SessionDataTransferStatusNtf"),
-                ) {
-                    tracing::debug!("Channel closed: {e}");
+                let packet = SessionDataTransferStatusNtf {
+                    session_token: session_id,
+                    uci_sequence_number: sequence_number,
+                    status,
+                    tx_count,
                 }
+                .encode_to_vec()
+                .expect("failed to encode SessionDataTransferStatusNtf");
+
+                local_packets.push(packet);
             }
         }
 
-        if session.session_type() == SessionType::FiraDataTransferSession {
-            return;
-        }
-
-        let (send_ntf, measurements) = match session.app_config.session_info_ntf_config() {
-            uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
-            uci::SessionInfoNtfConfig::Enable => (true, measurements),
-            uci::SessionInfoNtfConfig::EnableProximityTrigger
-            | uci::SessionInfoNtfConfig::EnableAoaTrigger
-            | uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
-                let filtered: Vec<_> = measurements
-                    .into_iter()
-                    .filter(|m| m.is_within_bounds(&session.app_config))
-                    .collect();
-                (!filtered.is_empty(), filtered)
-            }
-            uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
-            | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger
-            | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
-                let emitted: Vec<_> = measurements
-                    .into_iter()
-                    .filter(|m| {
-                        if m.is_within_bounds(&session.app_config) {
-                            session.in_range_peers.insert(m.mac_address())
-                        } else {
-                            session.in_range_peers.remove(&m.mac_address())
-                        }
-                    })
-                    .collect();
-                (!emitted.is_empty(), emitted)
-            }
-        };
-
-        if send_ntf {
-            let ntf_packet = match session.app_config.mac_address_mode() {
-                uci::MacAddressMode::Mode0 => Some(
-                    ShortMacTwoWaySessionInfoNtf {
-                        sequence_number: session.sequence_number,
-                        session_token: session_id,
-                        rcr_indicator: 0,            //TODO
-                        current_ranging_interval: 0, //TODO
-                        two_way_ranging_measurements: measurements
-                            .into_iter()
-                            .filter_map(|m| match m {
-                                TwoWayRangingMeasurement::Short(m) => Some(m),
-                                TwoWayRangingMeasurement::Extended(_) => None,
-                            })
-                            .collect(),
-                        vendor_data: vec![],
-                    }
-                    .encode_to_vec()
-                    .expect("failed to encode SessionInfoNtf"),
-                ),
-                uci::MacAddressMode::Mode2 => Some(
-                    ExtendedMacTwoWaySessionInfoNtf {
-                        sequence_number: session.sequence_number,
-                        session_token: session_id,
-                        rcr_indicator: 0,            //TODO
-                        current_ranging_interval: 0, //TODO
-                        two_way_ranging_measurements: measurements
-                            .into_iter()
-                            .filter_map(|m| match m {
-                                TwoWayRangingMeasurement::Extended(m) => Some(m),
-                                TwoWayRangingMeasurement::Short(_) => None,
-                            })
-                            .collect(),
-                        vendor_data: vec![],
-                    }
-                    .encode_to_vec()
-                    .expect("failed to encode SessionInfoNtf"),
-                ),
-                mode => {
-                    tracing::warn!("Unsupported MAC address mode {mode:?}");
-                    None
+        let effects = if session.session_type() != SessionType::FiraDataTransferSession {
+            let (send_ntf, measurements) = match session.app_config.session_info_ntf_config() {
+                uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
+                uci::SessionInfoNtfConfig::Enable => (true, measurements),
+                uci::SessionInfoNtfConfig::EnableProximityTrigger
+                | uci::SessionInfoNtfConfig::EnableAoaTrigger
+                | uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
+                    let filtered: Vec<_> = measurements
+                        .into_iter()
+                        .filter(|m| m.is_within_bounds(&session.app_config))
+                        .collect();
+                    (!filtered.is_empty(), filtered)
+                }
+                uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
+                | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger
+                | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
+                    let emitted: Vec<_> = measurements
+                        .into_iter()
+                        .filter(|m| {
+                            if m.is_within_bounds(&session.app_config) {
+                                session.in_range_peers.insert(m.mac_address())
+                            } else {
+                                session.in_range_peers.remove(&m.mac_address())
+                            }
+                        })
+                        .collect();
+                    (!emitted.is_empty(), emitted)
                 }
             };
 
-            if let Some(packet) = ntf_packet {
-                if let Err(e) = tx.send(packet) {
-                    tracing::debug!("Channel closed: {e}");
+            if send_ntf {
+                let ntf_packet = match session.app_config.mac_address_mode() {
+                    uci::MacAddressMode::Mode0 => Some(
+                        ShortMacTwoWaySessionInfoNtf {
+                            sequence_number: session.sequence_number,
+                            session_token: session_id,
+                            rcr_indicator: 0,            //TODO
+                            current_ranging_interval: 0, //TODO
+                            two_way_ranging_measurements: measurements
+                                .into_iter()
+                                .filter_map(|m| match m {
+                                    TwoWayRangingMeasurement::Short(m) => Some(m),
+                                    TwoWayRangingMeasurement::Extended(_) => None,
+                                })
+                                .collect(),
+                            vendor_data: vec![],
+                        }
+                        .encode_to_vec()
+                        .expect("failed to encode SessionInfoNtf"),
+                    ),
+                    uci::MacAddressMode::Mode2 => Some(
+                        ExtendedMacTwoWaySessionInfoNtf {
+                            sequence_number: session.sequence_number,
+                            session_token: session_id,
+                            rcr_indicator: 0,            //TODO
+                            current_ranging_interval: 0, //TODO
+                            two_way_ranging_measurements: measurements
+                                .into_iter()
+                                .filter_map(|m| match m {
+                                    TwoWayRangingMeasurement::Extended(m) => Some(m),
+                                    TwoWayRangingMeasurement::Short(_) => None,
+                                })
+                                .collect(),
+                            vendor_data: vec![],
+                        }
+                        .encode_to_vec()
+                        .expect("failed to encode SessionInfoNtf"),
+                    ),
+                    mode => {
+                        tracing::warn!("Unsupported MAC address mode {mode:?}");
+                        None
+                    }
+                };
+
+                if let Some(packet) = ntf_packet {
+                    local_packets.push(packet);
+                    session.sequence_number += 1;
                 }
-                session.sequence_number += 1;
             }
+            session.ranging_count += 1;
+            let max_measurements = u32::from(session.app_config.max_number_of_measurements());
+            let max_reached = max_measurements > 0 && session.ranging_count >= max_measurements;
+            if max_reached {
+                device.stop_active_session(session_id, ReasonCode::MaxNumberOfMeasurementsReached)
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        if let Some((peer_handle, packet)) = peer_data_packet {
+            self.send_packet(peer_handle, packet);
         }
-        session.ranging_count += 1;
-        let max_measurements = u32::from(session.app_config.max_number_of_measurements());
-        let max_reached = max_measurements > 0 && session.ranging_count >= max_measurements;
-        if max_reached {
-            Self::stop_active_session(
-                device,
-                session_id,
-                ReasonCode::MaxNumberOfMeasurementsReached,
-            );
+        for packet in local_packets {
+            self.send_packet(device_handle, packet);
         }
+        self.apply_device_effects(device_handle, effects);
     }
 
     fn uci_packet(&mut self, device_handle: usize, packet: Vec<u8>) {
-        match self.get_device_mut(device_handle) {
+        let effects = match self.get_device_mut(device_handle) {
             Some(device) => device.receive_packet(packet),
-            None => tracing::error!("Device {device_handle} not found"),
-        }
+            None => {
+                tracing::error!("Device {device_handle} not found");
+                return;
+            }
+        };
+        self.apply_device_effects(device_handle, effects);
     }
 
     fn pica_command(&mut self, command: PicaCommand) {
@@ -783,10 +860,6 @@ impl Pica {
                 let _ = self.add_device(stream, sink);
             }
             Disconnect(device_handle) => self.disconnect(device_handle),
-            Ranging(device_handle, session_id) => self.ranging(device_handle, session_id),
-            StopRanging(mac_address, session_id) => {
-                self.stop_controlee_ranging(&mac_address, session_id)
-            }
             UciPacket(device_handle, packet) => self.uci_packet(device_handle, packet),
             CreateAnchor(mac_address, pica_cmd_rsp_tx) => {
                 self.create_anchor(mac_address, pica_cmd_rsp_tx)
@@ -801,44 +874,41 @@ impl Pica {
             return Err(PicaError::AlreadyRunning);
         };
         loop {
-            if let Some(command) = command_rx.recv().await {
-                self.pica_command(command)
+            let next_tick = self.next_tick();
+            tokio::select! {
+                Some(command) = command_rx.recv() => {
+                    self.pica_command(command);
+                }
+                () = wait_for_tick(next_tick) => {
+                    self.tick();
+                }
             }
         }
     }
 
-    fn stop_active_session(device: &mut Device, session_id: u32, reason_code: ReasonCode) {
-        let Some(session) = device.session_mut(session_id) else {
-            return;
-        };
-
-        if session.session_state() == SessionState::SessionStateActive {
-            session.stop_ranging_task();
-            session.set_state(SessionState::SessionStateIdle, reason_code);
-            device.on_session_deactivated();
-        } else {
-            tracing::warn!("stop_active_session: session is not active !");
-        }
-    }
-
-    // Handle the in-band StopRanging command sent from controller to the controlee with
-    // corresponding mac_address and session_id.
-    fn stop_controlee_ranging(&mut self, mac_address: &MacAddress, session_id: u32) {
-        for device in self.devices.values_mut() {
-            let Some(session) = device.session(session_id) else {
-                continue;
-            };
-
-            if session.app_config.device_mac_address() != Some(*mac_address) {
-                continue;
-            }
-
-            Self::stop_active_session(
-                device,
-                session_id,
-                ReasonCode::SessionStoppedDueToInbandSignal,
-            );
-        }
+    #[must_use]
+    fn stop_controlee_ranging(
+        &mut self,
+        mac_address: &MacAddress,
+        session_id: u32,
+    ) -> Vec<(Handle, DeviceEffect)> {
+        self.devices
+            .iter_mut()
+            .filter(|(_, entry)| {
+                entry
+                    .device
+                    .session(session_id)
+                    .and_then(|session| session.app_config.device_mac_address())
+                    == Some(*mac_address)
+            })
+            .flat_map(|(&handle, entry)| {
+                entry
+                    .device
+                    .stop_active_session(session_id, ReasonCode::SessionStoppedDueToInbandSignal)
+                    .into_iter()
+                    .map(move |effect| (handle, effect))
+            })
+            .collect()
     }
 
     fn create_anchor(
@@ -877,6 +947,13 @@ impl Pica {
     }
 }
 
+async fn wait_for_tick(delay: Option<Duration>) {
+    match delay {
+        Some(d) => tokio::time::sleep(d).await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
 /// Run the internal pica event loop.
 /// As opposed to Pica::run, the context is passed under a mutex, which
 /// allows synchronous access to the context for device creation.
@@ -888,8 +965,14 @@ pub async fn run(this: &std::sync::Mutex<Pica>) -> Result<(), PicaError> {
     };
 
     loop {
-        if let Some(command) = command_rx.recv().await {
-            this.lock()?.pica_command(command)
+        let next_tick = this.lock()?.next_tick();
+        tokio::select! {
+            Some(command) = command_rx.recv() => {
+                this.lock()?.pica_command(command);
+            }
+            () = wait_for_tick(next_tick) => {
+                this.lock()?.tick();
+            }
         }
     }
 }
