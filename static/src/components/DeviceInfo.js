@@ -125,7 +125,7 @@ export class DeviceInfo extends LitElement {
       ${this.device == null
         ? html`<span>No Device Selected</span>`
         : html`
-            <span> Mac Address: ${this.device.mac_address} </span>
+            <span> Handle: ${this.device.handle} </span>
             <span
               >X:
               <span style="color: red">${this.device.position.x}</span></span
@@ -182,7 +182,7 @@ export class DeviceInfo extends LitElement {
             <h2>Neighbors</h2>
             <ul class="neighbors">
               ${this.device.neighbors.map(
-                ({ mac_address, distance, azimuth, elevation }) => html`
+                ({ handle, distance, azimuth, elevation }) => html`
                   <li>
                     <pika-orientation
                       yaw="${-azimuth}"
@@ -190,8 +190,8 @@ export class DeviceInfo extends LitElement {
                     ></pika-orientation>
                     <table>
                       <tr>
-                        <td>Mac</td>
-                        <td> ${mac_address} </td>
+                        <td>Handle</td>
+                        <td> ${handle} </td>
                       </tr>
                       <tr>
                         <td>Distance</td>
