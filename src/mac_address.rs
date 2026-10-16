@@ -15,6 +15,7 @@
 use std::fmt::Display;
 
 use hex::FromHex;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -24,20 +25,29 @@ const SHORT_MAC_ADDRESS_STR_SIZE: usize = 2 * SHORT_MAC_ADDRESS_SIZE;
 const EXTENDED_MAC_ADDRESS_SIZE: usize = 8;
 const EXTENDED_MAC_ADDRESS_STR_SIZE: usize = 2 * EXTENDED_MAC_ADDRESS_SIZE;
 
+/// Error returned when parsing a [`MacAddress`] fails.
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("MacAddress has the wrong format: 0")]
     MacAddressWrongFormat(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
+/// A 2-byte short or 8-byte extended UWB MAC address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(try_from = "String", into = "String")
+)]
 pub enum MacAddress {
+    /// 2-byte short MAC address.
     Short([u8; SHORT_MAC_ADDRESS_SIZE]),
+    /// 8-byte extended MAC address.
     Extended([u8; EXTENDED_MAC_ADDRESS_SIZE]),
 }
 
 impl MacAddress {
+    /// Parses a 4- or 16-digit hex string (optionally `:`- or `%3A`-separated) into a [`MacAddress`].
     pub fn new(mac_address: String) -> Result<Self, Error> {
         mac_address.try_into()
     }

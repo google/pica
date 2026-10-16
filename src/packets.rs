@@ -28,6 +28,7 @@ pub mod uci {
     include!(concat!(env!("OUT_DIR"), "/uci_packets.rs"));
 
     impl ControlPacket {
+        /// Returns `true` if this is a core `DEVICE_RESET` packet.
         pub fn is_core_device_reset_cmd(&self) -> bool {
             let Ok(core_packet) = CorePacket::try_from(self) else {
                 return false;
@@ -49,13 +50,14 @@ pub mod uci {
     /// Size of the DATA_MESSAGE_SND header carried by the first packet of a message.
     pub const DATA_MESSAGE_SND_HEADER_SIZE: usize = 16;
 
-    // Extract the message type from the first 3 bits of the passed (header) byte
+    /// Extracts the message type from the first byte of a raw UCI packet.
     pub fn parse_message_type(byte: u8) -> MessageType {
         MessageType::try_from((byte >> 5) & 0x7).unwrap_or(MessageType::Command)
     }
 
     /// Read a single UCI packet from a TCP read half.
     /// This function does not reassemble segmented packets.
+    #[cfg(feature = "tokio")]
     pub async fn read(
         mut socket: tokio::net::tcp::OwnedReadHalf,
     ) -> Option<(Vec<u8>, tokio::net::tcp::OwnedReadHalf)> {
@@ -97,6 +99,7 @@ pub mod uci {
 
     /// Write a single UCI packet to a TCP write half.
     /// This function accepts segmented packets only.
+    #[cfg(feature = "tokio")]
     pub async fn write(
         mut socket: tokio::net::tcp::OwnedWriteHalf,
         packet: Vec<u8>,
