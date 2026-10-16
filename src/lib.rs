@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Virtual UWB Controller implementing the FiRa UCI specification.
+
 #![cfg_attr(
     test,
     allow(
@@ -23,22 +25,17 @@
 )]
 
 use pdl_runtime::Packet;
-use std::collections::HashMap;
-use std::fmt::Display;
-use std::path::PathBuf;
-use std::pin::Pin;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio::time;
 
 pub mod packets;
-mod pcapng;
+pub mod pcapng;
 
 use packets::uci::{self, *};
 
 mod device;
-use device::{Device, DeviceEffect, MAX_SESSION};
+use device::{Device, DeviceEffect};
 
 mod session;
 
@@ -46,11 +43,10 @@ mod mac_address;
 pub use mac_address::MacAddress;
 
 mod app_config;
-pub use app_config::{AppConfig, AppConfigError};
+use app_config::AppConfig;
 
+/// Raw serialized UCI packet bytes.
 pub type UciPacket = Vec<u8>;
-pub type UciStream = Pin<Box<dyn futures::stream::Stream<Item = Vec<u8>> + Send>>;
-pub type UciSink = Pin<Box<dyn futures::sink::Sink<Vec<u8>, Error = ()> + Send>>;
 
 /// Handle allocated for created devices or anchors.
 /// The handle is unique across the lifetime of the Pica context
@@ -80,8 +76,55 @@ pub trait RangingEstimator: Send + Sync {
 
 struct DeviceEntry {
     device: Device,
-    tx: mpsc::UnboundedSender<UciPacket>,
+    rx_buffer: Option<Vec<u8>>,
 }
+
+impl DeviceEntry {
+    fn new(device: Device) -> Self {
+        Self {
+            device,
+            rx_buffer: None,
+        }
+    }
+
+    fn reassemble(&mut self, packet: &[u8]) -> Option<UciPacket> {
+        let Some(header_bytes) = packet.get(..COMMON_HEADER_SIZE) else {
+            let len = packet.len();
+            tracing::warn!(
+                "Packet shorter than common header size ({COMMON_HEADER_SIZE} bytes): {len}"
+            );
+            return None;
+        };
+        let Ok(header) = CommonPacketHeader::decode_full(header_bytes) else {
+            tracing::warn!("Failed to decode common packet header");
+            return None;
+        };
+        let Some(payload) = packet.get(HEADER_SIZE..) else {
+            let len = packet.len();
+            tracing::warn!("Packet shorter than header size ({HEADER_SIZE} bytes): {len}");
+            return None;
+        };
+        if header.mt == MessageType::Data {
+            return Some(packet.to_vec());
+        }
+
+        match &mut self.rx_buffer {
+            Some(rx_buffer) => rx_buffer.extend_from_slice(payload),
+            None => self.rx_buffer = Some(packet.to_vec()),
+        }
+
+        if header.pbf == PacketBoundaryFlag::Complete {
+            self.rx_buffer.take()
+        } else {
+            None
+        }
+    }
+}
+
+/// Error returned by [`Pica::create_anchor`] when the MAC address is already in use.
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("MAC address already in use by handle {0}")]
+pub struct AlreadyExists(pub Handle);
 
 /// Pica emulation environment.
 /// All the devices added to this environment are emulated as if they were
@@ -90,64 +133,8 @@ pub struct Pica {
     counter: usize,
     devices: HashMap<Handle, DeviceEntry>,
     anchors: HashMap<Handle, MacAddress>,
-    command_rx: Option<mpsc::Receiver<PicaCommand>>,
-    command_tx: mpsc::Sender<PicaCommand>,
-    event_tx: broadcast::Sender<PicaEvent>,
+    tx_queue: VecDeque<(Handle, UciPacket)>,
     ranging_estimator: Box<dyn RangingEstimator>,
-    pcapng_dir: Option<PathBuf>,
-}
-
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum PicaError {
-    #[error("pica is already running")]
-    AlreadyRunning,
-    #[error("pica mutex poisoned")]
-    MutexPoisoned,
-}
-
-impl<T> From<std::sync::PoisonError<T>> for PicaError {
-    fn from(_: std::sync::PoisonError<T>) -> Self {
-        Self::MutexPoisoned
-    }
-}
-
-/// Error returned when creating an anchor with a MAC address that is already in use.
-#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
-#[error("MAC address already in use by handle {0}")]
-pub struct AlreadyExists(pub Handle);
-
-pub enum PicaCommand {
-    // Connect a new device.
-    Connect(UciStream, UciSink),
-    // Disconnect the selected device.
-    Disconnect(usize),
-    // UCI packet received for the selected device.
-    UciPacket(usize, Vec<u8>),
-    // Create Anchor
-    CreateAnchor(MacAddress, oneshot::Sender<Result<Handle, AlreadyExists>>),
-    // Destroy Anchor
-    DestroyAnchor(Handle, oneshot::Sender<bool>),
-}
-
-impl Display for PicaCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let cmd = match self {
-            PicaCommand::Connect(_, _) => "Connect",
-            PicaCommand::Disconnect(_) => "Disconnect",
-            PicaCommand::UciPacket(_, _) => "UciPacket",
-            PicaCommand::CreateAnchor(_, _) => "CreateAnchor",
-            PicaCommand::DestroyAnchor(_, _) => "DestroyAnchor",
-        };
-        write!(f, "{cmd}")
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum PicaEvent {
-    // A UCI connection was added
-    Connected { handle: Handle },
-    // A UCI connection was lost
-    Disconnected { handle: Handle },
 }
 
 const fn degrees_to_q9_7(deg: i16) -> i16 {
@@ -291,42 +278,88 @@ impl TwoWayRangingMeasurement {
 }
 
 impl Pica {
-    pub fn new(ranging_estimator: Box<dyn RangingEstimator>, pcapng_dir: Option<PathBuf>) -> Self {
-        let (command_tx, command_rx) = mpsc::channel(MAX_SESSION * 4);
-        let (event_tx, _) = broadcast::channel(16);
+    /// Creates a new [`Pica`] emulation environment using the given [`RangingEstimator`].
+    pub fn new(ranging_estimator: Box<dyn RangingEstimator>) -> Self {
         Pica {
             devices: HashMap::new(),
             anchors: HashMap::new(),
             counter: 0,
-            command_rx: Some(command_rx),
-            command_tx,
-            event_tx,
+            tx_queue: VecDeque::new(),
             ranging_estimator,
-            pcapng_dir,
         }
     }
 
-    pub fn events(&self) -> broadcast::Receiver<PicaEvent> {
-        self.event_tx.subscribe()
-    }
-
-    pub fn commands(&self) -> mpsc::Sender<PicaCommand> {
-        self.command_tx.clone()
-    }
-
-    fn get_device_mut(&mut self, device_handle: usize) -> Option<&mut Device> {
+    fn get_device_mut(&mut self, device_handle: Handle) -> Option<&mut Device> {
         self.devices
             .get_mut(&device_handle)
             .map(|entry| &mut entry.device)
     }
 
-    fn get_device(&self, device_handle: usize) -> Option<&Device> {
+    fn get_device(&self, device_handle: Handle) -> Option<&Device> {
         self.devices.get(&device_handle).map(|entry| &entry.device)
     }
 
-    fn send_packet(&self, device_handle: Handle, packet: UciPacket) {
-        if let Some(entry) = self.devices.get(&device_handle) {
-            let _ = entry.tx.send(packet);
+    /// Returns an iterator over the handles of all connected UCI devices.
+    pub fn devices(&self) -> impl Iterator<Item = Handle> + '_ {
+        self.devices.keys().copied()
+    }
+
+    /// Returns an iterator over the `(Handle, MacAddress)` pairs of all active anchors.
+    pub fn anchors(&self) -> impl Iterator<Item = (Handle, MacAddress)> + '_ {
+        self.anchors
+            .iter()
+            .map(|(&handle, &mac_address)| (handle, mac_address))
+    }
+
+    fn send_packet(&mut self, device_handle: Handle, complete_packet: UciPacket) {
+        if !self.devices.contains_key(&device_handle) {
+            return;
+        }
+
+        let Some(&[common_header, oid, rfu, _]) = complete_packet.first_chunk::<HEADER_SIZE>()
+        else {
+            return;
+        };
+        let mut offset = HEADER_SIZE;
+        let mt = parse_message_type(common_header);
+
+        while offset < complete_packet.len() {
+            let remaining_length = complete_packet.len() - offset;
+            let fragment_length = std::cmp::min(
+                remaining_length,
+                if mt == MessageType::Data {
+                    MAX_DATA_PACKET_PAYLOAD_SIZE
+                } else {
+                    MAX_CTRL_PACKET_PAYLOAD_SIZE
+                },
+            );
+            let pbf = if fragment_length == remaining_length {
+                PacketBoundaryFlag::Complete
+            } else {
+                PacketBoundaryFlag::NotComplete
+            };
+
+            let Some(payload_chunk) = complete_packet.get(offset..offset + fragment_length) else {
+                return;
+            };
+
+            const PBF_MASK: u8 = 0x10;
+            let common_header = (common_header & !PBF_MASK) | ((pbf as u8) << 4);
+            let header = match mt {
+                MessageType::Data => {
+                    let [len_lo, len_hi] = (fragment_length as u16).to_le_bytes();
+                    [common_header, oid, len_lo, len_hi]
+                }
+                _ => [common_header, oid, rfu, fragment_length as u8],
+            };
+            let packet: Vec<u8> = header
+                .into_iter()
+                .chain(payload_chunk.iter().copied())
+                .collect();
+
+            self.tx_queue.push_back((device_handle, packet));
+
+            offset += fragment_length;
         }
     }
 
@@ -352,14 +385,54 @@ impl Pica {
         }
     }
 
-    fn next_deadline(&self) -> Option<Instant> {
+    /// Connects a new UCI device and returns its allocated [`Handle`].
+    pub fn add_device(&mut self) -> Handle {
+        let handle = self.counter;
+        self.counter += 1;
+
+        tracing::debug!("[{handle}] Connecting device");
+
+        let mut device = Device::new(handle);
+        let effects = device.init();
+
+        self.devices.insert(handle, DeviceEntry::new(device));
+        self.apply_device_effects(handle, effects);
+
+        handle
+    }
+
+    /// Disconnects and removes the UCI device with `handle`, returning `true` if it existed.
+    pub fn remove_device(&mut self, handle: Handle) -> bool {
+        if self.devices.remove(&handle).is_some() {
+            tracing::debug!("[{handle}] Disconnecting device");
+            self.tx_queue.retain(|(h, _)| *h != handle);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Feeds an incoming segmented UCI packet from `handle` into `Pica`.
+    pub fn handle_packet(&mut self, handle: Handle, packet: &[u8]) {
+        if let Some(complete_packet) = self
+            .devices
+            .get_mut(&handle)
+            .and_then(|entry| entry.reassemble(packet))
+        {
+            self.uci_packet(handle, complete_packet);
+        }
+    }
+
+    /// Returns the earliest [`Instant`] at which [`Pica::tick`] should be called, if any.
+    pub fn next_deadline(&self) -> Option<Instant> {
         self.devices
             .values()
             .filter_map(|entry| entry.device.next_ranging_deadline())
             .min()
     }
 
-    fn tick(&mut self) {
+    /// Advances due ranging sessions.
+    pub fn tick(&mut self) {
         let now = Instant::now();
         let due_sessions: Vec<_> = self
             .devices
@@ -377,211 +450,20 @@ impl Pica {
         }
     }
 
+    /// Drains pending outbound UCI packets as `(Handle, UciPacket)` pairs.
+    ///
+    /// Safe to drop early: unconsumed packets remain queued in `Pica`.
+    pub fn drain_packets(&mut self) -> impl Iterator<Item = (Handle, UciPacket)> + '_ {
+        std::iter::from_fn(|| self.tx_queue.pop_front())
+    }
+
     fn anchor_handle(&self, mac_address: MacAddress) -> Option<Handle> {
         self.anchors
             .iter()
             .find_map(|(&handle, &addr)| (addr == mac_address).then_some(handle))
     }
 
-    fn send_event(&self, event: PicaEvent) {
-        // An error here means that we have
-        // no receivers, so ignore it
-        let _ = self.event_tx.send(event);
-    }
-
-    /// Handle an incoming stream of UCI packets.
-    /// Reassemble control packets when fragmented, data packets are unmodified.
-    async fn read_routine(
-        mut uci_stream: impl futures::stream::Stream<Item = Vec<u8>> + Unpin,
-        cmd_tx: mpsc::Sender<PicaCommand>,
-        handle: Handle,
-        pcapng_file: Option<&pcapng::File>,
-    ) {
-        use futures::stream::StreamExt;
-
-        loop {
-            let mut complete_packet: Option<Vec<u8>> = None;
-            loop {
-                let Some(packet) = uci_stream.next().await else {
-                    return;
-                };
-                let Some(common_header_bytes) = packet.get(..COMMON_HEADER_SIZE) else {
-                    return;
-                };
-                let Ok(header) = packets::uci::CommonPacketHeader::decode_full(common_header_bytes)
-                else {
-                    return;
-                };
-
-                if let Some(file) = pcapng_file
-                    && file.write(&packet, pcapng::Direction::Tx).is_err()
-                {
-                    return;
-                }
-
-                match &mut complete_packet {
-                    Some(complete_packet) => {
-                        let Some(payload) = packet.get(HEADER_SIZE..) else {
-                            return;
-                        };
-                        complete_packet.extend_from_slice(payload);
-                    }
-                    None => complete_packet = Some(packet),
-                }
-
-                if header.pbf == packets::uci::PacketBoundaryFlag::Complete
-                    || header.mt == packets::uci::MessageType::Data
-                {
-                    break;
-                }
-            }
-
-            let Some(complete_packet) = complete_packet else {
-                return;
-            };
-            if let Err(e) = cmd_tx
-                .send(PicaCommand::UciPacket(handle, complete_packet))
-                .await
-            {
-                tracing::debug!("Channel closed: {e}");
-                return;
-            }
-        }
-    }
-
-    /// Segment a stream of UCI packets.
-    async fn write_routine(
-        mut uci_sink: impl futures::sink::Sink<Vec<u8>> + Unpin,
-        mut packet_rx: mpsc::UnboundedReceiver<UciPacket>,
-        _handle: Handle,
-        pcapng_file: Option<&pcapng::File>,
-    ) {
-        use futures::sink::SinkExt;
-
-        loop {
-            let Some(complete_packet) = packet_rx.recv().await else {
-                return;
-            };
-            let Some(&[common_header, oid, rfu, _]) = complete_packet.first_chunk::<HEADER_SIZE>()
-            else {
-                return;
-            };
-            let mut offset = HEADER_SIZE;
-            let mt = parse_message_type(common_header);
-
-            while offset < complete_packet.len() {
-                let remaining_length = complete_packet.len() - offset;
-                let fragment_length = std::cmp::min(
-                    remaining_length,
-                    if mt == MessageType::Data {
-                        MAX_DATA_PACKET_PAYLOAD_SIZE
-                    } else {
-                        MAX_CTRL_PACKET_PAYLOAD_SIZE
-                    },
-                );
-                let pbf = if fragment_length == remaining_length {
-                    PacketBoundaryFlag::Complete
-                } else {
-                    PacketBoundaryFlag::NotComplete
-                };
-
-                let Some(payload_chunk) = complete_packet.get(offset..offset + fragment_length)
-                else {
-                    return;
-                };
-
-                const PBF_MASK: u8 = 0x10;
-                let common_header = (common_header & !PBF_MASK) | ((pbf as u8) << 4);
-                let header = match mt {
-                    MessageType::Data => {
-                        let [len_lo, len_hi] = (fragment_length as u16).to_le_bytes();
-                        [common_header, oid, len_lo, len_hi]
-                    }
-                    _ => [common_header, oid, rfu, fragment_length as u8],
-                };
-                let packet: Vec<u8> = header
-                    .into_iter()
-                    .chain(payload_chunk.iter().copied())
-                    .collect();
-
-                if let Some(file) = pcapng_file
-                    && file.write(&packet, pcapng::Direction::Rx).is_err()
-                {
-                    return;
-                }
-
-                if uci_sink.send(packet).await.is_err() {
-                    return;
-                }
-
-                offset += fragment_length;
-            }
-        }
-    }
-
-    pub fn add_device(&mut self, stream: UciStream, sink: UciSink) -> Handle {
-        let (packet_tx, packet_rx) = mpsc::unbounded_channel();
-        let pica_tx = self.command_tx.clone();
-        let disconnect_tx = self.command_tx.clone();
-        let pcapng_dir = self.pcapng_dir.clone();
-
-        let handle = self.counter;
-        self.counter += 1;
-
-        tracing::debug!("[{handle}] Connecting device");
-
-        let mut device = Device::new(handle);
-        let effects = device.init();
-
-        self.send_event(PicaEvent::Connected { handle });
-
-        self.devices.insert(
-            handle,
-            DeviceEntry {
-                device,
-                tx: packet_tx,
-            },
-        );
-        self.apply_device_effects(handle, effects);
-
-        // Spawn and detach the connection handling task.
-        // The task notifies pica when exiting to let it clean
-        // the state.
-        tokio::task::spawn(async move {
-            let pcapng_file = if let Some(dir) = pcapng_dir {
-                let full_path = dir.join(format!("device-{handle}.pcapng"));
-                tracing::debug!("Recording pcapng to file {}", full_path.as_path().display());
-                pcapng::File::create(full_path)
-                    .inspect_err(|err| tracing::error!("Failed to create pcapng file: {err}"))
-                    .ok()
-            } else {
-                None
-            };
-
-            tokio::select! {
-                () = Self::read_routine(stream, pica_tx, handle, pcapng_file.as_ref()) => (),
-                () = Self::write_routine(sink, packet_rx, handle, pcapng_file.as_ref()) => (),
-            }
-
-            if let Err(e) = disconnect_tx.send(PicaCommand::Disconnect(handle)).await {
-                tracing::debug!("Channel closed: {e}");
-            }
-        });
-
-        handle
-    }
-
-    fn disconnect(&mut self, device_handle: usize) {
-        tracing::debug!("[{device_handle}] Disconnecting device");
-
-        if self.devices.remove(&device_handle).is_some() {
-            self.send_event(PicaEvent::Disconnected {
-                handle: device_handle,
-            });
-        }
-    }
-
-    fn ranging(&mut self, device_handle: usize, session_id: u32) {
+    fn ranging(&mut self, device_handle: Handle, session_id: u32) {
         tracing::debug!("[{device_handle}] Ranging event");
         tracing::debug!("  session_id={session_id}");
 
@@ -714,27 +596,27 @@ impl Pica {
 
             if is_complete {
                 session.clear_data();
-                let packet = SessionDataCreditNtf {
-                    credit_availability: CreditAvailability::CreditAvailable,
-                    session_token: session_id,
-                }
-                .encode_to_vec()
-                .expect("failed to encode SessionDataCreditNtf");
-
-                local_packets.push(packet);
+                local_packets.push(
+                    SessionDataCreditNtf {
+                        credit_availability: CreditAvailability::CreditAvailable,
+                        session_token: session_id,
+                    }
+                    .encode_to_vec()
+                    .expect("failed to encode SessionDataCreditNtf"),
+                );
             }
 
             if is_status_ntf_enabled || is_complete {
-                let packet = SessionDataTransferStatusNtf {
-                    session_token: session_id,
-                    uci_sequence_number: sequence_number,
-                    status,
-                    tx_count,
-                }
-                .encode_to_vec()
-                .expect("failed to encode SessionDataTransferStatusNtf");
-
-                local_packets.push(packet);
+                local_packets.push(
+                    SessionDataTransferStatusNtf {
+                        session_token: session_id,
+                        uci_sequence_number: sequence_number,
+                        status,
+                        tx_count,
+                    }
+                    .encode_to_vec()
+                    .expect("failed to encode SessionDataTransferStatusNtf"),
+                );
             }
         }
 
@@ -838,7 +720,7 @@ impl Pica {
         self.apply_device_effects(device_handle, effects);
     }
 
-    fn uci_packet(&mut self, device_handle: usize, packet: Vec<u8>) {
+    fn uci_packet(&mut self, device_handle: Handle, packet: Vec<u8>) {
         let effects = match self.get_device_mut(device_handle) {
             Some(device) => device.receive_packet(packet),
             None => {
@@ -849,39 +731,8 @@ impl Pica {
         self.apply_device_effects(device_handle, effects);
     }
 
-    fn pica_command(&mut self, command: PicaCommand) {
-        use PicaCommand::*;
-        match command {
-            Connect(stream, sink) => {
-                let _ = self.add_device(stream, sink);
-            }
-            Disconnect(device_handle) => self.disconnect(device_handle),
-            UciPacket(device_handle, packet) => self.uci_packet(device_handle, packet),
-            CreateAnchor(mac_address, pica_cmd_rsp_tx) => {
-                self.create_anchor(mac_address, pica_cmd_rsp_tx)
-            }
-            DestroyAnchor(handle, pica_cmd_rsp_tx) => self.destroy_anchor(handle, pica_cmd_rsp_tx),
-        }
-    }
-
-    /// Run the internal pica event loop.
-    pub async fn run(mut self) -> Result<(), PicaError> {
-        let Some(mut command_rx) = self.command_rx.take() else {
-            return Err(PicaError::AlreadyRunning);
-        };
-        loop {
-            let next_deadline = self.next_deadline();
-            tokio::select! {
-                Some(command) = command_rx.recv() => {
-                    self.pica_command(command);
-                }
-                () = wait_for_deadline(next_deadline) => {
-                    self.tick();
-                }
-            }
-        }
-    }
-
+    // Handle the in-band StopRanging command sent from controller to the controlee with
+    // corresponding mac_address and session_id.
     #[must_use]
     fn stop_controlee_ranging(
         &mut self,
@@ -907,15 +758,12 @@ impl Pica {
             .collect()
     }
 
-    fn create_anchor(
-        &mut self,
-        mac_address: MacAddress,
-        rsp_tx: oneshot::Sender<Result<Handle, AlreadyExists>>,
-    ) {
+    /// Creates a virtual anchor with `mac_address` and returns its allocated [`Handle`].
+    pub fn create_anchor(&mut self, mac_address: MacAddress) -> Result<Handle, AlreadyExists> {
         tracing::debug!("[_] Create anchor");
         tracing::debug!("  mac_address: {mac_address}");
 
-        let status = if let Some(handle) = self.anchor_handle(mac_address) {
+        if let Some(handle) = self.anchor_handle(mac_address) {
             Err(AlreadyExists(handle))
         } else {
             let handle = self.counter;
@@ -924,51 +772,13 @@ impl Pica {
             self.anchors.insert(handle, mac_address);
 
             Ok(handle)
-        };
-
-        rsp_tx.send(status).unwrap_or_else(|err| {
-            tracing::error!("Failed to send create-anchor command response: {err:?}")
-        })
-    }
-
-    fn destroy_anchor(&mut self, handle: Handle, rsp_tx: oneshot::Sender<bool>) {
-        tracing::debug!("[_] Destroy anchor");
-        tracing::debug!("  handle: {handle}");
-
-        let status = self.anchors.remove(&handle).is_some();
-
-        rsp_tx.send(status).unwrap_or_else(|err| {
-            tracing::error!("Failed to send destroy-anchor command response: {err:?}")
-        })
-    }
-}
-
-async fn wait_for_deadline(deadline: Option<Instant>) {
-    match deadline {
-        Some(deadline) => time::sleep_until(time::Instant::from_std(deadline)).await,
-        None => std::future::pending().await,
-    }
-}
-
-/// Run the internal pica event loop.
-/// As opposed to Pica::run, the context is passed under a mutex, which
-/// allows synchronous access to the context for device creation.
-pub async fn run(this: &std::sync::Mutex<Pica>) -> Result<(), PicaError> {
-    // Extract the mpsc receiver from the Pica context.
-    // The receiver cannot be cloned.
-    let Some(mut command_rx) = this.lock()?.command_rx.take() else {
-        return Err(PicaError::AlreadyRunning);
-    };
-
-    loop {
-        let next_deadline = this.lock()?.next_deadline();
-        tokio::select! {
-            Some(command) = command_rx.recv() => {
-                this.lock()?.pica_command(command);
-            }
-            () = wait_for_deadline(next_deadline) => {
-                this.lock()?.tick();
-            }
         }
+    }
+
+    /// Removes the anchor with `handle`, returning `true` if it existed.
+    pub fn destroy_anchor(&mut self, handle: Handle) -> bool {
+        tracing::debug!("[{handle}] Destroy anchor");
+
+        self.anchors.remove(&handle).is_some()
     }
 }

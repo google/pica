@@ -22,8 +22,11 @@
     )
 )]
 
+#[path = "../common/mod.rs"]
+mod common;
+
 use clap::Parser;
-use futures::TryFutureExt;
+use common::{DeviceEvent, drain_packets, spawn_device, wait_for_deadline};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode as HttpStatusCode, body};
 use parking_lot::Mutex;
@@ -40,7 +43,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::try_join;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
-use pica::{AlreadyExists, Handle, MacAddress, Pica, PicaCommand, PicaEvent};
+use pica::{AlreadyExists, Handle, MacAddress, Pica};
 
 #[derive(Error, Debug)]
 enum Error {
@@ -48,14 +51,13 @@ enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Hyper(#[from] hyper::Error),
-    #[error(transparent)]
-    EventRecv(#[from] tokio::sync::broadcast::error::RecvError),
-    #[error("pica command stream closed")]
-    CommandStreamClosed,
     #[error("UCI port and web port must be different")]
     PortConflict,
-    #[error(transparent)]
-    Pica(#[from] pica::PicaError),
+}
+
+enum AnchorCommand {
+    Create(MacAddress, oneshot::Sender<Result<Handle, AlreadyExists>>),
+    Destroy(Handle, oneshot::Sender<bool>),
 }
 
 mod position;
@@ -160,43 +162,6 @@ impl Context {
         }
     }
 
-    async fn handle_connection_events(
-        self,
-        mut events: broadcast::Receiver<PicaEvent>,
-    ) -> Result<(), Error> {
-        loop {
-            match events.recv().await {
-                Ok(PicaEvent::Connected { handle }) => {
-                    let mut devices = self.devices.lock();
-                    devices.insert(
-                        handle,
-                        DeviceInformation {
-                            handle,
-                            category: Category::Uci,
-                            mac_address: None,
-                            position: Default::default(),
-                        },
-                    );
-                    let _ = self.events.send(Event::DeviceAdded {
-                        handle,
-                        category: Category::Uci,
-                        mac_address: None,
-                        position: Default::default(),
-                    });
-                }
-                Ok(PicaEvent::Disconnected { handle }) => {
-                    let mut devices = self.devices.lock();
-                    devices.remove(&handle);
-                    let _ = self.events.send(Event::DeviceRemoved {
-                        handle,
-                        category: Category::Uci,
-                    });
-                }
-                Err(err) => return Err(Error::EventRecv(err)),
-            }
-        }
-    }
-
     fn http_events(&self) -> Response<Body> {
         let stream = BroadcastStream::new(self.events.subscribe()).map(|result| {
             result.map(|event| {
@@ -270,13 +235,13 @@ impl Context {
         &self,
         mac_address: MacAddress,
         position: Position,
-        cmd_tx: mpsc::Sender<PicaCommand>,
+        cmd_tx: mpsc::Sender<AnchorCommand>,
     ) -> Response<Body> {
         tracing::info!("create-anchor({mac_address}, {position})");
 
         let (rsp_tx, rsp_rx) = oneshot::channel::<Result<Handle, AlreadyExists>>();
         if let Err(e) = cmd_tx
-            .send(PicaCommand::CreateAnchor(mac_address, rsp_tx))
+            .send(AnchorCommand::Create(mac_address, rsp_tx))
             .await
         {
             tracing::debug!("Channel closed: {e}");
@@ -324,15 +289,12 @@ impl Context {
     async fn http_destroy_anchor(
         &self,
         handle: Handle,
-        cmd_tx: mpsc::Sender<PicaCommand>,
+        cmd_tx: mpsc::Sender<AnchorCommand>,
     ) -> Response<Body> {
         tracing::info!("destroy-anchor({handle})");
 
         let (rsp_tx, rsp_rx) = oneshot::channel::<bool>();
-        if let Err(e) = cmd_tx
-            .send(PicaCommand::DestroyAnchor(handle, rsp_tx))
-            .await
-        {
+        if let Err(e) = cmd_tx.send(AnchorCommand::Destroy(handle, rsp_tx)).await {
             tracing::debug!("Channel closed: {e}");
             return Response::builder()
                 .status(HttpStatusCode::INTERNAL_SERVER_ERROR)
@@ -476,7 +438,7 @@ impl Event {
 
 async fn http_request(
     mut req: Request<Body>,
-    cmd_tx: mpsc::Sender<PicaCommand>,
+    cmd_tx: mpsc::Sender<AnchorCommand>,
     context: Context,
 ) -> Result<Response<Body>, Infallible> {
     let static_file = STATIC_FILES
@@ -525,7 +487,7 @@ async fn http_request(
 
 async fn serve(
     context: Context,
-    tx: mpsc::Sender<PicaCommand>,
+    tx: mpsc::Sender<AnchorCommand>,
     web_port: u16,
 ) -> Result<(), Error> {
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, web_port);
@@ -547,22 +509,82 @@ async fn serve(
     Ok(())
 }
 
-async fn listen(tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<(), Error> {
+async fn run_pica(
+    mut pica: Pica,
+    context: Context,
+    mut cmd_rx: mpsc::Receiver<AnchorCommand>,
+    uci_port: u16,
+    pcapng_dir: Option<PathBuf>,
+) -> Result<(), Error> {
     let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
     let uci_listener = TcpListener::bind(uci_socket).await?;
     tracing::info!("Pica: Listening on: {uci_port}");
 
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<DeviceEvent>();
+    let mut device_sinks: HashMap<Handle, mpsc::UnboundedSender<pica::UciPacket>> = HashMap::new();
+
     loop {
-        let (socket, addr) = uci_listener.accept().await?;
-        tracing::info!("Uwb host addr: {addr}");
+        let deadline = pica.next_deadline();
 
-        let (read_half, write_half) = socket.into_split();
-        let stream = Box::pin(futures::stream::unfold(read_half, pica::packets::uci::read));
-        let sink = Box::pin(futures::sink::unfold(write_half, pica::packets::uci::write));
+        tokio::select! {
+            res = uci_listener.accept() => {
+                let (socket, addr) = res?;
+                tracing::info!("Uwb host addr: {addr}");
 
-        tx.send(PicaCommand::Connect(stream, sink))
-            .await
-            .map_err(|_| Error::CommandStreamClosed)?
+                let handle = pica.add_device();
+                let sink = spawn_device(handle, socket, pcapng_dir.as_deref(), &event_tx);
+                device_sinks.insert(handle, sink);
+
+                let mut devices = context.devices.lock();
+                devices.insert(
+                    handle,
+                    DeviceInformation {
+                        handle,
+                        category: Category::Uci,
+                        mac_address: None,
+                        position: Default::default(),
+                    },
+                );
+                let _ = context.events.send(Event::DeviceAdded {
+                    handle,
+                    category: Category::Uci,
+                    mac_address: None,
+                    position: Default::default(),
+                });
+            }
+            () = wait_for_deadline(deadline) => {
+                pica.tick();
+            }
+            Some(event) = event_rx.recv() => {
+                match event {
+                    DeviceEvent::Packet(handle, packet) => {
+                        pica.handle_packet(handle, &packet);
+                    }
+                    DeviceEvent::Disconnected(handle) => {
+                        device_sinks.remove(&handle);
+                        if pica.remove_device(handle) {
+                            context.devices.lock().remove(&handle);
+                            let _ = context.events.send(Event::DeviceRemoved {
+                                handle,
+                                category: Category::Uci,
+                            });
+                        }
+                    }
+                }
+            }
+            Some(cmd) = cmd_rx.recv() => {
+                match cmd {
+                    AnchorCommand::Create(mac_address, rsp_tx) => {
+                        let _ = rsp_tx.send(pica.create_anchor(mac_address));
+                    }
+                    AnchorCommand::Destroy(handle, rsp_tx) => {
+                        let _ = rsp_tx.send(pica.destroy_anchor(handle));
+                    }
+                }
+            }
+        }
+
+        drain_packets(&mut pica, &device_sinks);
     }
 }
 
@@ -599,16 +621,18 @@ async fn main() -> Result<(), Error> {
     }
 
     let context = Context::new();
-
-    let pica = Pica::new(Box::new(context.clone()), args.pcapng_dir);
-    let cmd_tx = pica.commands();
-    let events_rx = pica.events();
+    let pica = Pica::new(Box::new(context.clone()));
+    let (cmd_tx, cmd_rx) = mpsc::channel(16);
 
     try_join!(
-        pica.run().map_err(Error::from),
-        listen(cmd_tx.clone(), args.uci_port),
-        serve(context.clone(), cmd_tx.clone(), args.web_port),
-        context.handle_connection_events(events_rx),
+        run_pica(
+            pica,
+            context.clone(),
+            cmd_rx,
+            args.uci_port,
+            args.pcapng_dir
+        ),
+        serve(context, cmd_tx, args.web_port),
     )?;
 
     Ok(())

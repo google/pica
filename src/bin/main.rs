@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod common;
+
 use clap::Parser;
-use futures::TryFutureExt;
-use pica::{Pica, PicaCommand};
+use common::{DeviceEvent, drain_packets, spawn_device, wait_for_deadline};
+use pica::Pica;
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio::try_join;
 
 const DEFAULT_UCI_PORT: u16 = 7000;
 
@@ -28,30 +30,6 @@ const DEFAULT_UCI_PORT: u16 = 7000;
 enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("pica command stream closed")]
-    CommandStreamClosed,
-    #[error(transparent)]
-    Pica(#[from] pica::PicaError),
-}
-
-async fn accept_incoming(cmd_tx: mpsc::Sender<PicaCommand>, uci_port: u16) -> Result<(), Error> {
-    let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, uci_port);
-    let uci_listener = TcpListener::bind(uci_socket).await?;
-    tracing::info!("Pica: Listening on: {uci_port}");
-
-    loop {
-        let (socket, addr) = uci_listener.accept().await?;
-        tracing::info!("Uwb host addr: {addr}");
-
-        let (read_half, write_half) = socket.into_split();
-        let stream = Box::pin(futures::stream::unfold(read_half, pica::packets::uci::read));
-        let sink = Box::pin(futures::sink::unfold(write_half, pica::packets::uci::write));
-
-        cmd_tx
-            .send(PicaCommand::Connect(stream, sink))
-            .await
-            .map_err(|_| Error::CommandStreamClosed)?
-    }
 }
 
 #[derive(Parser, Debug)]
@@ -95,13 +73,45 @@ async fn main() -> Result<(), Error> {
 
     let args = Args::parse();
 
-    let pica = Pica::new(Box::new(MockRangingEstimator()), args.pcapng_dir);
-    let commands = pica.commands();
+    let uci_socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, args.uci_port);
+    let uci_listener = TcpListener::bind(uci_socket).await?;
+    let uci_port = args.uci_port;
+    tracing::info!("Pica: Listening on: {uci_port}");
 
-    try_join!(
-        accept_incoming(commands.clone(), args.uci_port),
-        pica.run().map_err(Error::from),
-    )?;
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<DeviceEvent>();
+    let mut device_sinks: HashMap<pica::Handle, mpsc::UnboundedSender<pica::UciPacket>> =
+        HashMap::new();
 
-    Ok(())
+    let mut pica = Pica::new(Box::new(MockRangingEstimator()));
+
+    loop {
+        let deadline = pica.next_deadline();
+
+        tokio::select! {
+            res = uci_listener.accept() => {
+                let (socket, addr) = res?;
+                tracing::info!("Uwb host addr: {addr}");
+
+                let handle = pica.add_device();
+                let sink = spawn_device(handle, socket, args.pcapng_dir.as_deref(), &event_tx);
+                device_sinks.insert(handle, sink);
+            }
+            () = wait_for_deadline(deadline) => {
+                pica.tick();
+            }
+            Some(event) = event_rx.recv() => {
+                match event {
+                    DeviceEvent::Packet(handle, packet) => {
+                        pica.handle_packet(handle, &packet);
+                    }
+                    DeviceEvent::Disconnected(handle) => {
+                        pica.remove_device(handle);
+                        device_sinks.remove(&handle);
+                    }
+                }
+            }
+        }
+
+        drain_packets(&mut pica, &device_sinks);
+    }
 }

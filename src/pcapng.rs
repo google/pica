@@ -12,68 +12,82 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(clippy::unused_io_amount)]
+//! PCAPng packet capture encoding (link type 293).
 
-use parking_lot::Mutex;
 use std::io::Write;
-use std::path::Path;
-use std::time::Instant;
+use std::time::Duration;
 
-pub struct File {
-    file: Mutex<std::fs::File>,
-    start_time: Instant,
+/// 48-byte PCAPng file header (Section Header Block and Interface Description
+/// Block for link type 293).
+pub const HEADER: [u8; 48] = [
+    // Section Header Block (28 bytes)
+    0x0A, 0x0D, 0x0D, 0x0A, // Block Type (0x0A0D_0D0A)
+    28, 0, 0, 0, // Block Total Length (28)
+    0x4D, 0x3C, 0x2B, 0x1A, // Byte-Order Magic (0x1A2B_3C4D)
+    1, 0, // Major Version (1)
+    0, 0, // Minor Version (0)
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Section Length (not specified)
+    28, 0, 0, 0, // Block Total Length (28)
+    // Interface Description Block (20 bytes)
+    0x01, 0x00, 0x00, 0x00, // Block Type (0x0000_0001)
+    20, 0, 0, 0, // Block Total Length (20)
+    0x25, 0x01, // LinkType (293)
+    0, 0, // Reserved (0)
+    0, 0, 0, 0, // SnapLen (no limit)
+    20, 0, 0, 0, // Block Total Length (20)
+];
+
+const PADDING: &[u8] = &[0; 3];
+
+/// A non-allocating PCAPng Enhanced Packet Block wrapping a packet slice.
+#[derive(Clone, Copy, Debug)]
+pub struct Packet<'a> {
+    header: [u8; 28],
+    payload: &'a [u8],
+    padding: &'static [u8],
+    footer: [u8; 4],
 }
 
-pub enum Direction {
-    Rx,
-    Tx,
-}
+impl<'a> Packet<'a> {
+    /// Wraps `payload` in a PCAPng Enhanced Packet Block with the given `timestamp`.
+    pub fn new(payload: &'a [u8], timestamp: Duration) -> Self {
+        let padding_len = (4 - (payload.len() % 4)) % 4;
+        let block_total_length = (payload.len() + padding_len + 32) as u32;
+        let timestamp_us = timestamp.as_micros();
+        let packet_len = payload.len() as u32;
 
-impl File {
-    pub fn create<P: AsRef<Path>>(path: P) -> std::io::Result<File> {
-        let mut file = std::fs::File::create(path)?;
+        let [bt0, bt1, bt2, bt3] = 0x0000_0006_u32.to_le_bytes();
+        let [bl0, bl1, bl2, bl3] = block_total_length.to_le_bytes();
+        let [th0, th1, th2, th3] = ((timestamp_us >> 32) as u32).to_le_bytes();
+        let [tl0, tl1, tl2, tl3] = (timestamp_us as u32).to_le_bytes();
+        let [pl0, pl1, pl2, pl3] = packet_len.to_le_bytes();
 
-        // PCAPng files must start with a Section Header Block.
-        file.write(&u32::to_le_bytes(0x0A0D_0D0A))?; // Block Type
-        file.write(&u32::to_le_bytes(28))?; // Block Total Length
-        file.write(&u32::to_le_bytes(0x1A2B_3C4D))?; // Byte-Order Magic
-        file.write(&u16::to_le_bytes(1))?; // Major Version
-        file.write(&u16::to_le_bytes(0))?; // Minor Version
-        file.write(&u64::to_le_bytes(0xFFFF_FFFF_FFFF_FFFF))?; // Section Length (not specified)
-        file.write(&u32::to_le_bytes(28))?; // Block Total Length
-
-        // Write the Interface Description Block used for all
-        // UCI records.
-        file.write(&u32::to_le_bytes(0x0000_0001))?; // Block Type
-        file.write(&u32::to_le_bytes(20))?; // Block Total Length
-        file.write(&u16::to_le_bytes(293))?; // LinkType
-        file.write(&u16::to_le_bytes(0))?; // Reserved
-        file.write(&u32::to_le_bytes(0))?; // SnapLen (no limit)
-        file.write(&u32::to_le_bytes(20))?; // Block Total Length
-
-        Ok(File {
-            file: Mutex::new(file),
-            start_time: Instant::now(),
-        })
+        Self {
+            header: [
+                bt0, bt1, bt2, bt3, // Block Type (0x0000_0006)
+                bl0, bl1, bl2, bl3, // Block Total Length
+                0, 0, 0, 0, // Interface ID (0)
+                th0, th1, th2, th3, // Timestamp (High)
+                tl0, tl1, tl2, tl3, // Timestamp (Low)
+                pl0, pl1, pl2, pl3, // Captured Packet Length
+                pl0, pl1, pl2, pl3, // Original Packet Length
+            ],
+            payload,
+            padding: PADDING.get(..padding_len).unwrap_or_default(),
+            footer: [bl0, bl1, bl2, bl3],
+        }
     }
 
-    pub fn write(&self, packet: &[u8], _dir: Direction) -> std::io::Result<()> {
-        let packet_data_padding = 4 - (packet.len() % 4);
-        let block_total_length = (packet.len() + packet_data_padding + 32) as u32;
-        let timestamp = self.start_time.elapsed().as_micros();
-        let mut file = self.file.lock();
+    /// Returns the four constituent byte slices of this Enhanced Packet Block.
+    pub const fn as_slices(&self) -> [&[u8]; 4] {
+        [&self.header, self.payload, self.padding, &self.footer]
+    }
 
-        // Wrap the packet inside an Enhanced Packet Block.
-        file.write(&u32::to_le_bytes(0x0000_0006))?; // Block Type
-        file.write(&u32::to_le_bytes(block_total_length))?;
-        file.write(&u32::to_le_bytes(0))?; // Interface ID
-        file.write(&u32::to_le_bytes((timestamp >> 32) as u32))?; // Timestamp (High)
-        file.write(&u32::to_le_bytes(timestamp as u32))?; // Timestamp (Low)
-        file.write(&u32::to_le_bytes(packet.len() as u32))?; // Captured Packet Length
-        file.write(&u32::to_le_bytes(packet.len() as u32))?; // Original Packet Length
-        file.write(packet)?;
-        file.write(&vec![0; packet_data_padding])?;
-        file.write(&u32::to_le_bytes(block_total_length))?; // Block Total Length
+    /// Writes the Enhanced Packet Block to a synchronous [`Write`] implementor.
+    pub fn write_to(&self, mut writer: impl Write) -> std::io::Result<()> {
+        for slice in self.as_slices() {
+            writer.write_all(slice)?;
+        }
         Ok(())
     }
 }
