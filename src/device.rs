@@ -113,7 +113,6 @@ pub struct Device {
     /// bad host state.
     is_reset: bool,
     pub handle: usize,
-    pub mac_address: MacAddress,
     config: DeviceConfig,
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
@@ -144,13 +143,11 @@ fn packet_error_status<T, E>(result: Result<T, E>) -> uci::Status {
 impl Device {
     pub fn new(
         handle: usize,
-        mac_address: MacAddress,
         tx: mpsc::UnboundedSender<UciPacket>,
         pica_tx: mpsc::Sender<PicaCommand>,
     ) -> Self {
         Device {
             handle,
-            mac_address,
             is_reset: false,
             config: Default::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
@@ -241,12 +238,7 @@ impl Device {
         tracing::debug!("[{}] DeviceReset", self.handle);
         tracing::debug!("  reset_config={reset_config:?}");
 
-        *self = Device::new(
-            self.handle,
-            self.mac_address,
-            self.tx.clone(),
-            self.pica_tx.clone(),
-        );
+        *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
         self.is_reset = true;
         self.init();
 

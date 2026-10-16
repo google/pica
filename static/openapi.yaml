@@ -50,20 +50,25 @@ components:
   schemas:
     Device:
       description:
-        A Device is a generic term representing an Anchor, noted `anchor`,
-        or an UCI Device as described in the Fira UCI Specification, noted `uci`.
-      type: object
-      properties:
-        category:
-            $ref: "#/components/schemas/Category"
-        mac_address:
-            $ref: "#/components/schemas/MacAddress"
-        position:
-            $ref: "#/components/schemas/Position"
+        A Device is a generic term representing an Anchor, noted `Anchor`,
+        or an UCI Device as described in the Fira UCI Specification, noted `Uci`.
+      allOf:
+        - $ref: "#/components/schemas/Position"
+        - type: object
+          properties:
+            handle:
+              $ref: "#/components/schemas/Handle"
+            category:
+              $ref: "#/components/schemas/Category"
+            mac_address:
+              $ref: "#/components/schemas/MacAddress"
+    Handle:
+      description: Unique identifier of the device in Pica
+      type: integer
     Category:
-      description: Represents the device's category, uci or anchor.
+      description: Represents the device's category, `Uci` or `Anchor`.
       type: string
-      enum: [uci, anchor]
+      enum: [Uci, Anchor]
     MacAddress:
       description: |
         Valid UWB mac addresses must follow the above format
@@ -101,6 +106,13 @@ components:
           minimum: -180
           maximum: 180
   parameters:
+    Handle:
+      name: handle
+      in: path
+      description: Unique identifier of the device in Pica
+      required: true
+      schema:
+        type: integer
     MacAddress:
       name: mac-address
       in: path
@@ -113,22 +125,21 @@ components:
       schema:
         type: string
 paths:
-  /init-uci-device/{mac-address}:
+  /init-uci-device/{handle}:
     post:
       tags: [Commands]
-      summary: Init a new uwb subsystem and instantiate an UCI Device
+      summary: Set the initial position of a UCI Device
       description:
-        This command should be call by any host wishing to use Pica as an UWB Subsystem
-        and shall be called only once by UCI Device.
+        Set the position for an existing UCI device by handle.
       parameters:
-        - $ref: "#/components/parameters/MacAddress"
+        - $ref: "#/components/parameters/Handle"
       requestBody:
         $ref: "#/components/requestBodies/PositionBodyOptionnal"
       responses:
         '200': { description: Success }
-        '403': { description: Device already initialized }
+        '404': { description: Unknown device handle }
         '500': { description: Internal error }
-  /set-position/{mac-address}:
+  /set-position/{handle}:
     post:
       tags: [Commands]
       summary: Set the position of a Device
@@ -136,7 +147,7 @@ paths:
         Set the position of the Device for x, y, z, yaw, pitch and roll. Pica will trigger the
         `neighbor-updated` event for every other device present in the scene closer that the maximum distance UINT16_MAX cm.
       parameters:
-        - $ref: "#/components/parameters/MacAddress"
+        - $ref: "#/components/parameters/Handle"
       requestBody:
         $ref: "#/components/requestBodies/PositionBodyRequired"
       responses:
@@ -156,10 +167,18 @@ paths:
       requestBody:
         $ref: "#/components/requestBodies/PositionBodyOptionnal"
       responses:
-        '200': { description: Success }
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  handle:
+                    $ref: "#/components/schemas/Handle"
         '406': { description: Wrong argument }
         '409': { description: Anchor already exist }
-  /destroy-anchor/{mac-address}:
+  /destroy-anchor/{handle}:
     delete:
       tags: [Commands]
       summary: Delete the anchor Device
@@ -167,7 +186,7 @@ paths:
         Delete the anchor Device from the scene
         sessions
       parameters:
-        - $ref: "#/components/parameters/MacAddress"
+        - $ref: "#/components/parameters/Handle"
       responses:
         '200': { description: Success }
         '404': { description: Anchor not found }
@@ -185,9 +204,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Device"
+                type: object
+                required:
+                  - devices
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Device"
         '500': { description: Internal error }
   /events:
     get:
@@ -227,10 +251,10 @@ paths:
                            data:
                              type: object
                              properties:
+                              handle:
+                                  $ref: "#/components/schemas/Handle"
                               category:
                                   $ref: "#/components/schemas/Category"
-                              mac_address:
-                                  $ref: "#/components/schemas/MacAddress"
                       - type: object
                         properties:
                            event:
@@ -246,14 +270,14 @@ paths:
                            data:
                              type: object
                              properties:
+                               source_handle:
+                                 $ref: "#/components/schemas/Handle"
                                source_category:
                                  $ref: "#/components/schemas/Category"
-                               source_mac_address:
-                                 $ref: "#/components/schemas/MacAddress"
+                               destination_handle:
+                                 $ref: "#/components/schemas/Handle"
                                destination_category:
                                  $ref: "#/components/schemas/Category"
-                               destination_mac_address:
-                                 $ref: "#/components/schemas/MacAddress"
                                distance:
                                  description: Distance in cm.
                                  type: integer # u16
