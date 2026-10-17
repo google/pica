@@ -13,21 +13,17 @@
 // limitations under the License.
 
 use crate::MacAddress;
-use crate::PicaCommand;
 use crate::packets::uci::{self, *};
 
 use std::collections::{HashMap, hash_map::Entry};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use pdl_runtime::Packet;
-use tokio::sync::mpsc;
-use tokio::time;
 
 use super::UciPacket;
 use super::app_config::SubSessionKey;
 use super::session::Session;
 
-pub const MAX_DEVICE: usize = 4;
 pub const MAX_SESSION: usize = 255;
 
 const UCI_VERSION: u16 = 0x0002; // Version 2.0
@@ -117,11 +113,33 @@ pub struct Device {
     /// [UCI] 5. UWBS Device State Machine
     state: DeviceState,
     sessions: HashMap<u32, Session>,
-    pub tx: mpsc::UnboundedSender<UciPacket>,
-    pica_tx: mpsc::Sender<PicaCommand>,
     country_code: [u8; 2],
     pub n_active_sessions: usize,
     boot_time: Instant,
+}
+
+pub(crate) enum DeviceEffect {
+    SendPacket(UciPacket),
+    StopControleeRanging {
+        mac_address: MacAddress,
+        session_id: u32,
+    },
+}
+
+impl DeviceEffect {
+    fn send_control(packet: impl Packet) -> Self {
+        Self::SendPacket(
+            packet
+                .encode_to_vec()
+                .expect("failed to encode control packet"),
+        )
+    }
+
+    fn reply(rsp: impl Packet, effects: Vec<Self>) -> Result<Vec<Self>, pdl_runtime::EncodeError> {
+        Ok(std::iter::once(Self::SendPacket(rsp.encode_to_vec()?))
+            .chain(effects)
+            .collect())
+    }
 }
 
 fn command_error_response(gid: GroupId, oid: u8, status: uci::Status) -> ControlPacket {
@@ -141,55 +159,71 @@ fn packet_error_status<T, E>(result: Result<T, E>) -> uci::Status {
 }
 
 impl Device {
-    pub fn new(
-        handle: usize,
-        tx: mpsc::UnboundedSender<UciPacket>,
-        pica_tx: mpsc::Sender<PicaCommand>,
-    ) -> Self {
+    pub fn new(handle: usize) -> Self {
         Device {
             handle,
             is_reset: false,
             config: Default::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
-            tx,
-            pica_tx,
             country_code: Default::default(),
             n_active_sessions: 0,
             boot_time: Instant::now(),
         }
     }
 
-    pub fn set_state(&mut self, device_state: DeviceState) {
-        // No transition: ignore
+    #[must_use]
+    pub fn set_state(&mut self, device_state: DeviceState) -> Option<CoreDeviceStatusNtf> {
         if device_state == self.state {
-            return;
+            return None;
         }
 
-        // Send status notification
         self.state = device_state;
-        let tx = self.tx.clone();
-        tokio::spawn(async move {
-            time::sleep(Duration::from_millis(5)).await;
-            if let Err(e) = tx.send(
-                CoreDeviceStatusNtf { device_state }
-                    .encode_to_vec()
-                    .expect("failed to encode CoreDeviceStatusNtf"),
-            ) {
-                tracing::debug!("Channel closed: {e}");
-            }
-        });
+        Some(CoreDeviceStatusNtf { device_state })
     }
 
-    pub fn init(&mut self) {
-        self.set_state(DeviceState::DeviceStateReady);
+    #[must_use]
+    pub(crate) fn init(&mut self) -> Vec<DeviceEffect> {
+        self.set_state(DeviceState::DeviceStateReady)
+            .into_iter()
+            .map(DeviceEffect::send_control)
+            .collect()
     }
 
-    pub(crate) fn on_session_deactivated(&mut self) {
+    #[must_use]
+    fn on_session_deactivated(&mut self) -> Option<CoreDeviceStatusNtf> {
         self.n_active_sessions = self.n_active_sessions.saturating_sub(1);
         if self.n_active_sessions == 0 {
-            self.set_state(DeviceState::DeviceStateReady);
+            self.set_state(DeviceState::DeviceStateReady)
+        } else {
+            None
         }
+    }
+
+    #[must_use]
+    pub(crate) fn stop_active_session(
+        &mut self,
+        session_id: u32,
+        reason_code: ReasonCode,
+    ) -> Vec<DeviceEffect> {
+        let Some(session) = self.session_mut(session_id) else {
+            return Vec::new();
+        };
+
+        if session.session_state() != SessionState::SessionStateActive {
+            tracing::warn!("stop_active_session: session is not active !");
+            return Vec::new();
+        }
+
+        session.stop_ranging();
+        let session_ntf = session
+            .set_state(SessionState::SessionStateIdle, reason_code)
+            .map(DeviceEffect::send_control);
+        let device_ntf = self
+            .on_session_deactivated()
+            .map(DeviceEffect::send_control);
+
+        session_ntf.into_iter().chain(device_ntf).collect()
     }
 
     pub fn session(&self, session_id: u32) -> Option<&Session> {
@@ -198,6 +232,21 @@ impl Device {
 
     pub fn session_mut(&mut self, session_id: u32) -> Option<&mut Session> {
         self.sessions.get_mut(&session_id)
+    }
+
+    pub(crate) fn next_ranging_deadline(&self) -> Option<Instant> {
+        self.sessions
+            .values()
+            .filter_map(Session::next_ranging_at)
+            .min()
+    }
+
+    pub(crate) fn poll_ranging(&mut self, now: Instant) -> impl Iterator<Item = u32> + '_ {
+        self.sessions
+            .iter_mut()
+            .filter_map(move |(&session_id, session)| {
+                session.poll_ranging(now).then_some(session_id)
+            })
     }
 
     pub fn can_start_ranging(&self, peer_session: &Session, session_id: u32) -> bool {
@@ -217,34 +266,26 @@ impl Device {
             .is_some_and(|session| session.can_receive_data_transfer(dst_mac_address))
     }
 
-    // Send a response or notification to the Host.
-    fn send_raw_control(&mut self, packet: Vec<u8>) {
-        let _ = self.tx.send(packet);
-    }
-
-    // Send a response or notification to the Host.
-    fn send_control(&mut self, packet: impl Packet) {
-        self.send_raw_control(
-            packet
-                .encode_to_vec()
-                .expect("failed to encode control packet"),
-        );
-    }
-
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
-    fn core_device_reset(&mut self, cmd: CoreDeviceResetCmd) -> CoreDeviceResetRsp {
+    fn core_device_reset(
+        &mut self,
+        cmd: CoreDeviceResetCmd,
+    ) -> (CoreDeviceResetRsp, Vec<DeviceEffect>) {
         let reset_config = cmd.reset_config;
         tracing::debug!("[{}] DeviceReset", self.handle);
         tracing::debug!("  reset_config={reset_config:?}");
 
-        *self = Device::new(self.handle, self.tx.clone(), self.pica_tx.clone());
+        *self = Device::new(self.handle);
         self.is_reset = true;
-        self.init();
+        let effects = self.init();
 
-        CoreDeviceResetRsp {
-            status: uci::Status::Ok,
-        }
+        (
+            CoreDeviceResetRsp {
+                status: uci::Status::Ok,
+            },
+            effects,
+        )
     }
 
     fn core_get_device_info(&self, _cmd: CoreGetDeviceInfoCmd) -> CoreGetDeviceInfoRsp {
@@ -372,7 +413,7 @@ impl Device {
         }
     }
 
-    fn session_init(&mut self, cmd: SessionInitCmd) -> SessionInitRsp {
+    fn session_init(&mut self, cmd: SessionInitCmd) -> (SessionInitRsp, Vec<DeviceEffect>) {
         let session_id = cmd.session_id;
         let session_type = cmd.session_type;
 
@@ -381,41 +422,74 @@ impl Device {
         tracing::debug!("  session_type={session_type:?}");
 
         if self.sessions.len() >= MAX_SESSION {
-            return SessionInitRsp {
-                status: uci::Status::ErrorMaxSessionsExceeded,
-            };
+            return (
+                SessionInitRsp {
+                    status: uci::Status::ErrorMaxSessionsExceeded,
+                },
+                Vec::new(),
+            );
         }
 
         match self.sessions.entry(session_id) {
-            Entry::Occupied(_) => SessionInitRsp {
-                status: uci::Status::ErrorSessionDuplicate,
-            },
-            Entry::Vacant(entry) => {
-                let session = Session::new(session_id, session_type, self.handle, self.tx.clone());
-                entry.insert(session).init();
+            Entry::Occupied(_) => (
                 SessionInitRsp {
-                    status: uci::Status::Ok,
-                }
+                    status: uci::Status::ErrorSessionDuplicate,
+                },
+                Vec::new(),
+            ),
+            Entry::Vacant(entry) => {
+                let mut session = Session::new(session_id, session_type, self.handle);
+                let effects = session
+                    .init()
+                    .into_iter()
+                    .map(DeviceEffect::send_control)
+                    .collect();
+                entry.insert(session);
+                (
+                    SessionInitRsp {
+                        status: uci::Status::Ok,
+                    },
+                    effects,
+                )
             }
         }
     }
 
-    fn session_deinit(&mut self, cmd: SessionDeinitCmd) -> SessionDeinitRsp {
+    fn session_deinit(&mut self, cmd: SessionDeinitCmd) -> (SessionDeinitRsp, Vec<DeviceEffect>) {
         let session_id = cmd.session_token;
         tracing::debug!("[{}] Session deinit", self.handle);
         tracing::debug!("  session_id=0x{session_id:x}");
 
-        let status = match self.sessions.get_mut(&session_id) {
-            Some(session) => {
-                if session.state == SessionState::SessionStateActive {
-                    self.on_session_deactivated();
-                }
-                self.sessions.remove(&session_id);
-                uci::Status::Ok
-            }
-            None => uci::Status::ErrorSessionNotExist,
+        let Some(mut session) = self.sessions.remove(&session_id) else {
+            return (
+                SessionDeinitRsp {
+                    status: uci::Status::ErrorSessionNotExist,
+                },
+                Vec::new(),
+            );
         };
-        SessionDeinitRsp { status }
+
+        let was_active = session.state == SessionState::SessionStateActive;
+        let session_ntf = session
+            .set_state(
+                SessionState::SessionStateDeinit,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            )
+            .map(DeviceEffect::send_control);
+        let device_ntf = if was_active {
+            self.on_session_deactivated()
+                .map(DeviceEffect::send_control)
+        } else {
+            None
+        };
+        let effects = session_ntf.into_iter().chain(device_ntf).collect();
+
+        (
+            SessionDeinitRsp {
+                status: uci::Status::Ok,
+            },
+            effects,
+        )
     }
 
     fn session_get_count(&self, _cmd: SessionGetCountCmd) -> SessionGetCountRsp {
@@ -446,7 +520,10 @@ impl Device {
         }
     }
 
-    fn session_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> SessionSetAppConfigRsp {
+    fn session_set_app_config(
+        &mut self,
+        cmd: SessionSetAppConfigCmd,
+    ) -> (SessionSetAppConfigRsp, Vec<DeviceEffect>) {
         let session_handle = cmd.session_token;
 
         tracing::debug!(
@@ -455,17 +532,23 @@ impl Device {
         );
 
         let Some(session) = self.sessions.get_mut(&session_handle) else {
-            return SessionSetAppConfigRsp {
-                cfg_status: Vec::new(),
-                status: uci::Status::ErrorSessionNotExist,
-            };
+            return (
+                SessionSetAppConfigRsp {
+                    cfg_status: Vec::new(),
+                    status: uci::Status::ErrorSessionNotExist,
+                },
+                Vec::new(),
+            );
         };
 
         if !session.is_supported_session_type() {
-            return SessionSetAppConfigRsp {
-                status: uci::Status::Rejected,
-                cfg_status: vec![],
-            };
+            return (
+                SessionSetAppConfigRsp {
+                    status: uci::Status::Rejected,
+                    cfg_status: vec![],
+                },
+                Vec::new(),
+            );
         }
 
         if session.state == SessionState::SessionStateActive {
@@ -475,71 +558,95 @@ impl Device {
                 .iter()
                 .any(|cfg| IMMUTABLE_PARAMETERS.contains(&cfg.cfg_id))
             {
-                return SessionSetAppConfigRsp {
-                    status: uci::Status::ErrorSessionActive,
-                    cfg_status: vec![],
-                };
+                return (
+                    SessionSetAppConfigRsp {
+                        status: uci::Status::ErrorSessionActive,
+                        cfg_status: vec![],
+                    },
+                    Vec::new(),
+                );
             }
         }
 
-        let (status, invalid_parameters) = if !matches!(
+        if !matches!(
             session.state,
             SessionState::SessionStateInit
                 | SessionState::SessionStateIdle
                 | SessionState::SessionStateActive
         ) {
-            (uci::Status::Rejected, Vec::new())
-        } else {
-            let mut app_config = session.app_config.clone();
-            let mut invalid_parameters = vec![];
-            // Defer DeviceMacAddress and DstMacAddress so MacAddressMode and
-            // NumberOfControlees take effect first regardless of TLV order in the command.
-            let (deferred_tlvs, immediate_tlvs): (Vec<_>, Vec<_>) =
-                cmd.tlvs.into_iter().partition(|cfg| {
-                    matches!(
-                        cfg.cfg_id,
-                        uci::AppConfigTlvType::DeviceMacAddress
-                            | uci::AppConfigTlvType::DstMacAddress
-                    )
-                });
-            for cfg in immediate_tlvs.into_iter().chain(deferred_tlvs) {
-                match app_config.set(cfg.cfg_id, &cfg.v) {
-                    Ok(_) => (),
-                    Err(_) => invalid_parameters.push(AppConfigStatus {
-                        cfg_id: cfg.cfg_id,
-                        status: uci::Status::InvalidParam,
-                    }),
-                }
-            }
+            return (
+                SessionSetAppConfigRsp {
+                    status: uci::Status::Rejected,
+                    cfg_status: Vec::new(),
+                },
+                Vec::new(),
+            );
+        }
 
-            if !app_config.has_mandatory_parameters() {
-                tracing::error!(
-                    "[{}:0x{session_handle:x}] missing mandatory APP config parameters",
-                    self.handle
-                );
-                return SessionSetAppConfigRsp {
+        let mut app_config = session.app_config.clone();
+        let mut invalid_parameters = vec![];
+        // Defer DeviceMacAddress and DstMacAddress so MacAddressMode and
+        // NumberOfControlees take effect first regardless of TLV order in the command.
+        let (deferred_tlvs, immediate_tlvs): (Vec<_>, Vec<_>) =
+            cmd.tlvs.into_iter().partition(|cfg| {
+                matches!(
+                    cfg.cfg_id,
+                    uci::AppConfigTlvType::DeviceMacAddress | uci::AppConfigTlvType::DstMacAddress
+                )
+            });
+        for cfg in immediate_tlvs.into_iter().chain(deferred_tlvs) {
+            match app_config.set(cfg.cfg_id, &cfg.v) {
+                Ok(_) => (),
+                Err(_) => invalid_parameters.push(AppConfigStatus {
+                    cfg_id: cfg.cfg_id,
+                    status: uci::Status::InvalidParam,
+                }),
+            }
+        }
+
+        if !app_config.has_mandatory_parameters() {
+            tracing::error!(
+                "[{}:0x{session_handle:x}] missing mandatory APP config parameters",
+                self.handle
+            );
+            return (
+                SessionSetAppConfigRsp {
                     status: uci::Status::Rejected,
                     cfg_status: vec![],
-                };
-            }
+                },
+                Vec::new(),
+            );
+        }
 
-            if invalid_parameters.is_empty() {
-                session.app_config = app_config;
-                if session.state == SessionState::SessionStateInit {
-                    session.set_state(
+        if invalid_parameters.is_empty() {
+            session.app_config = app_config;
+            let effects = if session.state == SessionState::SessionStateInit {
+                session
+                    .set_state(
                         SessionState::SessionStateIdle,
                         ReasonCode::StateChangeWithSessionManagementCommands,
-                    );
-                }
-                (uci::Status::Ok, invalid_parameters)
+                    )
+                    .into_iter()
+                    .map(DeviceEffect::send_control)
+                    .collect()
             } else {
-                (uci::Status::InvalidParam, invalid_parameters)
-            }
-        };
-
-        SessionSetAppConfigRsp {
-            status,
-            cfg_status: invalid_parameters,
+                Vec::new()
+            };
+            (
+                SessionSetAppConfigRsp {
+                    status: uci::Status::Ok,
+                    cfg_status: invalid_parameters,
+                },
+                effects,
+            )
+        } else {
+            (
+                SessionSetAppConfigRsp {
+                    status: uci::Status::InvalidParam,
+                    cfg_status: invalid_parameters,
+                },
+                Vec::new(),
+            )
         }
     }
 
@@ -607,7 +714,7 @@ impl Device {
     fn session_update_controller_multicast_list(
         &mut self,
         cmd: SessionUpdateControllerMulticastListCmd,
-    ) -> SessionUpdateControllerMulticastListRsp {
+    ) -> (SessionUpdateControllerMulticastListRsp, Vec<DeviceEffect>) {
         let session_handle = cmd.session_token;
 
         tracing::debug!(
@@ -616,10 +723,13 @@ impl Device {
         );
 
         let Some(session) = self.sessions.get_mut(&session_handle) else {
-            return SessionUpdateControllerMulticastListRsp {
-                status: uci::Status::ErrorSessionNotExist,
-                controlee_status: vec![],
-            };
+            return (
+                SessionUpdateControllerMulticastListRsp {
+                    status: uci::Status::ErrorSessionNotExist,
+                    controlee_status: vec![],
+                },
+                Vec::new(),
+            );
         };
 
         if (session.state != SessionState::SessionStateActive
@@ -627,10 +737,13 @@ impl Device {
             || session.app_config.device_type() != Some(DeviceType::Controller)
             || session.app_config.multi_node_mode() != Some(MultiNodeMode::OneToMany)
         {
-            return SessionUpdateControllerMulticastListRsp {
-                status: uci::Status::Rejected,
-                controlee_status: vec![],
-            };
+            return (
+                SessionUpdateControllerMulticastListRsp {
+                    status: uci::Status::Rejected,
+                    controlee_status: vec![],
+                },
+                Vec::new(),
+            );
         }
         let action = cmd.action;
         let mut dst_addresses: Vec<MacAddress> = session.app_config.dst_mac_address().collect();
@@ -646,10 +759,13 @@ impl Device {
                         .map(|controlee| controlee.into())
                         .collect()
                 } else {
-                    return SessionUpdateControllerMulticastListRsp {
-                        status: uci::Status::SyntaxError,
-                        controlee_status: vec![],
-                    };
+                    return (
+                        SessionUpdateControllerMulticastListRsp {
+                            status: uci::Status::SyntaxError,
+                            controlee_status: vec![],
+                        },
+                        Vec::new(),
+                    );
                 }
             }
             UpdateMulticastListAction::AddControleeWithShortSubSessionKey => {
@@ -664,10 +780,13 @@ impl Device {
                         .map(|controlee| controlee.into())
                         .collect()
                 } else {
-                    return SessionUpdateControllerMulticastListRsp {
-                        status: uci::Status::SyntaxError,
-                        controlee_status: vec![],
-                    };
+                    return (
+                        SessionUpdateControllerMulticastListRsp {
+                            status: uci::Status::SyntaxError,
+                            controlee_status: vec![],
+                        },
+                        Vec::new(),
+                    );
                 }
             }
             UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
@@ -682,16 +801,20 @@ impl Device {
                         .map(|controlee| controlee.into())
                         .collect()
                 } else {
-                    return SessionUpdateControllerMulticastListRsp {
-                        status: uci::Status::SyntaxError,
-                        controlee_status: vec![],
-                    };
+                    return (
+                        SessionUpdateControllerMulticastListRsp {
+                            status: uci::Status::SyntaxError,
+                            controlee_status: vec![],
+                        },
+                        Vec::new(),
+                    );
                 }
             }
         };
         let mut controlee_status_ntf = Vec::new();
         let mut controlee_status_rsp = Vec::new();
         let mut status = uci::Status::Ok;
+        let mut effects = Vec::new();
 
         match action {
             UpdateMulticastListAction::AddControlee
@@ -737,7 +860,6 @@ impl Device {
             }
             UpdateMulticastListAction::RemoveControlee => {
                 for controlee in new_controlees {
-                    let pica_tx = self.pica_tx.clone();
                     let address = MacAddress::Short(controlee.short_address);
                     let attempt_count = session.app_config.in_band_termination_attempt_count();
                     let mut update_status = MulticastUpdateStatus::OkMulticastListUpdate;
@@ -751,16 +873,9 @@ impl Device {
                         // for IN_BAND_TERMINATION_ATTEMPT_COUNT times to the corresponding
                         // Controlee.
                         if attempt_count != 0 {
-                            tokio::spawn(async move {
-                                for _ in 0..attempt_count {
-                                    if let Err(e) = pica_tx
-                                        .send(PicaCommand::StopRanging(address, session_handle))
-                                        .await
-                                    {
-                                        tracing::debug!("Channel closed: {e}");
-                                        return;
-                                    }
-                                }
+                            effects.push(DeviceEffect::StopControleeRanging {
+                                mac_address: address,
+                                session_id: session_handle,
                             });
                         }
                         // Following requirements are applicable when the action is set to Delete (Action field set to 0x01):
@@ -784,119 +899,134 @@ impl Device {
             }
         }
 
-        if !controlee_status_ntf.is_empty() {
-            let tx = self.tx.clone();
-            tokio::spawn(async move {
-                // Sleep for 5ms to make sure the notification is not being
-                // sent before the response.
-                // TODO(#84) remove the sleep.
-                time::sleep(Duration::from_millis(5)).await;
-                if let Err(e) = tx.send(
-                    SessionUpdateControllerMulticastListNtf {
-                        controlee_status: controlee_status_ntf,
-                        session_token: session_handle,
-                    }
-                    .encode_to_vec()
-                    .expect("failed to encode SessionUpdateControllerMulticastListNtf"),
-                ) {
-                    tracing::debug!("Channel closed: {e}");
-                }
-            });
-        }
         session
             .app_config
             .set_number_of_controlees(dst_addresses.len() as u8);
         session.app_config.set_dst_mac_address(&dst_addresses);
+
         // If the multicast list becomes empty, the UWBS shall move the session to
         // SESSION_STATE_IDLE by sending the SESSION_STATUS_NTF with Reason Code
         // set to ERROR_INVALID_NUM_OF_CONTROLEES.
-        if dst_addresses.is_empty() && session.state == SessionState::SessionStateActive {
-            session.stop_ranging_task();
-            session.set_state(
-                SessionState::SessionStateIdle,
-                ReasonCode::ErrorInvalidNumOfControlees,
+        let deactivated =
+            dst_addresses.is_empty() && session.state == SessionState::SessionStateActive;
+        if deactivated {
+            session.stop_ranging();
+            effects.extend(
+                session
+                    .set_state(
+                        SessionState::SessionStateIdle,
+                        ReasonCode::ErrorInvalidNumOfControlees,
+                    )
+                    .map(DeviceEffect::send_control),
             );
-            self.on_session_deactivated();
         }
-        SessionUpdateControllerMulticastListRsp {
-            status,
-            controlee_status: controlee_status_rsp,
+
+        if !controlee_status_ntf.is_empty() {
+            effects.push(DeviceEffect::send_control(
+                SessionUpdateControllerMulticastListNtf {
+                    controlee_status: controlee_status_ntf,
+                    session_token: session_handle,
+                },
+            ));
         }
+
+        if deactivated {
+            effects.extend(
+                self.on_session_deactivated()
+                    .map(DeviceEffect::send_control),
+            );
+        }
+
+        (
+            SessionUpdateControllerMulticastListRsp {
+                status,
+                controlee_status: controlee_status_rsp,
+            },
+            effects,
+        )
     }
 
-    fn session_start(&mut self, cmd: SessionStartCmd) -> SessionStartRsp {
+    fn session_start(&mut self, cmd: SessionStartCmd) -> (SessionStartRsp, Vec<DeviceEffect>) {
         let session_id = cmd.session_id;
 
         tracing::debug!("[{}:0x{session_id:x}] Session Start", self.handle);
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
-            return SessionStartRsp {
-                status: uci::Status::ErrorSessionNotExist,
-            };
+            return (
+                SessionStartRsp {
+                    status: uci::Status::ErrorSessionNotExist,
+                },
+                Vec::new(),
+            );
         };
 
         if session.state != SessionState::SessionStateIdle {
-            return SessionStartRsp {
-                status: uci::Status::ErrorSessionNotConfigured,
-            };
+            return (
+                SessionStartRsp {
+                    status: uci::Status::ErrorSessionNotConfigured,
+                },
+                Vec::new(),
+            );
         }
 
-        let ranging_interval =
-            time::Duration::from_millis(u64::from(session.app_config.ranging_duration()));
+        session.start_ranging();
 
-        let tx = self.pica_tx.clone();
-        let handle = self.handle;
-        session.ranging_task = Some(tokio::spawn(async move {
-            loop {
-                time::sleep(ranging_interval).await;
-                if let Err(e) = tx.send(PicaCommand::Ranging(handle, session_id)).await {
-                    tracing::debug!("Channel closed: {e}");
-                    return;
-                }
-            }
-        }));
-
-        session.set_state(
-            SessionState::SessionStateActive,
-            ReasonCode::StateChangeWithSessionManagementCommands,
-        );
+        let session_ntf = session
+            .set_state(
+                SessionState::SessionStateActive,
+                ReasonCode::StateChangeWithSessionManagementCommands,
+            )
+            .map(DeviceEffect::send_control);
 
         self.n_active_sessions += 1;
-        self.set_state(DeviceState::DeviceStateActive);
+        let device_ntf = self
+            .set_state(DeviceState::DeviceStateActive)
+            .map(DeviceEffect::send_control);
 
-        SessionStartRsp {
-            status: uci::Status::Ok,
-        }
+        let effects = session_ntf.into_iter().chain(device_ntf).collect();
+
+        (
+            SessionStartRsp {
+                status: uci::Status::Ok,
+            },
+            effects,
+        )
     }
 
-    fn session_stop(&mut self, cmd: SessionStopCmd) -> SessionStopRsp {
+    fn session_stop(&mut self, cmd: SessionStopCmd) -> (SessionStopRsp, Vec<DeviceEffect>) {
         let session_id = cmd.session_id;
 
         tracing::debug!("[{}:0x{session_id:x}] Session Stop", self.handle);
 
         let Some(session) = self.sessions.get_mut(&session_id) else {
-            return SessionStopRsp {
-                status: uci::Status::ErrorSessionNotExist,
-            };
+            return (
+                SessionStopRsp {
+                    status: uci::Status::ErrorSessionNotExist,
+                },
+                Vec::new(),
+            );
         };
 
         if session.state != SessionState::SessionStateActive {
-            return SessionStopRsp {
-                status: uci::Status::Rejected,
-            };
+            return (
+                SessionStopRsp {
+                    status: uci::Status::Rejected,
+                },
+                Vec::new(),
+            );
         }
 
-        session.stop_ranging_task();
-        session.set_state(
-            SessionState::SessionStateIdle,
+        let effects = self.stop_active_session(
+            session_id,
             ReasonCode::StateChangeWithSessionManagementCommands,
         );
 
-        self.on_session_deactivated();
-
-        SessionStopRsp {
-            status: uci::Status::Ok,
-        }
+        (
+            SessionStopRsp {
+                status: uci::Status::Ok,
+            },
+            effects,
+        )
     }
 
     fn session_get_ranging_count(
@@ -1014,7 +1144,7 @@ impl Device {
     fn receive_command(
         &mut self,
         cmd: ControlPacket,
-    ) -> Result<ControlPacket, pdl_runtime::EncodeError> {
+    ) -> Result<Vec<DeviceEffect>, pdl_runtime::EncodeError> {
         use AndroidPacketChild::*;
         use ControlPacketChild::*;
         use CorePacketChild::*;
@@ -1025,10 +1155,12 @@ impl Device {
         // Reset command. The controller responds with Device Status
         // Notification with DEVICE_STATE_ERROR otherwise.
         if !self.is_reset && !cmd.is_core_device_reset_cmd() {
-            return uci::CoreDeviceStatusNtf {
-                device_state: DeviceState::DeviceStateError,
-            }
-            .try_into();
+            return DeviceEffect::reply(
+                uci::CoreDeviceStatusNtf {
+                    device_state: DeviceState::DeviceStateError,
+                },
+                Vec::new(),
+            );
         }
 
         let Ok(child) = cmd.specialize() else {
@@ -1037,66 +1169,117 @@ impl Device {
             } else {
                 uci::Status::SyntaxError
             };
-            return Ok(command_error_response(
-                cmd.gid,
-                cmd.payload.first().copied().unwrap_or(0),
-                status,
-            ));
+            return DeviceEffect::reply(
+                command_error_response(cmd.gid, cmd.payload.first().copied().unwrap_or(0), status),
+                Vec::new(),
+            );
         };
 
         match child {
             CorePacket(cmd) => match cmd.specialize() {
-                Ok(CoreDeviceResetCmd(cmd)) => self.core_device_reset(cmd).try_into(),
-                Ok(CoreGetDeviceInfoCmd(cmd)) => self.core_get_device_info(cmd).try_into(),
-                Ok(CoreGetCapsInfoCmd(cmd)) => self.core_get_caps_info(cmd).try_into(),
-                Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).try_into(),
-                Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).try_into(),
-                Ok(CoreQueryTimeStampCmd(_)) => self.core_query_timestamp().try_into(),
-                child => Ok(command_error_response(
-                    GroupId::Core,
-                    cmd.oid.into(),
-                    packet_error_status(child),
-                )),
+                Ok(CoreDeviceResetCmd(cmd)) => {
+                    let (rsp, effects) = self.core_device_reset(cmd);
+                    DeviceEffect::reply(rsp, effects)
+                }
+                Ok(CoreGetDeviceInfoCmd(cmd)) => {
+                    DeviceEffect::reply(self.core_get_device_info(cmd), Vec::new())
+                }
+                Ok(CoreGetCapsInfoCmd(cmd)) => {
+                    DeviceEffect::reply(self.core_get_caps_info(cmd), Vec::new())
+                }
+                Ok(CoreSetConfigCmd(cmd)) => {
+                    DeviceEffect::reply(self.core_set_config(cmd), Vec::new())
+                }
+                Ok(CoreGetConfigCmd(cmd)) => {
+                    DeviceEffect::reply(self.core_get_config(cmd), Vec::new())
+                }
+                Ok(CoreQueryTimeStampCmd(_)) => {
+                    DeviceEffect::reply(self.core_query_timestamp(), Vec::new())
+                }
+                child => DeviceEffect::reply(
+                    command_error_response(
+                        GroupId::Core,
+                        cmd.oid.into(),
+                        packet_error_status(child),
+                    ),
+                    Vec::new(),
+                ),
             },
             SessionConfigPacket(cmd) => match cmd.specialize() {
-                Ok(SessionInitCmd(cmd)) => self.session_init(cmd).try_into(),
-                Ok(SessionDeinitCmd(cmd)) => self.session_deinit(cmd).try_into(),
-                Ok(SessionGetCountCmd(cmd)) => self.session_get_count(cmd).try_into(),
-                Ok(SessionSetAppConfigCmd(cmd)) => self.session_set_app_config(cmd).try_into(),
-                Ok(SessionGetAppConfigCmd(cmd)) => self.session_get_app_config(cmd).try_into(),
-                Ok(SessionGetStateCmd(cmd)) => self.session_get_state(cmd).try_into(),
-                Ok(SessionUpdateControllerMulticastListCmd(cmd)) => self
-                    .session_update_controller_multicast_list(cmd)
-                    .try_into(),
-                Ok(SessionQueryMaxDataSizeInRangingCmd(cmd)) => {
-                    self.session_query_max_data_size_in_ranging(cmd).try_into()
+                Ok(SessionInitCmd(cmd)) => {
+                    let (rsp, effects) = self.session_init(cmd);
+                    DeviceEffect::reply(rsp, effects)
                 }
-                child => Ok(command_error_response(
-                    GroupId::SessionConfig,
-                    cmd.oid.into(),
-                    packet_error_status(child),
-                )),
+                Ok(SessionDeinitCmd(cmd)) => {
+                    let (rsp, effects) = self.session_deinit(cmd);
+                    DeviceEffect::reply(rsp, effects)
+                }
+                Ok(SessionGetCountCmd(cmd)) => {
+                    DeviceEffect::reply(self.session_get_count(cmd), Vec::new())
+                }
+                Ok(SessionSetAppConfigCmd(cmd)) => {
+                    let (rsp, effects) = self.session_set_app_config(cmd);
+                    DeviceEffect::reply(rsp, effects)
+                }
+                Ok(SessionGetAppConfigCmd(cmd)) => {
+                    DeviceEffect::reply(self.session_get_app_config(cmd), Vec::new())
+                }
+                Ok(SessionGetStateCmd(cmd)) => {
+                    DeviceEffect::reply(self.session_get_state(cmd), Vec::new())
+                }
+                Ok(SessionUpdateControllerMulticastListCmd(cmd)) => {
+                    let (rsp, effects) = self.session_update_controller_multicast_list(cmd);
+                    DeviceEffect::reply(rsp, effects)
+                }
+                Ok(SessionQueryMaxDataSizeInRangingCmd(cmd)) => DeviceEffect::reply(
+                    self.session_query_max_data_size_in_ranging(cmd),
+                    Vec::new(),
+                ),
+                child => DeviceEffect::reply(
+                    command_error_response(
+                        GroupId::SessionConfig,
+                        cmd.oid.into(),
+                        packet_error_status(child),
+                    ),
+                    Vec::new(),
+                ),
             },
             SessionControlPacket(cmd) => match cmd.specialize() {
-                Ok(SessionStartCmd(cmd)) => self.session_start(cmd).try_into(),
-                Ok(SessionStopCmd(cmd)) => self.session_stop(cmd).try_into(),
-                Ok(SessionGetRangingCountCmd(cmd)) => {
-                    self.session_get_ranging_count(cmd).try_into()
+                Ok(SessionStartCmd(cmd)) => {
+                    let (rsp, effects) = self.session_start(cmd);
+                    DeviceEffect::reply(rsp, effects)
                 }
-                child => Ok(command_error_response(
-                    GroupId::SessionControl,
-                    cmd.oid.into(),
-                    packet_error_status(child),
-                )),
+                Ok(SessionStopCmd(cmd)) => {
+                    let (rsp, effects) = self.session_stop(cmd);
+                    DeviceEffect::reply(rsp, effects)
+                }
+                Ok(SessionGetRangingCountCmd(cmd)) => {
+                    DeviceEffect::reply(self.session_get_ranging_count(cmd), Vec::new())
+                }
+                child => DeviceEffect::reply(
+                    command_error_response(
+                        GroupId::SessionControl,
+                        cmd.oid.into(),
+                        packet_error_status(child),
+                    ),
+                    Vec::new(),
+                ),
             },
             AndroidPacket(cmd) => match cmd.specialize() {
-                Ok(AndroidSetCountryCodeCmd(cmd)) => self.android_set_country_code(cmd).try_into(),
-                Ok(AndroidGetPowerStatsCmd(cmd)) => self.android_get_power_stats(cmd).try_into(),
-                child => Ok(command_error_response(
-                    GroupId::VendorAndroid,
-                    cmd.oid.into(),
-                    packet_error_status(child),
-                )),
+                Ok(AndroidSetCountryCodeCmd(cmd)) => {
+                    DeviceEffect::reply(self.android_set_country_code(cmd), Vec::new())
+                }
+                Ok(AndroidGetPowerStatsCmd(cmd)) => {
+                    DeviceEffect::reply(self.android_get_power_stats(cmd), Vec::new())
+                }
+                child => DeviceEffect::reply(
+                    command_error_response(
+                        GroupId::VendorAndroid,
+                        cmd.oid.into(),
+                        packet_error_status(child),
+                    ),
+                    Vec::new(),
+                ),
             },
             ControlPacketChild::None => {
                 // [UCI] 4.3.2 Exception Handling for Control Messages
@@ -1106,18 +1289,21 @@ impl Device {
                 // value of STATUS_UNKNOWN_GID/STATUS_UNKNOWN_OID respectively
                 // and no additional fields.
                 tracing::error!("Unsupported gid {:?}", cmd.gid);
-                Ok(command_error_response(
-                    cmd.gid,
-                    cmd.payload.first().copied().unwrap_or(0),
-                    uci::Status::UnknownGid,
-                ))
+                DeviceEffect::reply(
+                    command_error_response(
+                        cmd.gid,
+                        cmd.payload.first().copied().unwrap_or(0),
+                        uci::Status::UnknownGid,
+                    ),
+                    Vec::new(),
+                )
             }
         }
     }
 
-    pub fn receive_packet(&mut self, packet: Vec<u8>) {
+    pub(crate) fn receive_packet(&mut self, packet: Vec<u8>) -> Vec<DeviceEffect> {
         let Some(&[mt_gid, oid]) = packet.first_chunk::<2>() else {
-            return;
+            return Vec::new();
         };
         let mt = parse_message_type(mt_gid);
         match mt {
@@ -1126,9 +1312,12 @@ impl Device {
                     let notification = self
                         .data_message_snd(packet)
                         .expect("failed to encode data transfer notification");
-                    self.send_control(notification);
+                    vec![DeviceEffect::send_control(notification)]
                 }
-                Err(err) => tracing::error!("failed to parse incoming Data packet: {err}"),
+                Err(err) => {
+                    tracing::error!("failed to parse incoming Data packet: {err}");
+                    Vec::new()
+                }
             },
             MessageType::Command => {
                 match ControlPacket::decode_full(&packet) {
@@ -1158,22 +1347,22 @@ impl Device {
                             1,
                             status.into(),
                         ];
-                        self.send_raw_control(response)
+                        vec![DeviceEffect::SendPacket(response)]
                     }
 
                     // Parsing success, ignore non command packets.
-                    Ok(cmd) => {
-                        let response = self
-                            .receive_command(cmd)
-                            .expect("failed to encode command response");
-                        self.send_control(response);
-                    }
+                    Ok(cmd) => self
+                        .receive_command(cmd)
+                        .expect("failed to encode command response"),
                 }
             }
 
             // Message types for notifications and responses ignored
             // by the controller.
-            _ => tracing::warn!("received unexpected packet of MT {mt:?}"),
+            _ => {
+                tracing::warn!("received unexpected packet of MT {mt:?}");
+                Vec::new()
+            }
         }
     }
 }
