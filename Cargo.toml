@@ -39,7 +39,7 @@ path = "src/bin/http-server/main.rs"
 required-features = ["web"]
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [lints.clippy]
 cast_lossless = "warn"
@@ -58,6 +58,7 @@ unwrap_used = "deny"
 
 [features]
 default = ["cli", "web"]
+ffi = []
 log = ["tracing/log"]
 serde = ["dep:serde"]
 tokio = ["dep:tokio"]
