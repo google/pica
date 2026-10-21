@@ -78,10 +78,10 @@ limitations under the License.
 
   function parse_device(device) {
     const {
-      mac_address, x, y, z, yaw, pitch, roll,
+      handle, x, y, z, yaw, pitch, roll,
     } = device;
     return {
-      mac_address,
+      handle,
       position: { x, y, z },
       yaw,
       pitch,
@@ -108,13 +108,13 @@ limitations under the License.
   map.addEventListener("move", () => info.update());
 
   function set_position({
-    mac_address,
+    handle,
     position: { x, y, z },
     yaw,
     pitch,
     roll,
   }) {
-    const path = "/set-position/" + mac_address;
+    const path = "/set-position/" + handle;
     fetch(path, {
       method: "POST",
       headers: {
@@ -157,19 +157,19 @@ limitations under the License.
     console.log("Device Removed", data);
 
     const {
-      mac_address,
+      handle,
     } = data;
-    if (info.device?.mac_address === mac_address) {
+    if (info.device?.handle === handle) {
       info.device = null;
     }
 
     map.devices = map.devices.filter(
-      (device) => device.mac_address !== mac_address
+      (device) => device.handle !== handle
     );
 
     map.devices.forEach((device) => {
       device.neighbors = device.neighbors.filter(
-        (neighbor) => neighbor.mac_address !== mac_address
+        (neighbor) => neighbor.handle !== handle
       );
     });
   });
@@ -179,11 +179,11 @@ limitations under the License.
     console.log("Position updated", data);
 
     const {
-      mac_address, x, y, z, yaw, pitch, roll,
+      handle, x, y, z, yaw, pitch, roll,
     } = data;
 
     const device = map.devices.find(
-      (device) => device.mac_address === mac_address
+      (device) => device.handle === handle
     );
 
     device.position = { x, y, z };
@@ -200,20 +200,20 @@ limitations under the License.
     console.log("Neighbor updated", data);
 
     const {
-      source_mac_address,
-      destination_mac_address,
+      source_handle,
+      destination_handle,
       distance,
       azimuth,
       elevation,
     } = data;
 
     const device = map.devices.find(
-      (device) => device.mac_address === source_mac_address
+      (device) => device.handle === source_handle
     );
 
     const neighbor = device.neighbors.find(
-      (device) => device.mac_address == destination_mac_address
-    ) || { mac_address: destination_mac_address };
+      (neighbor) => neighbor.handle === destination_handle
+    ) || { handle: destination_handle };
 
     neighbor.distance = distance;
     neighbor.azimuth = azimuth;

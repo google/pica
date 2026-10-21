@@ -59,7 +59,7 @@ class Device:
 
     def pica_init_uci_device(
         self,
-        mac_address: str = "00:00",
+        handle: str,
         x: str = "0",
         y: str = "0",
         z: str = "0",
@@ -70,7 +70,7 @@ class Device:
     ):
         """Init Pica device"""
         r = requests.post(
-            f"{self.http_address}/init-uci-device/{mac_address}",
+            f"{self.http_address}/init-uci-device/{handle}",
             data=json.dumps(
                 {
                     "x": int(x),
@@ -111,14 +111,14 @@ class Device:
         )
         print(f"{r.status_code}: {r.text}")
 
-    def pica_destroy_anchor(self, mac_address: str = "00:00", **kargs):
+    def pica_destroy_anchor(self, handle: str, **kargs):
         """Destroy a Pica anchor"""
-        r = requests.post(f"{self.http_address}/destroy-anchor/{mac_address}")
+        r = requests.delete(f"{self.http_address}/destroy-anchor/{handle}")
         print(f"{r.status_code}: {r.text}")
 
     def pica_set_position(
         self,
-        mac_address: str = "00:00",
+        handle: str,
         x: str = "0",
         y: str = "0",
         z: str = "0",
@@ -129,7 +129,7 @@ class Device:
     ):
         """Set Pica UCI device or anchor position"""
         r = requests.post(
-            f"{self.http_address}/set-position/{mac_address}",
+            f"{self.http_address}/set-position/{handle}",
             data=json.dumps(
                 {
                     "x": int(x),

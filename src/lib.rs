@@ -23,7 +23,6 @@
 )]
 
 use pdl_runtime::Packet;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
@@ -83,7 +82,7 @@ pub trait RangingEstimator: Send + Sync {
 pub struct Pica {
     counter: usize,
     devices: HashMap<Handle, Device>,
-    anchors: HashMap<MacAddress, Anchor>,
+    anchors: HashMap<Handle, MacAddress>,
     command_rx: Option<mpsc::Receiver<PicaCommand>>,
     command_tx: mpsc::Sender<PicaCommand>,
     event_tx: broadcast::Sender<PicaEvent>,
@@ -93,8 +92,6 @@ pub struct Pica {
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum PicaError {
-    #[error("no available short MAC address for new device")]
-    NoAvailableMacAddress,
     #[error("pica is already running")]
     AlreadyRunning,
     #[error("pica mutex poisoned")]
@@ -107,13 +104,10 @@ impl<T> From<std::sync::PoisonError<T>> for PicaError {
     }
 }
 
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum PicaCommandError {
-    #[error("Device already exists: {0}")]
-    DeviceAlreadyExists(MacAddress),
-    #[error("Device not found: {0}")]
-    DeviceNotFound(MacAddress),
-}
+/// Error returned when creating an anchor with a MAC address that is already in use.
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("MAC address already in use by handle {0}")]
+pub struct AlreadyExists(pub Handle);
 
 pub enum PicaCommand {
     // Connect a new device.
@@ -127,15 +121,9 @@ pub enum PicaCommand {
     // UCI packet received for the selected device.
     UciPacket(usize, Vec<u8>),
     // Create Anchor
-    CreateAnchor(
-        MacAddress,
-        oneshot::Sender<Result<Handle, PicaCommandError>>,
-    ),
+    CreateAnchor(MacAddress, oneshot::Sender<Result<Handle, AlreadyExists>>),
     // Destroy Anchor
-    DestroyAnchor(
-        MacAddress,
-        oneshot::Sender<Result<Handle, PicaCommandError>>,
-    ),
+    DestroyAnchor(Handle, oneshot::Sender<bool>),
 }
 
 impl Display for PicaCommand {
@@ -153,32 +141,12 @@ impl Display for PicaCommand {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug)]
 pub enum PicaEvent {
     // A UCI connection was added
-    Connected {
-        handle: Handle,
-        mac_address: MacAddress,
-    },
+    Connected { handle: Handle },
     // A UCI connection was lost
-    Disconnected {
-        handle: Handle,
-        mac_address: MacAddress,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum Category {
-    Uci,
-    Anchor,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Anchor {
-    handle: Handle,
-    #[allow(unused)]
-    mac_address: MacAddress,
+    Disconnected { handle: Handle },
 }
 
 const fn degrees_to_q9_7(deg: i16) -> i16 {
@@ -353,18 +321,10 @@ impl Pica {
         self.devices.get(&device_handle)
     }
 
-    fn get_category(&self, mac_address: &MacAddress) -> Option<Category> {
-        if self.anchors.contains_key(mac_address) {
-            Some(Category::Anchor)
-        } else if self
-            .devices
+    fn anchor_handle(&self, mac_address: MacAddress) -> Option<Handle> {
+        self.anchors
             .iter()
-            .any(|(_, device)| device.mac_address == *mac_address)
-        {
-            Some(Category::Uci)
-        } else {
-            None
-        }
+            .find_map(|(&handle, &addr)| (addr == mac_address).then_some(handle))
     }
 
     fn send_event(&self, event: PicaEvent) {
@@ -503,35 +463,21 @@ impl Pica {
         }
     }
 
-    pub fn add_device(&mut self, stream: UciStream, sink: UciSink) -> Result<Handle, PicaError> {
+    pub fn add_device(&mut self, stream: UciStream, sink: UciSink) -> Handle {
         let (packet_tx, packet_rx) = mpsc::unbounded_channel();
         let pica_tx = self.command_tx.clone();
         let disconnect_tx = self.command_tx.clone();
         let pcapng_dir = self.pcapng_dir.clone();
 
-        let initial_counter = self.counter;
-        let (handle, mac_address) = loop {
-            let handle = self.counter;
-            self.counter += 1;
-            let mac_address = MacAddress::Short((handle as u16).to_be_bytes());
-            if self.get_category(&mac_address).is_none() {
-                break (handle, mac_address);
-            }
-            if self.counter - initial_counter == 1 << 16 {
-                self.counter = initial_counter;
-                return Err(PicaError::NoAvailableMacAddress);
-            }
-        };
+        let handle = self.counter;
+        self.counter += 1;
 
         tracing::debug!("[{handle}] Connecting device");
 
-        let mut device = Device::new(handle, mac_address, packet_tx, self.command_tx.clone());
+        let mut device = Device::new(handle, packet_tx, self.command_tx.clone());
         device.init();
 
-        self.send_event(PicaEvent::Connected {
-            handle,
-            mac_address: device.mac_address,
-        });
+        self.send_event(PicaEvent::Connected { handle });
 
         self.devices.insert(handle, device);
 
@@ -559,18 +505,16 @@ impl Pica {
             }
         });
 
-        Ok(handle)
+        handle
     }
 
     fn disconnect(&mut self, device_handle: usize) {
         tracing::debug!("[{device_handle}] Disconnecting device");
 
-        if let Some(device) = self.devices.get(&device_handle) {
+        if self.devices.remove(&device_handle).is_some() {
             self.send_event(PicaEvent::Disconnected {
                 handle: device_handle,
-                mac_address: device.mac_address,
             });
-            self.devices.remove(&device_handle);
         }
     }
 
@@ -597,8 +541,8 @@ impl Pica {
         let mut measurements = Vec::new();
 
         for mac_address in session.get_dst_mac_address() {
-            let peer_handle = if let Some(anchor) = self.anchors.get(&mac_address) {
-                Some(anchor.handle)
+            let peer_handle = if let Some(anchor_handle) = self.anchor_handle(mac_address) {
+                Some(anchor_handle)
             } else if let Some(peer_device) = self.devices.values().find(|peer_device| {
                 peer_device.handle != device_handle
                     && peer_device.can_start_ranging(session, session_id)
@@ -847,9 +791,7 @@ impl Pica {
             CreateAnchor(mac_address, pica_cmd_rsp_tx) => {
                 self.create_anchor(mac_address, pica_cmd_rsp_tx)
             }
-            DestroyAnchor(mac_address, pica_cmd_rsp_tx) => {
-                self.destroy_anchor(mac_address, pica_cmd_rsp_tx)
-            }
+            DestroyAnchor(handle, pica_cmd_rsp_tx) => self.destroy_anchor(handle, pica_cmd_rsp_tx),
         }
     }
 
@@ -902,24 +844,18 @@ impl Pica {
     fn create_anchor(
         &mut self,
         mac_address: MacAddress,
-        rsp_tx: oneshot::Sender<Result<Handle, PicaCommandError>>,
+        rsp_tx: oneshot::Sender<Result<Handle, AlreadyExists>>,
     ) {
         tracing::debug!("[_] Create anchor");
         tracing::debug!("  mac_address: {mac_address}");
 
-        let status = if self.get_category(&mac_address).is_some() {
-            Err(PicaCommandError::DeviceAlreadyExists(mac_address))
+        let status = if let Some(handle) = self.anchor_handle(mac_address) {
+            Err(AlreadyExists(handle))
         } else {
             let handle = self.counter;
             self.counter += 1;
 
-            self.anchors.insert(
-                mac_address,
-                Anchor {
-                    handle,
-                    mac_address,
-                },
-            );
+            self.anchors.insert(handle, mac_address);
 
             Ok(handle)
         };
@@ -929,18 +865,11 @@ impl Pica {
         })
     }
 
-    fn destroy_anchor(
-        &mut self,
-        mac_address: MacAddress,
-        rsp_tx: oneshot::Sender<Result<Handle, PicaCommandError>>,
-    ) {
+    fn destroy_anchor(&mut self, handle: Handle, rsp_tx: oneshot::Sender<bool>) {
         tracing::debug!("[_] Destroy anchor");
-        tracing::debug!("  mac_address: {mac_address}");
+        tracing::debug!("  handle: {handle}");
 
-        let status = match self.anchors.remove(&mac_address) {
-            None => Err(PicaCommandError::DeviceNotFound(mac_address)),
-            Some(anchor) => Ok(anchor.handle),
-        };
+        let status = self.anchors.remove(&handle).is_some();
 
         rsp_tx.send(status).unwrap_or_else(|err| {
             tracing::error!("Failed to send destroy-anchor command response: {err:?}")
