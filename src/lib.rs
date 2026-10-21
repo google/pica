@@ -14,6 +14,7 @@
 
 //! Virtual UWB Subsystem (UWBS) implementing the FiRa UCI specification.
 
+#![cfg_attr(not(feature = "ffi"), forbid(unsafe_code))]
 #![cfg_attr(
     test,
     allow(
@@ -29,6 +30,8 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod packets;
 pub mod pcapng;
 
@@ -54,7 +57,8 @@ pub type UciPacket = Vec<u8>;
 pub type Handle = usize;
 
 /// Ranging measurement produced by a ranging estimator.
-#[derive(Clone, Copy, Default, Debug)]
+#[cfg_attr(feature = "ffi", repr(C))]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct RangingMeasurement {
     pub range: u16,
     pub azimuth: i16,
@@ -755,6 +759,7 @@ impl Pica {
         };
         self.apply_device_effects(device_handle, effects);
     }
+
     #[must_use]
     fn stop_controlee_ranging(
         &mut self,
