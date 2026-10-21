@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "pica"
-version = "0.1.13"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "clap",
