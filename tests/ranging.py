@@ -993,6 +993,7 @@ async def run(address: str, uci_port: int):
         await verify_command_error_fallbacks(host0)
         await ccc_ranging_session(host0)
         await aliro_ranging_session(host0)
+        await dl_tdoa_ranging_session(host0, host1)
     finally:
         host0.disconnect()
         host1.disconnect()
@@ -1031,9 +1032,20 @@ async def verify_command_error_fallbacks(host: Host):
             session_token=1, ranging_round_indexes=[]
         )
     )
+    await host.expect_control(
+        uci.SessionUpdateDtTagRangingRoundsRsp(
+            status=uci.Status.ERROR_SESSION_NOT_EXIST, ranging_round_indexes=[]
+        )
+    )
+
+    host.send_control(
+        uci.SessionConfigPacket(
+            mt=uci.MessageType.COMMAND, oid=uci.SessionConfigOpcodeId.STATUS
+        )
+    )
     rsp = await host.expect_control(uci.SessionConfigPacket)
     assert rsp.mt == uci.MessageType.RESPONSE
-    assert rsp.oid == uci.SessionConfigOpcodeId.UPDATE_DT_TAG_RANGING_ROUNDS
+    assert rsp.oid == uci.SessionConfigOpcodeId.STATUS
     assert rsp.payload == bytes([uci.Status.UNKNOWN_OID])
 
 
@@ -1239,6 +1251,272 @@ async def ccc_or_aliro_ranging_session(
             reason_code=0,
         )
     )
+
+
+async def dl_tdoa_ranging_session(host_tag: Host, host_anchor: Host):
+    anchor_mac = bytes([0x34, 0x12])
+    tag_mac = bytes([0x78, 0x56])
+
+    async def init_session(
+        host: Host,
+        sid: int,
+        role: uci.DeviceRole,
+        dev_type: uci.DeviceType,
+        mac_address: bytes,
+        extra_tlvs: list[uci.AppConfigTlv] | None = None,
+    ):
+        host.send_control(
+            uci.SessionInitCmd(
+                session_id=sid, session_type=uci.SessionType.FIRA_RANGING_SESSION
+            )
+        )
+        await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_INIT,
+                reason_code=0,
+            )
+        )
+        base_tlvs = {
+            uci.AppConfigTlvType.DEVICE_ROLE: [role],
+            uci.AppConfigTlvType.DEVICE_TYPE: [dev_type],
+            uci.AppConfigTlvType.DEVICE_MAC_ADDRESS: mac_address,
+            uci.AppConfigTlvType.MULTI_NODE_MODE: [uci.MultiNodeMode.ONE_TO_ONE],
+            uci.AppConfigTlvType.SCHEDULE_MODE: [uci.ScheduleMode.CONTENTION_BASED],
+            uci.AppConfigTlvType.RANGING_ROUND_USAGE: [
+                uci.RangingRoundUsage.ONE_WAY_RANGING_DL_TDOA
+            ],
+            uci.AppConfigTlvType.RANGING_DURATION: int(100).to_bytes(4, "little"),
+            uci.AppConfigTlvType.MAC_ADDRESS_MODE: [uci.MacAddressMode.MODE_0],
+        }
+        tlvs = [
+            uci.AppConfigTlv(cfg_id=k, v=bytes(v)) for k, v in base_tlvs.items()
+        ] + (extra_tlvs or [])
+        host.send_control(uci.SessionSetAppConfigCmd(session_token=sid, tlvs=tlvs))
+        await host.expect_control(
+            uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+        )
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_IDLE,
+                reason_code=0,
+            )
+        )
+
+    async def set_config(
+        host: Host,
+        tlvs: list[uci.AppConfigTlv],
+        status: uci.Status = uci.Status.OK,
+    ):
+        host.send_control(uci.SessionSetAppConfigCmd(session_token=3, tlvs=tlvs))
+        cfg_status = (
+            []
+            if status == uci.Status.OK
+            else [uci.AppConfigStatus(cfg_id=tlv.cfg_id, status=status) for tlv in tlvs]
+        )
+        await host.expect_control(
+            uci.SessionSetAppConfigRsp(status=status, cfg_status=cfg_status)
+        )
+
+    async def update_anchor_rounds(
+        host: Host,
+        rounds: list[uci.DtAnchorRangingRound],
+    ):
+        host.send_control(
+            uci.SessionUpdateDtAnchorRangingRoundsCmd(
+                session_token=3, ranging_rounds=rounds
+            )
+        )
+        await host.expect_control(
+            uci.SessionUpdateDtAnchorRangingRoundsRsp(
+                status=uci.Status.OK, ranging_round_indexes=[]
+            )
+        )
+
+    async def update_tag_rounds(
+        host: Host,
+        rounds: list[int],
+        status: uci.Status = uci.Status.OK,
+    ):
+        host.send_control(
+            uci.SessionUpdateDtTagRangingRoundsCmd(
+                session_token=3, ranging_round_indexes=rounds
+            )
+        )
+        await host.expect_control(
+            uci.SessionUpdateDtTagRangingRoundsRsp(
+                status=status, ranging_round_indexes=[]
+            )
+        )
+
+    async def start_session(host: Host, sid: int):
+        host.send_control(uci.SessionStartCmd(session_id=sid))
+        await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+                reason_code=0,
+            )
+        )
+        await host.expect_control(
+            uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+        )
+
+    async def stop_session(host: Host, sid: int):
+        host.send_control(uci.SessionStopCmd(session_id=sid))
+        await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_IDLE,
+                reason_code=0,
+            )
+        )
+        await host.expect_control(
+            uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        )
+
+    async def stop_deinit_session(host: Host, sid: int):
+        await stop_session(host, sid)
+        host.send_control(uci.SessionDeinitCmd(session_token=sid))
+        await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_DEINIT,
+                reason_code=0,
+            )
+        )
+
+    await init_session(
+        host_anchor,
+        3,
+        uci.DeviceRole.DT_ANCHOR,
+        uci.DeviceType.CONTROLLER,
+        anchor_mac,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION,
+                v=bytes([0x03]) + uci.RelativeLocation(x=10, y=20, z=30).serialize(),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_TX_ACTIVE_RANGING_ROUNDS,
+                v=bytes([0x01]),
+            ),
+        ],
+    )
+
+    host_anchor.send_control(
+        uci.SessionGetAppConfigCmd(
+            session_token=3,
+            app_cfg=[
+                uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION,
+                uci.AppConfigTlvType.DL_TDOA_TX_ACTIVE_RANGING_ROUNDS,
+            ],
+        )
+    )
+    rsp = await host_anchor.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    anchor_tlvs = {tlv.cfg_id: bytes(tlv.v) for tlv in rsp.tlvs}
+    assert anchor_tlvs[uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION] == (
+        bytes([0x03]) + bytes(uci.RelativeLocation(x=10, y=20, z=30).serialize())
+    )
+    assert anchor_tlvs[uci.AppConfigTlvType.DL_TDOA_TX_ACTIVE_RANGING_ROUNDS] == bytes(
+        [1]
+    )
+
+    for cfg_id, bad_val in [
+        (uci.AppConfigTlvType.DL_TDOA_TX_TIMESTAMP_CONF, bytes([0x04])),
+        (uci.AppConfigTlvType.DL_TDOA_RESPONDER_TOF, bytes([0x02])),
+        (uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION, bytes([0x01, 0x00])),
+        (uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION, bytes([0x05])),
+        (uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION, bytes([0x02])),
+        (uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION, bytes([])),
+        (uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION, bytes([0x00, 0x01])),
+    ]:
+        await set_config(
+            host_anchor,
+            [uci.AppConfigTlv(cfg_id=cfg_id, v=bad_val)],
+            status=uci.Status.INVALID_PARAM,
+        )
+
+    await set_config(
+        host_anchor,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_HOP_COUNT,
+                v=bytes([3]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_TX_TIMESTAMP_CONF,
+                v=bytes([0b1111_1011]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION,
+                v=bytes([0x01] + [0x11] * 12),
+            ),
+        ],
+    )
+    await set_config(
+        host_anchor,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_TX_TIMESTAMP_CONF,
+                v=bytes([0x03]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION,
+                v=bytes([0x03])
+                + bytes(uci.RelativeLocation(x=10, y=20, z=30).serialize()),
+            ),
+        ],
+    )
+
+    await update_tag_rounds(
+        host_anchor,
+        [1],
+        status=uci.Status.ERROR_SESSION_NOT_CONFIGURED,
+    )
+    await update_anchor_rounds(
+        host_anchor,
+        [
+            uci.DtAnchorRangingRound(
+                round_index=1, role=uci.DtAnchorActingRole.INITIATOR
+            )
+        ],
+    )
+    await start_session(host_anchor, 3)
+
+    await init_session(
+        host_tag,
+        3,
+        uci.DeviceRole.DT_TAG,
+        uci.DeviceType.CONTROLEE,
+        tag_mac,
+    )
+
+    await set_config(
+        host_tag,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DL_TDOA_BLOCK_SKIPPING,
+                v=bytes([1]),
+            )
+        ],
+    )
+
+    await update_tag_rounds(
+        host_tag,
+        [0, 1],
+    )
+
+    await stop_deinit_session(host_anchor, 3)
+    await start_session(host_tag, 3)
+    await asyncio.sleep(0.25)
+    await stop_deinit_session(host_tag, 3)
 
 
 def main():
