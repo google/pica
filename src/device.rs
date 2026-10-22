@@ -21,7 +21,10 @@ use std::time::Instant;
 use pdl_runtime::Packet;
 
 use super::UciPacket;
-use super::app_config::SubSessionKey;
+use super::app_config::{
+    DEFAULT_DL_TDOA_RANGING_METHOD, DEFAULT_DL_TDOA_TX_TIMESTAMP_CONF, DlTdoaAnchorLocation,
+    SubSessionKey,
+};
 use super::session::Session;
 
 pub const MAX_SESSION: usize = 255;
@@ -43,7 +46,7 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedFiraPhyVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedFiraMacVersionRange, &[1, 1, 1, 3]), // 1.1 - 1.3
     (CapTlvType::SupportedDeviceRoles, &[0x3]),                // INTIATOR | RESPONDER
-    (CapTlvType::SupportedRangingMethod, &[0x1f]), // DS_TWR_NON_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_DEFERRED | SS_TWR_DEFERRED | OWR
+    (CapTlvType::SupportedRangingMethod, &[0x3f]), // OWR_UL_TDOA | SS_TWR_DEFERRED | DS_TWR_DEFERRED | SS_TWR_NON_DEFERRED | DS_TWR_NON_DEFERRED | OWR_DL_TDOA
     (CapTlvType::SupportedStsConfig, &[0x1f]), // STATIC_STS | DYNAMIC_STS | DYNAMIC_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY | PROVISIONED_STS | PROVISIONED_STS_RESPONDER_SPECIFIC_SUBSESSION_KEY
     (CapTlvType::SupportedMultiNodeModes, &[0xff]),
     (CapTlvType::SupportedRangingTimeStruct, &[0x01]), // Block Based Scheduling (default)
@@ -176,6 +179,75 @@ fn packet_error_status<T, E>(result: Result<T, E>) -> uci::Status {
     }
 }
 
+/// Per-round anchor state unifying static virtual anchors (from `Pica::create_anchor`)
+/// and active `DtAnchor` UCI sessions.
+#[derive(Debug)]
+pub struct DlTdoaAnchor {
+    pub mac_address: MacAddress,
+    pub location: Option<DlTdoaAnchorLocation>,
+    pub round_index: u8,
+    pub acting_role: Option<uci::DtAnchorActingRole>,
+    pub ranging_method: uci::DlTdoaRangingMethod,
+    pub active_ranging_rounds: Vec<u8>,
+    pub tx_timestamp_conf: uci::DlTdoaTxTimestampConf,
+    pub includes_responder_tof: bool,
+    pub includes_anchor_cfo: bool,
+    pub is_time_reference: bool,
+}
+
+impl DlTdoaAnchor {
+    /// Creates a virtual anchor (from `Pica::create_anchor`), enabling Responder ToF by default so
+    /// multi-anchor simulations report inter-anchor ToF without per-anchor `AppConfig` setup.
+    pub fn virtual_anchor(mac_address: MacAddress, default_round_index: u8) -> Self {
+        Self {
+            mac_address,
+            location: None,
+            round_index: default_round_index,
+            acting_role: None,
+            ranging_method: DEFAULT_DL_TDOA_RANGING_METHOD,
+            active_ranging_rounds: Vec::new(),
+            tx_timestamp_conf: DEFAULT_DL_TDOA_TX_TIMESTAMP_CONF,
+            includes_responder_tof: true,
+            includes_anchor_cfo: true,
+            is_time_reference: false,
+        }
+    }
+
+    fn from_session(
+        session: &Session,
+        mac_address: MacAddress,
+        round: &uci::DtAnchorRangingRound,
+    ) -> Self {
+        let config = &session.app_config;
+        let active_ranging_rounds = if config.dl_tdoa_includes_active_ranging_rounds() {
+            session
+                .dt_anchor_ranging_rounds()
+                .iter()
+                .map(|r| r.round_index)
+                .filter(|&idx| idx != round.round_index)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Self {
+            mac_address,
+            location: config.dl_tdoa_anchor_location(),
+            round_index: round.round_index,
+            acting_role: Some(round.role),
+            ranging_method: config.dl_tdoa_ranging_method(),
+            active_ranging_rounds,
+            tx_timestamp_conf: config.dl_tdoa_tx_timestamp_conf(),
+            includes_responder_tof: config.dl_tdoa_includes_responder_tof(),
+            includes_anchor_cfo: config.dl_tdoa_includes_anchor_cfo(),
+            is_time_reference: config.dl_tdoa_is_time_reference_anchor(),
+        }
+    }
+}
+
+/// UWBS capability limit (`DT_ANCHOR_MAX_ACTIVE_RR` / `DT_TAG_MAX_ACTIVE_RR`); at 16 rounds,
+/// the 15 non-current anchor rounds fit in `DlTdoaRangingMeasurement`'s 4-bit count field.
+const MAX_ACTIVE_RANGING_ROUNDS: usize = 16;
+
 impl Device {
     pub fn new(handle: usize) -> Self {
         Device {
@@ -275,6 +347,32 @@ impl Device {
             }
             None => false,
         }
+    }
+
+    pub fn active_dl_tdoa_anchors(
+        &self,
+        peer_session: &Session,
+        session_id: u32,
+    ) -> Vec<DlTdoaAnchor> {
+        let Some(session) = self.session(session_id) else {
+            return Vec::new();
+        };
+        let config = &session.app_config;
+        if session.session_state() != SessionState::SessionStateActive
+            || !config.is_compatible_for_dl_tdoa(&peer_session.app_config)
+        {
+            return Vec::new();
+        }
+        let Some(mac_address) = config.device_mac_address() else {
+            return Vec::new();
+        };
+        let tag_rounds = peer_session.dt_tag_active_rounds();
+        session
+            .dt_anchor_ranging_rounds()
+            .iter()
+            .filter(|round| tag_rounds.contains(&round.round_index))
+            .map(|round| DlTdoaAnchor::from_session(session, mac_address, round))
+            .collect()
     }
 
     pub fn can_receive_data_transfer(&self, session_id: u32, dst_mac_address: MacAddress) -> bool {
@@ -523,29 +621,36 @@ impl Device {
         }
     }
 
-    fn configured_dl_tdoa_session(
-        &self,
+    fn configured_dl_tdoa_session_mut(
+        &mut self,
         session_token: u32,
         expected_role: uci::DeviceRole,
-    ) -> Result<&Session, uci::Status> {
-        let Some(session) = self.session(session_token) else {
+    ) -> Result<&mut Session, uci::Status> {
+        let Some(session) = self.session_mut(session_token) else {
             return Err(uci::Status::ErrorSessionNotExist);
         };
         let is_configured = session.state != uci::SessionState::SessionStateInit
             && session.app_config.dl_tdoa_role() == Some(expected_role);
         if !is_configured {
-            return Err(uci::Status::ErrorSessionNotConfigured);
+            return Err(uci::Status::Rejected);
         }
         Ok(session)
     }
 
     fn session_update_dt_tag_ranging_rounds(
-        &self,
+        &mut self,
         cmd: SessionUpdateDtTagRangingRoundsCmd,
     ) -> SessionUpdateDtTagRangingRoundsRsp {
         let status =
-            match self.configured_dl_tdoa_session(cmd.session_token, uci::DeviceRole::DtTag) {
-                Ok(_) => uci::Status::Ok,
+            match self.configured_dl_tdoa_session_mut(cmd.session_token, uci::DeviceRole::DtTag) {
+                Ok(_) if cmd.ranging_round_indexes.is_empty() => uci::Status::InvalidParam,
+                Ok(_) if cmd.ranging_round_indexes.len() > MAX_ACTIVE_RANGING_ROUNDS => {
+                    uci::Status::ErrorNumberOfActiveRangingRoundsExceeded
+                }
+                Ok(session) => {
+                    session.set_dt_tag_ranging_rounds(cmd.ranging_round_indexes);
+                    uci::Status::Ok
+                }
                 Err(status) => status,
             };
         SessionUpdateDtTagRangingRoundsRsp {
@@ -555,14 +660,22 @@ impl Device {
     }
 
     fn session_update_dt_anchor_ranging_rounds(
-        &self,
+        &mut self,
         cmd: SessionUpdateDtAnchorRangingRoundsCmd,
     ) -> SessionUpdateDtAnchorRangingRoundsRsp {
-        let status =
-            match self.configured_dl_tdoa_session(cmd.session_token, uci::DeviceRole::DtAnchor) {
-                Ok(_) => uci::Status::Ok,
-                Err(status) => status,
-            };
+        let status = match self
+            .configured_dl_tdoa_session_mut(cmd.session_token, uci::DeviceRole::DtAnchor)
+        {
+            Ok(_) if cmd.ranging_rounds.is_empty() => uci::Status::InvalidParam,
+            Ok(_) if cmd.ranging_rounds.len() > MAX_ACTIVE_RANGING_ROUNDS => {
+                uci::Status::ErrorNumberOfActiveRangingRoundsExceeded
+            }
+            Ok(session) => {
+                session.set_dt_anchor_ranging_rounds(cmd.ranging_rounds);
+                uci::Status::Ok
+            }
+            Err(status) => status,
+        };
         SessionUpdateDtAnchorRangingRoundsRsp {
             status,
             ranging_round_indexes: Vec::new(),
@@ -985,6 +1098,19 @@ impl Device {
                 status: uci::Status::ErrorSessionNotConfigured,
             }
             .into();
+        }
+
+        if let Some(reason_code) = session.missing_dl_tdoa_rounds_reason() {
+            return CommandOutput::with_effects(
+                SessionStartRsp {
+                    status: uci::Status::Ok,
+                },
+                [DeviceEffect::send_control(SessionStatusNtf {
+                    session_token: session_id,
+                    session_state: SessionState::SessionStateIdle,
+                    reason_code: reason_code.into(),
+                })],
+            );
         }
 
         session.start_ranging();
