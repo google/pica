@@ -523,6 +523,52 @@ impl Device {
         }
     }
 
+    fn configured_dl_tdoa_session(
+        &self,
+        session_token: u32,
+        expected_role: uci::DeviceRole,
+    ) -> Result<&Session, uci::Status> {
+        let Some(session) = self.session(session_token) else {
+            return Err(uci::Status::ErrorSessionNotExist);
+        };
+        let is_configured = session.state != uci::SessionState::SessionStateInit
+            && session.app_config.dl_tdoa_role() == Some(expected_role);
+        if !is_configured {
+            return Err(uci::Status::ErrorSessionNotConfigured);
+        }
+        Ok(session)
+    }
+
+    fn session_update_dt_tag_ranging_rounds(
+        &self,
+        cmd: SessionUpdateDtTagRangingRoundsCmd,
+    ) -> SessionUpdateDtTagRangingRoundsRsp {
+        let status =
+            match self.configured_dl_tdoa_session(cmd.session_token, uci::DeviceRole::DtTag) {
+                Ok(_) => uci::Status::Ok,
+                Err(status) => status,
+            };
+        SessionUpdateDtTagRangingRoundsRsp {
+            status,
+            ranging_round_indexes: Vec::new(),
+        }
+    }
+
+    fn session_update_dt_anchor_ranging_rounds(
+        &self,
+        cmd: SessionUpdateDtAnchorRangingRoundsCmd,
+    ) -> SessionUpdateDtAnchorRangingRoundsRsp {
+        let status =
+            match self.configured_dl_tdoa_session(cmd.session_token, uci::DeviceRole::DtAnchor) {
+                Ok(_) => uci::Status::Ok,
+                Err(status) => status,
+            };
+        SessionUpdateDtAnchorRangingRoundsRsp {
+            status,
+            ranging_round_indexes: Vec::new(),
+        }
+    }
+
     fn session_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> CommandOutput {
         let session_handle = cmd.session_token;
 
@@ -1167,6 +1213,12 @@ impl Device {
                 }
                 Ok(SessionQueryMaxDataSizeInRangingCmd(cmd)) => {
                     self.session_query_max_data_size_in_ranging(cmd).into()
+                }
+                Ok(SessionUpdateDtTagRangingRoundsCmd(cmd)) => {
+                    self.session_update_dt_tag_ranging_rounds(cmd).into()
+                }
+                Ok(SessionUpdateDtAnchorRangingRoundsCmd(cmd)) => {
+                    self.session_update_dt_anchor_ranging_rounds(cmd).into()
                 }
                 child => command_error_response(
                     GroupId::SessionConfig,

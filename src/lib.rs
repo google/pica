@@ -510,6 +510,10 @@ impl Pica {
             return;
         }
 
+        if session.app_config.is_dl_tdoa() {
+            return;
+        }
+
         let mut measurements = Vec::new();
 
         for mac_address in session.get_dst_mac_address() {
