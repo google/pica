@@ -52,6 +52,19 @@ impl DataTransfer {
     }
 }
 
+/// Common interface over TWR and DL-TDoA measurements so [`Session::filter_measurements`]
+/// can apply proximity and AoA triggers uniformly.
+pub trait RangingEntry {
+    fn mac_address(&self) -> MacAddress;
+    fn is_within_bounds(&self, app_config: &AppConfig) -> bool;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DlTdoaRangingRounds {
+    Tag(Vec<u8>),
+    Anchor(Vec<uci::DtAnchorRangingRound>),
+}
+
 pub struct Session {
     /// cf. [UCI] 7.1
     pub state: SessionState,
@@ -64,6 +77,7 @@ pub struct Session {
     pub session_type: SessionType,
     pub sequence_number: u32,
     pub ranging_count: u32,
+    dl_tdoa_rounds: Option<DlTdoaRangingRounds>,
     pub app_config: AppConfig,
     pub in_range_peers: HashSet<MacAddress>,
     next_ranging_at: Option<Instant>,
@@ -80,10 +94,38 @@ impl Session {
             session_type,
             sequence_number: 0,
             ranging_count: 0,
+            dl_tdoa_rounds: None,
             app_config: AppConfig::new(session_type),
             in_range_peers: HashSet::new(),
             next_ranging_at: None,
         }
+    }
+
+    pub fn dt_tag_ranging_rounds(&self) -> Option<&[u8]> {
+        match &self.dl_tdoa_rounds {
+            Some(DlTdoaRangingRounds::Tag(rounds)) => Some(rounds.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn dt_tag_active_rounds(&self) -> &[u8] {
+        self.dt_tag_ranging_rounds().unwrap_or(&[0])
+    }
+
+    pub fn dt_anchor_ranging_rounds(&self) -> Option<&[uci::DtAnchorRangingRound]> {
+        match &self.dl_tdoa_rounds {
+            Some(DlTdoaRangingRounds::Anchor(rounds)) => Some(rounds.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn set_dt_tag_ranging_rounds(&mut self, round_indexes: Vec<u8>) {
+        self.dl_tdoa_rounds =
+            (!round_indexes.is_empty()).then_some(DlTdoaRangingRounds::Tag(round_indexes));
+    }
+
+    pub fn set_dt_anchor_ranging_rounds(&mut self, rounds: Vec<uci::DtAnchorRangingRound>) {
+        self.dl_tdoa_rounds = (!rounds.is_empty()).then_some(DlTdoaRangingRounds::Anchor(rounds));
     }
 
     #[must_use]
@@ -169,7 +211,7 @@ impl Session {
         )
     }
 
-    fn ranging_interval_ms(&self) -> u32 {
+    pub fn ranging_interval_ms(&self) -> u32 {
         let block_stride = if self.app_config.dl_tdoa_role() == Some(uci::DeviceRole::DtTag) {
             self.app_config.dl_tdoa_block_stride()
         } else {
@@ -211,6 +253,11 @@ impl Session {
         self.ranging_count = 0;
         self.in_range_peers.clear();
         self.clear_data();
+    }
+
+    pub fn has_reached_max_measurements(&self) -> bool {
+        let max_measurements = u32::from(self.app_config.max_number_of_measurements());
+        max_measurements != 0 && self.ranging_count >= max_measurements
     }
 
     pub fn data_message_snd(
@@ -303,5 +350,36 @@ impl Session {
             session_token,
         }
         .try_into()
+    }
+
+    pub fn filter_measurements<T: RangingEntry>(&mut self, measurements: Vec<T>) -> (bool, Vec<T>) {
+        match self.app_config.session_info_ntf_config() {
+            uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
+            uci::SessionInfoNtfConfig::Enable => (true, measurements),
+            uci::SessionInfoNtfConfig::EnableProximityTrigger
+            | uci::SessionInfoNtfConfig::EnableAoaTrigger
+            | uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
+                let filtered: Vec<_> = measurements
+                    .into_iter()
+                    .filter(|m| m.is_within_bounds(&self.app_config))
+                    .collect();
+                (!filtered.is_empty(), filtered)
+            }
+            uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
+            | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger
+            | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
+                let emitted: Vec<_> = measurements
+                    .into_iter()
+                    .filter(|m| {
+                        if m.is_within_bounds(&self.app_config) {
+                            self.in_range_peers.insert(m.mac_address())
+                        } else {
+                            self.in_range_peers.remove(&m.mac_address())
+                        }
+                    })
+                    .collect();
+                (!emitted.is_empty(), emitted)
+            }
+        }
     }
 }

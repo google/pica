@@ -993,7 +993,7 @@ async def run(address: str, uci_port: int):
         await verify_command_error_fallbacks(host0)
         await ccc_ranging_session(host0)
         await aliro_ranging_session(host0)
-        await dl_tdoa_ranging_session(host0, host1)
+        await dl_tdoa_ranging_session(host0, host1, address, uci_port)
     finally:
         host0.disconnect()
         host1.disconnect()
@@ -1253,8 +1253,11 @@ async def ccc_or_aliro_ranging_session(
     )
 
 
-async def dl_tdoa_ranging_session(host_tag: Host, host_anchor: Host):
+async def dl_tdoa_ranging_session(
+    host_tag: Host, host_anchor: Host, address: str, uci_port: int
+):
     anchor_mac = bytes([0x34, 0x12])
+    responder_mac = bytes([0x56, 0x34])
     tag_mac = bytes([0x78, 0x56])
 
     async def init_session(
@@ -1512,11 +1515,155 @@ async def dl_tdoa_ranging_session(host_tag: Host, host_anchor: Host):
         host_tag,
         [0, 1],
     )
-
-    await stop_deinit_session(host_anchor, 3)
     await start_session(host_tag, 3)
-    await asyncio.sleep(0.25)
-    await stop_deinit_session(host_tag, 3)
+
+    event1 = await host_tag.expect_control(
+        uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0
+    )
+    assert event1.current_ranging_interval == 200
+    assert len(event1.dl_tdoa_measurements) == 1
+    m1 = event1.dl_tdoa_measurements[0]
+    assert m1.mac_address == int.from_bytes(anchor_mac, "little")
+    assert m1.measurement.status == uci.Status.OK
+    assert m1.measurement.block_index == 0
+    assert m1.measurement.round_index == 1
+    assert m1.measurement.message_type == uci.DlTdoaMessageType.POLL_DTM
+    assert (
+        m1.measurement.tx_timestamp_type == uci.DlTdoaTxTimestampType.COMMON_TIME_BASE
+    )
+    assert m1.measurement.tx_timestamp_64 == 3_194_880_000
+    assert m1.measurement.tx_timestamp_40 is None
+    assert m1.measurement.rx_timestamp_64 == 3_194_880_000
+    assert m1.measurement.rx_timestamp_40 is None
+    assert m1.measurement.relative_location == [uci.RelativeLocation(x=10, y=20, z=30)]
+    assert m1.measurement.wgs84_location == []
+    assert m1.measurement.active_ranging_rounds == [1]
+
+    event2 = await host_tag.expect_control(
+        uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0
+    )
+    assert event2.current_ranging_interval == 200
+    assert len(event2.dl_tdoa_measurements) == 1
+    m2 = event2.dl_tdoa_measurements[0]
+    assert m2.measurement.block_index == 2
+    assert m2.measurement.tx_timestamp_64 == 15_974_400_000
+    assert m2.measurement.rx_timestamp_64 == 15_974_400_000
+
+    await update_tag_rounds(host_tag, [0])
+    empty_event = await host_tag.expect_control(
+        uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0
+    )
+    assert len(empty_event.dl_tdoa_measurements) == 0
+
+    host_anchor.send_control(uci.SessionGetRangingCountCmd(session_id=3))
+    ranging_count_rsp = await host_anchor.expect_control(uci.SessionGetRangingCountRsp)
+    assert ranging_count_rsp.status == uci.Status.OK
+    assert ranging_count_rsp.count > 0
+
+    await stop_session(host_tag, 3)
+    await stop_session(host_anchor, 3)
+
+    host_responder = await Host.connect(address, uci_port, responder_mac)
+    try:
+        await init(host_responder)
+
+        responder_tlvs = {
+            uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION: bytes([0x01])
+            + bytes(range(1, 13)),
+            uci.AppConfigTlvType.DL_TDOA_TX_TIMESTAMP_CONF: bytes([0x00]),
+            uci.AppConfigTlvType.DL_TDOA_TX_ACTIVE_RANGING_ROUNDS: bytes([0x00]),
+            uci.AppConfigTlvType.DL_TDOA_RESPONDER_TOF: bytes([0x01]),
+            uci.AppConfigTlvType.DL_TDOA_ANCHOR_CFO: bytes(
+                [uci.DlTdoaAnchorCfo.ANCHOR_CFO_NOT_INCLUDED]
+            ),
+        }
+        await init_session(
+            host_responder,
+            3,
+            uci.DeviceRole.DT_ANCHOR,
+            uci.DeviceType.CONTROLLER,
+            responder_mac,
+            [uci.AppConfigTlv(cfg_id=k, v=v) for k, v in responder_tlvs.items()],
+        )
+        await update_anchor_rounds(
+            host_responder,
+            [
+                uci.DtAnchorRangingRound(
+                    round_index=1, role=uci.DtAnchorActingRole.RESPONDER
+                )
+            ],
+        )
+        await update_anchor_rounds(
+            host_anchor,
+            [
+                uci.DtAnchorRangingRound(
+                    round_index=0, role=uci.DtAnchorActingRole.INITIATOR
+                ),
+                uci.DtAnchorRangingRound(
+                    round_index=1, role=uci.DtAnchorActingRole.INITIATOR
+                ),
+            ],
+        )
+        await update_tag_rounds(host_tag, [1])
+
+        await start_session(host_anchor, 3)
+        await start_session(host_responder, 3)
+        await start_session(host_tag, 3)
+
+        event3 = await host_tag.expect_control(
+            uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0
+        )
+        assert len(event3.dl_tdoa_measurements) == 2
+
+        m_init = event3.dl_tdoa_measurements[0]
+        assert m_init.mac_address == int.from_bytes(anchor_mac, "little")
+        assert m_init.measurement.status == uci.Status.OK
+        assert m_init.measurement.message_type == uci.DlTdoaMessageType.POLL_DTM
+        assert m_init.measurement.round_index == 1
+        assert m_init.measurement.tx_timestamp_64 == 3_194_880_000
+        assert m_init.measurement.rx_timestamp_64 == 3_194_880_000
+        assert m_init.measurement.active_ranging_rounds == [0, 1]
+        assert m_init.measurement.initiator_responder_tof == 0
+
+        m_resp = event3.dl_tdoa_measurements[1]
+        assert m_resp.mac_address == int.from_bytes(responder_mac, "little")
+        assert m_resp.measurement.status == uci.Status.OK
+        assert m_resp.measurement.message_type == uci.DlTdoaMessageType.RESPONSE_DTM
+        assert (
+            m_resp.measurement.tx_timestamp_type
+            == uci.DlTdoaTxTimestampType.LOCAL_TIME_BASE
+        )
+        assert m_resp.measurement.tx_timestamp_40 == 3_322_675_200
+        assert m_resp.measurement.tx_timestamp_64 is None
+        assert m_resp.measurement.rx_timestamp_40 is None
+        assert m_resp.measurement.rx_timestamp_64 == 3_322_675_200
+        assert m_resp.measurement.round_index == 1
+        assert m_resp.measurement.wgs84_location == [
+            uci.Wgs84Location(data=list(range(1, 13)))
+        ]
+        assert m_resp.measurement.relative_location == []
+        assert m_resp.measurement.active_ranging_rounds == []
+        assert m_resp.measurement.initiator_responder_tof == 0
+        assert m_resp.measurement.anchor_cfo == 0x8000
+        assert m_resp.measurement.responder_reply_time == 127_795_200
+
+        await update_anchor_rounds(host_anchor, [])
+        await update_anchor_rounds(host_responder, [])
+        await update_tag_rounds(host_tag, [0, 1])
+
+        event_fanout = await host_tag.expect_control(
+            uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0
+        )
+        assert len(event_fanout.dl_tdoa_measurements) == 4
+        assert [
+            m.measurement.round_index for m in event_fanout.dl_tdoa_measurements
+        ] == [0, 0, 1, 1]
+
+        await stop_deinit_session(host_tag, 3)
+        await stop_deinit_session(host_responder, 3)
+        await stop_deinit_session(host_anchor, 3)
+    finally:
+        host_responder.disconnect()
 
 
 def main():
