@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
+use pdl_runtime::Packet;
 use thiserror::Error;
 
 use crate::MacAddress;
@@ -39,9 +40,57 @@ pub enum SubSessionKey {
     Extended([u8; 32]),
 }
 
+fn parse_dl_tdoa_anchor_location(value: &[u8]) -> Result<(), AppConfigError> {
+    let id = uci::AppConfigTlvType::DlTdoaAnchorLocation;
+    let Some(&byte) = value.first() else {
+        return Err(AppConfigError::InvalidLength {
+            id,
+            expected: 1,
+            actual: 0,
+        });
+    };
+    let (header, rest) = uci::DlTdoaAnchorLocationHeader::decode(value)
+        .map_err(|_| AppConfigError::InvalidEnumValue { id, value: byte })?;
+    match (header.presence, header.location_type) {
+        (uci::DlTdoaAnchorLocationPresence::Absent, uci::DlTdoaAnchorLocationType::Wgs84) => {
+            if !rest.is_empty() {
+                return Err(AppConfigError::InvalidLength {
+                    id,
+                    expected: 1,
+                    actual: value.len(),
+                });
+            }
+            Ok(())
+        }
+        (uci::DlTdoaAnchorLocationPresence::Absent, _) => {
+            Err(AppConfigError::InvalidEnumValue { id, value: byte })
+        }
+        (uci::DlTdoaAnchorLocationPresence::Present, uci::DlTdoaAnchorLocationType::Wgs84) => {
+            uci::Wgs84Location::decode_full(rest).map_err(|_| AppConfigError::InvalidLength {
+                id,
+                expected: 13,
+                actual: value.len(),
+            })?;
+            Ok(())
+        }
+        (uci::DlTdoaAnchorLocationPresence::Present, uci::DlTdoaAnchorLocationType::Relative) => {
+            uci::RelativeLocation::decode_full(rest).map_err(|_| {
+                AppConfigError::InvalidLength {
+                    id,
+                    expected: 11,
+                    actual: value.len(),
+                }
+            })?;
+            Ok(())
+        }
+    }
+}
+
 const DEFAULT_STS_CONFIG: uci::StsConfig = uci::StsConfig::Static;
 const DEFAULT_CHANNEL_NUMBER: uci::ChannelNumber = uci::ChannelNumber::ChannelNumber9;
 const DEFAULT_NUMBER_OF_CONTROLEES: u8 = 1;
+const DEFAULT_SLOT_DURATION: u16 = 2400;
+const DEFAULT_SLOTS_PER_RR: u8 = 25;
 const DEFAULT_RANGING_DURATION: u32 = 200;
 const DEFAULT_SESSION_INFO_NTF_CONFIG: uci::SessionInfoNtfConfig =
     uci::SessionInfoNtfConfig::Enable;
@@ -55,6 +104,7 @@ const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferS
 const DEFAULT_SUSPEND_RANGING_ROUNDS: uci::SuspendRangingRounds =
     uci::SuspendRangingRounds::Disable;
 const DEFAULT_DATA_REPETITION_COUNT: u8 = 0;
+const DEFAULT_DL_TDOA_BLOCK_SKIPPING: u8 = 0;
 const DEFAULT_AOA_BOUND_CONFIG: [u8; 8] = [0x00, 0xa6, 0x00, 0x5a, 0x00, 0xd3, 0x00, 0x2d];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +168,7 @@ impl AppConfig {
             ),
             (
                 uci::AppConfigTlvType::SlotDuration,
-                Bytes::from_static(const { &2400u16.to_le_bytes() }),
+                Bytes::from_static(const { &DEFAULT_SLOT_DURATION.to_le_bytes() }),
             ),
             (
                 uci::AppConfigTlvType::StsIndex,
@@ -165,7 +215,10 @@ impl AppConfig {
                     uci::AppConfigTlvType::SessionInfoNtfConfig,
                     Bytes::from_static(&[DEFAULT_SESSION_INFO_NTF_CONFIG as u8]),
                 ),
-                (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[25])),
+                (
+                    uci::AppConfigTlvType::SlotsPerRr,
+                    Bytes::from_static(&[DEFAULT_SLOTS_PER_RR]),
+                ),
                 (
                     uci::AppConfigTlvType::StsConfig,
                     Bytes::from_static(&[DEFAULT_STS_CONFIG as u8]),
@@ -221,7 +274,7 @@ impl AppConfig {
                 // Default for Octet[0] is SLOTS_PER_RR - 1
                 (
                     uci::AppConfigTlvType::CapSizeRange,
-                    Bytes::from_static(&[24, 5]),
+                    Bytes::from_static(&[DEFAULT_SLOTS_PER_RR - 1, 5]),
                 ),
                 (
                     uci::AppConfigTlvType::TxJitterWindowSize,
@@ -391,6 +444,16 @@ impl AppConfig {
             Ok(Bytes::copy_from_slice(value))
         }
 
+        fn try_parse_bool(
+            id: uci::AppConfigTlvType,
+            value: &[u8],
+        ) -> Result<Bytes, AppConfigError> {
+            match try_parse_u8(id, value)? {
+                0 | 1 => Ok(Bytes::copy_from_slice(value)),
+                byte => Err(AppConfigError::InvalidEnumValue { id, value: byte }),
+            }
+        }
+
         fn try_parse_u16(id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
             try_parse_array::<2>(id, value)
         }
@@ -411,6 +474,22 @@ impl AppConfig {
             uci::AppConfigTlvType::StsConfig => try_parse_enum::<uci::StsConfig>(id, value),
             uci::AppConfigTlvType::MultiNodeMode => try_parse_enum::<uci::MultiNodeMode>(id, value),
             uci::AppConfigTlvType::ChannelNumber => try_parse_enum::<uci::ChannelNumber>(id, value),
+            uci::AppConfigTlvType::DlTdoaRangingMethod => {
+                try_parse_enum::<uci::DlTdoaRangingMethod>(id, value)
+            }
+            uci::AppConfigTlvType::DlTdoaAnchorCfo => {
+                try_parse_enum::<uci::DlTdoaAnchorCfo>(id, value)
+            }
+            uci::AppConfigTlvType::DlTdoaTxTimestampConf => {
+                let byte = try_parse_u8(id, value)?;
+                uci::DlTdoaTxTimestampConf::decode_full(value)
+                    .map(|_| Bytes::copy_from_slice(value))
+                    .map_err(|_| AppConfigError::InvalidEnumValue { id, value: byte })
+            }
+            uci::AppConfigTlvType::DlTdoaAnchorLocation => {
+                parse_dl_tdoa_anchor_location(value)?;
+                Ok(Bytes::copy_from_slice(value))
+            }
             uci::AppConfigTlvType::NumberOfControlees
             | uci::AppConfigTlvType::RangingRoundControl
             | uci::AppConfigTlvType::PreambleCodeIndex
@@ -430,7 +509,12 @@ impl AppConfig {
             | uci::AppConfigTlvType::SecureRangingNefaLevel
             | uci::AppConfigTlvType::SecureRangingCswLength
             | uci::AppConfigTlvType::ApplicationDataEndpoint
-            | uci::AppConfigTlvType::CccPulseshapeCombo => try_parse_array::<1>(id, value),
+            | uci::AppConfigTlvType::CccPulseshapeCombo
+            | uci::AppConfigTlvType::DlTdoaBlockSkipping
+            | uci::AppConfigTlvType::DlTdoaHopCount => try_parse_array::<1>(id, value),
+            uci::AppConfigTlvType::DlTdoaTxActiveRangingRounds
+            | uci::AppConfigTlvType::DlTdoaTimeReferenceAnchor
+            | uci::AppConfigTlvType::DlTdoaResponderTof => try_parse_bool(id, value),
             uci::AppConfigTlvType::HoppingMode => match self.session_type {
                 uci::SessionType::Ccc | uci::SessionType::Aliro => {
                     try_parse_enum::<uci::CccHoppingMode>(id, value)
@@ -689,6 +773,27 @@ impl AppConfig {
     fn channel_number(&self) -> uci::ChannelNumber {
         self.get_enum(uci::AppConfigTlvType::ChannelNumber)
             .unwrap_or(DEFAULT_CHANNEL_NUMBER)
+    }
+
+    pub fn is_dl_tdoa(&self) -> bool {
+        self.ranging_round_usage() == Some(uci::RangingRoundUsage::OneWayRangingDlTdoa)
+    }
+
+    pub fn dl_tdoa_role(&self) -> Option<uci::DeviceRole> {
+        if self.is_dl_tdoa() {
+            self.device_role()
+        } else {
+            None
+        }
+    }
+
+    fn dl_tdoa_block_skipping(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::DlTdoaBlockSkipping)
+            .unwrap_or(DEFAULT_DL_TDOA_BLOCK_SKIPPING)
+    }
+
+    pub fn dl_tdoa_block_stride(&self) -> u32 {
+        u32::from(self.dl_tdoa_block_skipping()) + 1
     }
 
     fn near_proximity_config(&self) -> u16 {
