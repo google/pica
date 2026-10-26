@@ -169,8 +169,19 @@ impl Session {
         )
     }
 
+    fn ranging_interval_ms(&self) -> u32 {
+        let block_stride = if self.app_config.dl_tdoa_role() == Some(uci::DeviceRole::DtTag) {
+            self.app_config.dl_tdoa_block_stride()
+        } else {
+            1
+        };
+        self.app_config
+            .ranging_duration()
+            .saturating_mul(block_stride)
+    }
+
     fn ranging_interval(&self) -> Duration {
-        Duration::from_millis(u64::from(self.app_config.ranging_duration()))
+        Duration::from_millis(u64::from(self.ranging_interval_ms()))
     }
 
     pub fn next_ranging_at(&self) -> Option<Instant> {

@@ -283,7 +283,7 @@ enum RangingRoundUsage : 8 {
     DS_TWR_DEFERRED_MODE = 0x02,
     SS_TWR_NON_DEFERRED_MODE = 0x03,
     DS_TWR_NON_DEFERRED_MODE = 0x04,
-    ON_WAY_RANGING_DL_TDOA = 0x05,
+    ONE_WAY_RANGING_DL_TDOA = 0x05,
     OWR_AOA_MEASUREMENT = 0x06,
     ESS_TWR_NON_DEFERRED = 0x07,
     ADS_TWR_NON_DEFERRED = 0x08,
@@ -1018,12 +1018,34 @@ test SessionGetStateRsp {
     "\x41\x06\x00\x02\x00\x01",
 }
 
+enum DtAnchorActingRole : 8 {
+    RESPONDER = 0x00,
+    INITIATOR = 0x01,
+}
+
+struct DtAnchorRangingRound {
+    round_index: 8,
+    role: DtAnchorActingRole,
+}
+
 packet SessionUpdateDtAnchorRangingRoundsCmd : SessionConfigPacket (mt = COMMAND, oid = UPDATE_DT_ANCHOR_RANGING_ROUNDS) {
-    // TODO
+    session_token: 32,
+    _count_(ranging_rounds): 8,
+    ranging_rounds: DtAnchorRangingRound[],
+}
+
+test SessionUpdateDtAnchorRangingRoundsCmd {
+    "\x21\x08\x00\x07\x01\x00\x00\x00\x01\x01\x01",
 }
 
 packet SessionUpdateDtAnchorRangingRoundsRsp : SessionConfigPacket (mt = RESPONSE, oid = UPDATE_DT_ANCHOR_RANGING_ROUNDS) {
-    // TODO
+    status: Status,
+    _count_(ranging_round_indexes): 8,
+    ranging_round_indexes: 8[],
+}
+
+test SessionUpdateDtAnchorRangingRoundsRsp {
+    "\x41\x08\x00\x03\x01\x01\x02",
 }
 
 packet SessionUpdateDtTagRangingRoundsCmd : SessionConfigPacket (mt = COMMAND, oid = UPDATE_DT_TAG_RANGING_ROUNDS) {
@@ -1237,6 +1259,21 @@ struct ExtendedAddressOwrAoaRangingMeasurement {
     aoa_elevation_fom: 8,
 }
 
+enum DlTdoaAnchorLocationPresence : 1 {
+    ABSENT = 0,
+    PRESENT = 1,
+}
+
+enum DlTdoaAnchorLocationType : 7 {
+    WGS84 = 0,
+    RELATIVE = 1,
+}
+
+struct DlTdoaAnchorLocationHeader {
+    presence : DlTdoaAnchorLocationPresence,
+    location_type : DlTdoaAnchorLocationType,
+}
+
 struct Wgs84Location {
     data: 8[12],
 }
@@ -1247,16 +1284,38 @@ struct RelativeLocation {
     z: 24,
 }
 
+enum DlTdoaMessageType : 8 {
+    POLL_DTM = 0x00,
+    RESPONSE_DTM = 0x01,
+    FINAL_DTM = 0x02,
+}
+
+enum DlTdoaTxTimestampType : 1 {
+    LOCAL_TIME_BASE = 0,
+    COMMON_TIME_BASE = 1,
+}
+
+enum DlTdoaTimestampLength : 2 {
+    FORTY_BIT = 0,
+    SIXTY_FOUR_BIT = 1,
+}
+
+struct DlTdoaTxTimestampConf {
+    timestamp_type : DlTdoaTxTimestampType,
+    timestamp_length : DlTdoaTimestampLength,
+    _reserved_ : 5,
+}
+
 struct DlTdoaRangingMeasurement {
     status: Status,
-    message_type: 8,
-    tx_timestamp_type : 1,
+    message_type: DlTdoaMessageType,
+    tx_timestamp_type : DlTdoaTxTimestampType,
     tx_timestamp_length : 1,
     _reserved_ : 1,
     rx_timestamp_length : 1,
     _reserved_ : 1,
-    _count_(wgs84_location) : 1,
-    _count_(relative_location) : 1,
+    wgs84_location_present : 1,
+    relative_location_present : 1,
     _count_(active_ranging_rounds) : 4,
     _reserved_ : 5,
     block_index: 16,
@@ -1276,8 +1335,8 @@ struct DlTdoaRangingMeasurement {
     initiator_reply_time: 32,
     responder_reply_time: 32,
     initiator_responder_tof: 16,
-    wgs84_location : Wgs84Location[],
-    relative_location : RelativeLocation[],
+    wgs84_location : Wgs84Location if wgs84_location_present = 1,
+    relative_location : RelativeLocation if relative_location_present = 1,
     active_ranging_rounds: 8[],
 }
 
