@@ -212,15 +212,26 @@ impl Session {
         )
     }
 
-    fn ranging_interval_ms(&self) -> u32 {
-        let block_stride = if self.app_config.dl_tdoa_role() == Some(uci::DeviceRole::DtTag) {
-            self.app_config.dl_tdoa_block_stride()
-        } else {
-            1
-        };
+    pub fn set_app_config(&mut self, app_config: AppConfig) {
+        let old_interval = self.ranging_interval();
+        self.app_config = app_config;
+        let new_interval = self.ranging_interval();
+        if new_interval != old_interval
+            && let Some(deadline) = self.next_ranging_at
+        {
+            let now = Instant::now();
+            self.next_ranging_at = Some(
+                deadline
+                    .checked_sub(old_interval)
+                    .map_or(now + new_interval, |last| (last + new_interval).max(now)),
+            );
+        }
+    }
+
+    pub fn ranging_interval_ms(&self) -> u32 {
         self.app_config
             .ranging_duration()
-            .saturating_mul(block_stride)
+            .saturating_mul(self.app_config.block_stride())
     }
 
     fn ranging_interval(&self) -> Duration {
