@@ -1513,7 +1513,7 @@ impl Device {
             .into();
         }
 
-        if let Some(reason_code) = session.missing_dl_tdoa_rounds_reason() {
+        if let Some(reason_code) = session.invalid_start_reason() {
             return CommandOutput::with_effects(
                 SessionStartRsp {
                     status: uci::Status::Ok,
@@ -1521,7 +1521,7 @@ impl Device {
                 [DeviceEffect::send_control(SessionStatusNtf {
                     session_token: session_id,
                     session_state: SessionState::SessionStateIdle,
-                    reason_code: reason_code.into(),
+                    reason_code,
                 })],
             );
         }

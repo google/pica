@@ -586,10 +586,9 @@ enum ReasonCode : 8 {
     ERROR_REF_UWB_SESSION_RANGING_DURATION_MISMATCH = 0x3D,
     ERROR_REF_UWB_SESSION_INVALID_OFFSET_TIME = 0x3E,
     ERROR_REF_UWB_SESSION_LOST = 0x3F,
-    RFU_REASON_CODE_RANGE_2 = 0x40..0x7F {
-        ERROR_DT_ANCHOR_RANGING_ROUNDS_NOT_CONFIGURED = 0x40,
-        ERROR_DT_TAG_RANGING_ROUNDS_NOT_CONFIGURED = 0x41,
-    },
+    ERROR_DT_ANCHOR_RANGING_ROUNDS_NOT_CONFIGURED = 0x40,
+    ERROR_DT_TAG_RANGING_ROUNDS_NOT_CONFIGURED = 0x41,
+    RFU_REASON_CODE_RANGE_2 = 0x42..0x7F,
     VENDOR_SPECIFIC_REASON_CODE_RANGE_1 = 0x80..0xFE {
         ERROR_INVALID_CHANNEL_WITH_AOA = 0x80,
         ERROR_STOPPED_DUE_TO_OTHER_SESSION_CONFLICT = 0x81,
@@ -919,9 +918,7 @@ test SessionDeinitRsp {
 packet SessionStatusNtf : SessionConfigPacket (mt = NOTIFICATION, oid = STATUS) {
     session_token: 32, // Session ID or Session Handle (based on UWBS version)
     session_state: SessionState,
-    // TODO(b/272775225): Switch back to the enum type ReasonCode, once PDL supports defining a
-    // range inside an enum (for the vendor-specific space), in b/267339120.
-    reason_code: 8,
+    reason_code: ReasonCode,
 }
 
 test SessionStatusNtf {
