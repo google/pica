@@ -1000,6 +1000,7 @@ async def run(address: str, uci_port: int):
         await aliro_ranging_session(host0)
         await dl_tdoa_ranging_session(host0, host1, address, uci_port)
         await twr_block_stride_ranging(host0, host1)
+        await aoa_result_req_ranging(host0, host1)
     finally:
         host0.disconnect()
         host1.disconnect()
@@ -1933,6 +1934,407 @@ async def twr_block_stride_ranging(host_controller: Host, host_controlee: Host):
 
     await stop_deinit_session(host_controller)
     await stop_deinit_session(host_controlee)
+
+
+async def aoa_result_req_ranging(host0: Host, host1: Host):
+    def tlvs(cfg: dict) -> list[uci.AppConfigTlv]:
+        return [uci.AppConfigTlv(cfg_id=k, v=bytes(v)) for k, v in cfg.items()]
+
+    async def init_session(host: Host, sid: int, cfg: dict):
+        host.send_control(
+            uci.SessionInitCmd(
+                session_id=sid, session_type=uci.SessionType.FIRA_RANGING_SESSION
+            )
+        )
+        await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_INIT,
+                reason_code=0,
+            )
+        )
+        host.send_control(uci.SessionSetAppConfigCmd(session_token=sid, tlvs=tlvs(cfg)))
+        await host.expect_control(
+            uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+        )
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_IDLE,
+                reason_code=0,
+            )
+        )
+
+    async def start_session(host: Host, sid: int):
+        host.send_control(uci.SessionStartCmd(session_id=sid))
+        await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+                reason_code=0,
+            )
+        )
+        await host.expect_control(
+            uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+        )
+
+    async def stop_session(host: Host, sid: int):
+        host.send_control(uci.SessionStopCmd(session_id=sid))
+        await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_IDLE,
+                reason_code=0,
+            )
+        )
+        await host.expect_control(
+            uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        )
+
+    async def deinit_session(host: Host, sid: int):
+        host.send_control(uci.SessionDeinitCmd(session_token=sid))
+        await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_DEINIT,
+                reason_code=0,
+            )
+        )
+
+    twr_sid = 10
+    await init_session(
+        host1,
+        twr_sid,
+        {
+            uci.AppConfigTlvType.DEVICE_ROLE: [uci.DeviceRole.RESPONDER],
+            uci.AppConfigTlvType.DEVICE_TYPE: [uci.DeviceType.CONTROLEE],
+            uci.AppConfigTlvType.DEVICE_MAC_ADDRESS: host1.mac_address,
+            uci.AppConfigTlvType.DST_MAC_ADDRESS: host0.mac_address,
+            uci.AppConfigTlvType.MAC_ADDRESS_MODE: [uci.MacAddressMode.MODE_0],
+            uci.AppConfigTlvType.MULTI_NODE_MODE: [uci.MultiNodeMode.ONE_TO_ONE],
+            uci.AppConfigTlvType.SCHEDULE_MODE: [uci.ScheduleMode.CONTENTION_BASED],
+            uci.AppConfigTlvType.RANGING_ROUND_USAGE: [0x06],
+            uci.AppConfigTlvType.RANGING_DURATION: int(100).to_bytes(4, "little"),
+            uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG: [
+                uci.SessionInfoNtfConfig.DISABLE
+            ],
+        },
+    )
+    await start_session(host1, twr_sid)
+
+    await init_session(
+        host0,
+        twr_sid,
+        {
+            uci.AppConfigTlvType.DEVICE_ROLE: [uci.DeviceRole.INITIATOR],
+            uci.AppConfigTlvType.DEVICE_TYPE: [uci.DeviceType.CONTROLLER],
+            uci.AppConfigTlvType.DEVICE_MAC_ADDRESS: host0.mac_address,
+            uci.AppConfigTlvType.DST_MAC_ADDRESS: host1.mac_address,
+            uci.AppConfigTlvType.MAC_ADDRESS_MODE: [uci.MacAddressMode.MODE_0],
+            uci.AppConfigTlvType.MULTI_NODE_MODE: [uci.MultiNodeMode.ONE_TO_ONE],
+            uci.AppConfigTlvType.SCHEDULE_MODE: [uci.ScheduleMode.CONTENTION_BASED],
+            uci.AppConfigTlvType.RANGING_ROUND_USAGE: [0x06],
+            uci.AppConfigTlvType.RANGING_DURATION: int(100).to_bytes(4, "little"),
+            uci.AppConfigTlvType.NUMBER_OF_CONTROLEES: [1],
+            uci.AppConfigTlvType.MAX_NUMBER_OF_MEASUREMENTS: int(1).to_bytes(
+                2, "little"
+            ),
+        },
+    )
+
+    host0.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=twr_sid,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.AOA_RESULT_REQ, v=bytes([0xFF])
+                ),
+            ],
+        )
+    )
+    await host0.expect_control(
+        uci.SessionSetAppConfigRsp(
+            status=uci.Status.INVALID_PARAM,
+            cfg_status=[
+                uci.AppConfigStatus(
+                    cfg_id=uci.AppConfigTlvType.AOA_RESULT_REQ,
+                    status=uci.Status.INVALID_PARAM,
+                ),
+            ],
+        )
+    )
+
+    twr_modes = [
+        (None, 100, 100),
+        (uci.AoaResultReq.AOA_DISABLED, 0, 0),
+        (uci.AoaResultReq.AOA_ENABLED_AZIMUTH_ONLY, 100, 0),
+        (uci.AoaResultReq.AOA_ENABLED_ELEVATION_ONLY, 0, 100),
+    ]
+
+    for req, exp_az_fom, exp_el_fom in twr_modes:
+        if req is not None:
+            host0.send_control(
+                uci.SessionSetAppConfigCmd(
+                    session_token=twr_sid,
+                    tlvs=tlvs({uci.AppConfigTlvType.AOA_RESULT_REQ: [req]}),
+                )
+            )
+            await host0.expect_control(
+                uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+            )
+
+        await start_session(host0, twr_sid)
+        event = await host0.expect_control(
+            uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0
+        )
+        assert len(event.two_way_ranging_measurements) == 1
+        m = event.two_way_ranging_measurements[0]
+        assert m.status == uci.Status.OK
+        assert m.aoa_azimuth_fom == exp_az_fom and m.aoa_elevation_fom == exp_el_fom
+        if exp_az_fom == 0:
+            assert m.aoa_azimuth == 0
+        if exp_el_fom == 0:
+            assert m.aoa_elevation == 0
+        assert (
+            m.aoa_destination_azimuth == 0
+            and m.aoa_destination_elevation == 0
+            and m.aoa_destination_azimuth_fom == 100
+            and m.aoa_destination_elevation_fom == 100
+        )
+        await host0.expect_control(
+            uci.SessionStatusNtf(
+                session_token=twr_sid,
+                session_state=uci.SessionState.SESSION_STATE_IDLE,
+                reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+            )
+        )
+        await host0.expect_control(
+            uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        )
+
+    host0.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=twr_sid,
+            tlvs=tlvs(
+                {
+                    uci.AppConfigTlvType.AOA_RESULT_REQ: [
+                        uci.AoaResultReq.AOA_DISABLED
+                    ],
+                    uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG: [
+                        uci.SessionInfoNtfConfig.ENABLE_AOA_TRIGGER
+                    ],
+                }
+            ),
+        )
+    )
+    await host0.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    await start_session(host0, twr_sid)
+    await host0.expect_control(
+        uci.SessionStatusNtf(
+            session_token=twr_sid,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+        )
+    )
+    await host0.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    host0.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=twr_sid,
+            tlvs=tlvs(
+                {
+                    uci.AppConfigTlvType.AOA_RESULT_REQ: [
+                        uci.AoaResultReq.AOA_DISABLED
+                    ],
+                    uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG: [
+                        uci.SessionInfoNtfConfig.ENABLE_PROXIMITY_AOA_TRIGGER
+                    ],
+                }
+            ),
+        )
+    )
+    await host0.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    await start_session(host0, twr_sid)
+    event = await host0.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+    assert len(event.two_way_ranging_measurements) == 1
+    m = event.two_way_ranging_measurements[0]
+    assert m.status == uci.Status.OK
+    assert m.aoa_azimuth_fom == 0 and m.aoa_elevation_fom == 0
+    await host0.expect_control(
+        uci.SessionStatusNtf(
+            session_token=twr_sid,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+        )
+    )
+    await host0.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    host0.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=twr_sid,
+            tlvs=tlvs(
+                {
+                    uci.AppConfigTlvType.AOA_RESULT_REQ: [
+                        uci.AoaResultReq.AOA_ENABLED_AZIMUTH_ONLY
+                    ],
+                    uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG: [
+                        uci.SessionInfoNtfConfig.ENABLE_AOA_TRIGGER
+                    ],
+                    uci.AppConfigTlvType.AOA_BOUND_CONFIG: (
+                        int(-10 * 128).to_bytes(2, "little", signed=True)
+                        + int(10 * 128).to_bytes(2, "little", signed=True)
+                        + int(20 * 128).to_bytes(2, "little", signed=True)
+                        + int(45 * 128).to_bytes(2, "little", signed=True)
+                    ),
+                }
+            ),
+        )
+    )
+    await host0.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    await start_session(host0, twr_sid)
+    event = await host0.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+    assert len(event.two_way_ranging_measurements) == 1
+    m = event.two_way_ranging_measurements[0]
+    assert m.status == uci.Status.OK
+    assert m.aoa_azimuth_fom == 100 and m.aoa_elevation_fom == 0
+    await host0.expect_control(
+        uci.SessionStatusNtf(
+            session_token=twr_sid,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+        )
+    )
+    await host0.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    await deinit_session(host0, twr_sid)
+    await stop_session(host1, twr_sid)
+    await deinit_session(host1, twr_sid)
+
+    dl_sid = 11
+    await init_session(
+        host1,
+        dl_sid,
+        {
+            uci.AppConfigTlvType.DEVICE_ROLE: [uci.DeviceRole.DT_ANCHOR],
+            uci.AppConfigTlvType.DEVICE_TYPE: [uci.DeviceType.CONTROLLER],
+            uci.AppConfigTlvType.DEVICE_MAC_ADDRESS: host1.mac_address,
+            uci.AppConfigTlvType.MAC_ADDRESS_MODE: [uci.MacAddressMode.MODE_0],
+            uci.AppConfigTlvType.MULTI_NODE_MODE: [uci.MultiNodeMode.ONE_TO_ONE],
+            uci.AppConfigTlvType.SCHEDULE_MODE: [uci.ScheduleMode.CONTENTION_BASED],
+            uci.AppConfigTlvType.RANGING_ROUND_USAGE: [
+                uci.RangingRoundUsage.ONE_WAY_RANGING_DL_TDOA
+            ],
+            uci.AppConfigTlvType.RANGING_DURATION: int(100).to_bytes(4, "little"),
+            uci.AppConfigTlvType.DL_TDOA_ANCHOR_LOCATION: bytes([0x03])
+            + bytes(uci.RelativeLocation(x=10, y=20, z=30).serialize()),
+            uci.AppConfigTlvType.DL_TDOA_TX_ACTIVE_RANGING_ROUNDS: [0x01],
+        },
+    )
+    host1.send_control(
+        uci.SessionUpdateDtAnchorRangingRoundsCmd(
+            session_token=dl_sid,
+            ranging_rounds=[
+                uci.DtAnchorRangingRound(
+                    round_index=0, role=uci.DtAnchorActingRole.INITIATOR
+                )
+            ],
+        )
+    )
+    await host1.expect_control(
+        uci.SessionUpdateDtAnchorRangingRoundsRsp(
+            status=uci.Status.OK, ranging_round_indexes=[]
+        )
+    )
+    await start_session(host1, dl_sid)
+
+    await init_session(
+        host0,
+        dl_sid,
+        {
+            uci.AppConfigTlvType.DEVICE_ROLE: [uci.DeviceRole.DT_TAG],
+            uci.AppConfigTlvType.DEVICE_TYPE: [uci.DeviceType.CONTROLEE],
+            uci.AppConfigTlvType.DEVICE_MAC_ADDRESS: host0.mac_address,
+            uci.AppConfigTlvType.MAC_ADDRESS_MODE: [uci.MacAddressMode.MODE_0],
+            uci.AppConfigTlvType.MULTI_NODE_MODE: [uci.MultiNodeMode.ONE_TO_ONE],
+            uci.AppConfigTlvType.SCHEDULE_MODE: [uci.ScheduleMode.CONTENTION_BASED],
+            uci.AppConfigTlvType.RANGING_ROUND_USAGE: [
+                uci.RangingRoundUsage.ONE_WAY_RANGING_DL_TDOA
+            ],
+            uci.AppConfigTlvType.RANGING_DURATION: int(100).to_bytes(4, "little"),
+            uci.AppConfigTlvType.AOA_RESULT_REQ: [uci.AoaResultReq.AOA_DISABLED],
+        },
+    )
+    host0.send_control(
+        uci.SessionUpdateDtTagRangingRoundsCmd(
+            session_token=dl_sid, ranging_round_indexes=[0]
+        )
+    )
+    await host0.expect_control(
+        uci.SessionUpdateDtTagRangingRoundsRsp(
+            status=uci.Status.OK, ranging_round_indexes=[]
+        )
+    )
+    await start_session(host0, dl_sid)
+
+    event = await host0.expect_control(uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0)
+    assert len(event.dl_tdoa_measurements) == 1
+    m = event.dl_tdoa_measurements[0].measurement
+    assert m.status == uci.Status.OK
+    assert m.relative_location == uci.RelativeLocation(x=10, y=20, z=30)
+    assert (
+        m.aoa_azimuth == 0
+        and m.aoa_azimuth_fom == 0
+        and m.aoa_elevation == 0
+        and m.aoa_elevation_fom == 0
+    )
+
+    await stop_session(host0, dl_sid)
+    host0.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=dl_sid,
+            tlvs=tlvs(
+                {
+                    uci.AppConfigTlvType.AOA_RESULT_REQ: [
+                        uci.AoaResultReq.AOA_ENABLED_AZIMUTH_ONLY
+                    ]
+                }
+            ),
+        )
+    )
+    await host0.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    await start_session(host0, dl_sid)
+
+    event = await host0.expect_control(uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0)
+    assert len(event.dl_tdoa_measurements) == 1
+    m = event.dl_tdoa_measurements[0].measurement
+    assert m.status == uci.Status.OK
+    assert m.relative_location == uci.RelativeLocation(x=10, y=20, z=30)
+    assert (
+        m.aoa_azimuth_fom == 100 and m.aoa_elevation == 0 and m.aoa_elevation_fom == 0
+    )
+
+    await stop_session(host0, dl_sid)
+    await deinit_session(host0, dl_sid)
+    await stop_session(host1, dl_sid)
+    await deinit_session(host1, dl_sid)
 
 
 def main():

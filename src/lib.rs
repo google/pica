@@ -147,6 +147,17 @@ const fn degrees_to_q9_7(deg: i16) -> i16 {
     deg.saturating_mul(128)
 }
 
+fn encode_aoa(measurement: RangingMeasurement, req: uci::AoaResultReq) -> (u16, u8, u16, u8) {
+    let azimuth = degrees_to_q9_7(measurement.azimuth) as u16;
+    let elevation = degrees_to_q9_7(i16::from(measurement.elevation)) as u16;
+    match req {
+        uci::AoaResultReq::AoaDisabled => (0, 0, 0, 0),
+        uci::AoaResultReq::AoaEnabled => (azimuth, 100, elevation, 100),
+        uci::AoaResultReq::AoaEnabledAzimuthOnly => (azimuth, 100, 0, 0),
+        uci::AoaResultReq::AoaEnabledElevationOnly => (0, 0, elevation, 100),
+    }
+}
+
 #[derive(Debug)]
 enum TwoWayRangingMeasurement {
     Short(ShortAddressTwoWayRangingMeasurement),
@@ -155,10 +166,19 @@ enum TwoWayRangingMeasurement {
 
 impl TwoWayRangingMeasurement {
     fn new(
+        app_config: &AppConfig,
         mac_address: &MacAddress,
         local: RangingMeasurement,
         remote: RangingMeasurement,
     ) -> Self {
+        let (aoa_azimuth, aoa_azimuth_fom, aoa_elevation, aoa_elevation_fom) =
+            encode_aoa(local, app_config.aoa_result_req());
+        let (
+            aoa_destination_azimuth,
+            aoa_destination_azimuth_fom,
+            aoa_destination_elevation,
+            aoa_destination_elevation_fom,
+        ) = encode_aoa(remote, uci::AoaResultReq::AoaEnabled);
         match mac_address {
             MacAddress::Short(address) => {
                 Self::Short(ShortAddressTwoWayRangingMeasurement {
@@ -166,14 +186,14 @@ impl TwoWayRangingMeasurement {
                     status: uci::Status::Ok,
                     nlos: 0, // in Line Of Sight
                     distance: local.range,
-                    aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
-                    aoa_azimuth_fom: 100, // Yup, pretty sure about this
-                    aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
-                    aoa_elevation_fom: 100, // Yup, pretty sure about this
-                    aoa_destination_azimuth: degrees_to_q9_7(remote.azimuth) as u16,
-                    aoa_destination_azimuth_fom: 100,
-                    aoa_destination_elevation: degrees_to_q9_7(i16::from(remote.elevation)) as u16,
-                    aoa_destination_elevation_fom: 100,
+                    aoa_azimuth,
+                    aoa_azimuth_fom,
+                    aoa_elevation,
+                    aoa_elevation_fom,
+                    aoa_destination_azimuth,
+                    aoa_destination_azimuth_fom,
+                    aoa_destination_elevation,
+                    aoa_destination_elevation_fom,
                     slot_index: 0,
                     rssi: u8::MAX,
                 })
@@ -184,14 +204,14 @@ impl TwoWayRangingMeasurement {
                     status: uci::Status::Ok,
                     nlos: 0,
                     distance: local.range,
-                    aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
-                    aoa_azimuth_fom: 100,
-                    aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
-                    aoa_elevation_fom: 100,
-                    aoa_destination_azimuth: degrees_to_q9_7(remote.azimuth) as u16,
-                    aoa_destination_azimuth_fom: 100,
-                    aoa_destination_elevation: degrees_to_q9_7(i16::from(remote.elevation)) as u16,
-                    aoa_destination_elevation_fom: 100,
+                    aoa_azimuth,
+                    aoa_azimuth_fom,
+                    aoa_elevation,
+                    aoa_elevation_fom,
+                    aoa_destination_azimuth,
+                    aoa_destination_azimuth_fom,
+                    aoa_destination_elevation,
+                    aoa_destination_elevation_fom,
                     slot_index: 0,
                     rssi: u8::MAX,
                 })
@@ -347,6 +367,7 @@ impl DlTdoaMeasurement {
     }
 
     fn new(
+        app_config: &AppConfig,
         anchor: &device::DlTdoaAnchor,
         local: RangingMeasurement,
         message_type: uci::DlTdoaMessageType,
@@ -354,6 +375,8 @@ impl DlTdoaMeasurement {
         tx_timestamp_length: uci::DlTdoaTimestampLength,
         tx_timestamp: u64,
     ) -> Self {
+        let (aoa_azimuth, aoa_azimuth_fom, aoa_elevation, aoa_elevation_fom) =
+            encode_aoa(local, app_config.aoa_result_req());
         let rx_timestamp = tx_timestamp.wrapping_add(cm_to_tof_ticks(local.range));
         let is_final = message_type == uci::DlTdoaMessageType::FinalDtm;
         let (wgs84_location, relative_location) = if is_final {
@@ -386,10 +409,10 @@ impl DlTdoaMeasurement {
                 block_index,
                 round_index: anchor.round_index,
                 nlos: 0,
-                aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
-                aoa_azimuth_fom: 100,
-                aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
-                aoa_elevation_fom: 100,
+                aoa_azimuth,
+                aoa_azimuth_fom,
+                aoa_elevation,
+                aoa_elevation_fom,
                 rssi: u8::MAX,
                 tx_timestamp_40,
                 tx_timestamp_64,
@@ -737,6 +760,7 @@ impl Pica {
                 .then(|| (active_responders.len() as u64 + 1) * slot_ticks);
 
                 let poll_dtm = DlTdoaMeasurement::new(
+                    &session.app_config,
                     init_anchor,
                     init_local,
                     uci::DlTdoaMessageType::PollDtm,
@@ -759,6 +783,7 @@ impl Pica {
                             let slot_offset_ticks = slot_idx * slot_ticks;
                             Some(
                                 DlTdoaMeasurement::new(
+                                    &session.app_config,
                                     resp_anchor,
                                     local,
                                     uci::DlTdoaMessageType::ResponseDtm,
@@ -781,6 +806,7 @@ impl Pica {
                     .filter(|_| !response_dtms.is_empty())
                     .map(|final_offset| {
                         DlTdoaMeasurement::new(
+                            &session.app_config,
                             init_anchor,
                             init_local,
                             uci::DlTdoaMessageType::FinalDtm,
@@ -809,7 +835,8 @@ impl Pica {
             return;
         };
         let send_ntf = session.app_config.dl_tdoa_role() == Some(uci::DeviceRole::DtTag)
-            && session.app_config.session_info_ntf_config() != uci::SessionInfoNtfConfig::Disable;
+            && session.app_config.effective_session_info_ntf_config()
+                != uci::SessionInfoNtfConfig::Disable;
         let ntf_packet = if send_ntf {
             let measurements = self.dl_tdoa_measurements(device_handle, session_id, session);
             session.encode_dl_tdoa_session_info_ntf(measurements)
@@ -904,7 +931,12 @@ impl Pica {
                     let remote = self
                         .ranging_estimator
                         .estimate(&peer_handle, &device.handle)?;
-                    Some(TwoWayRangingMeasurement::new(&mac_address, local, remote))
+                    Some(TwoWayRangingMeasurement::new(
+                        &session.app_config,
+                        &mac_address,
+                        local,
+                        remote,
+                    ))
                 })
                 .unwrap_or_else(|| TwoWayRangingMeasurement::timeout(&mac_address));
             measurements.push(measurement);
@@ -1004,34 +1036,35 @@ impl Pica {
         }
 
         let effects = if session.session_type() != SessionType::FiraDataTransferSession {
-            let (send_ntf, measurements) = match session.app_config.session_info_ntf_config() {
-                uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
-                uci::SessionInfoNtfConfig::Enable => (true, measurements),
-                uci::SessionInfoNtfConfig::EnableProximityTrigger
-                | uci::SessionInfoNtfConfig::EnableAoaTrigger
-                | uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
-                    let filtered: Vec<_> = measurements
-                        .into_iter()
-                        .filter(|m| m.is_within_bounds(&session.app_config))
-                        .collect();
-                    (!filtered.is_empty(), filtered)
-                }
-                uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
-                | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger
-                | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
-                    let emitted: Vec<_> = measurements
-                        .into_iter()
-                        .filter(|m| {
-                            if m.is_within_bounds(&session.app_config) {
-                                session.in_range_peers.insert(m.mac_address())
-                            } else {
-                                session.in_range_peers.remove(&m.mac_address())
-                            }
-                        })
-                        .collect();
-                    (!emitted.is_empty(), emitted)
-                }
-            };
+            let (send_ntf, measurements) =
+                match session.app_config.effective_session_info_ntf_config() {
+                    uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
+                    uci::SessionInfoNtfConfig::Enable => (true, measurements),
+                    uci::SessionInfoNtfConfig::EnableProximityTrigger
+                    | uci::SessionInfoNtfConfig::EnableAoaTrigger
+                    | uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
+                        let filtered: Vec<_> = measurements
+                            .into_iter()
+                            .filter(|m| m.is_within_bounds(&session.app_config))
+                            .collect();
+                        (!filtered.is_empty(), filtered)
+                    }
+                    uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
+                    | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger
+                    | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
+                        let emitted: Vec<_> = measurements
+                            .into_iter()
+                            .filter(|m| {
+                                if m.is_within_bounds(&session.app_config) {
+                                    session.in_range_peers.insert(m.mac_address())
+                                } else {
+                                    session.in_range_peers.remove(&m.mac_address())
+                                }
+                            })
+                            .collect();
+                        (!emitted.is_empty(), emitted)
+                    }
+                };
 
             if send_ntf {
                 let ntf_packet = match session.app_config.mac_address_mode() {
