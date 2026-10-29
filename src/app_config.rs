@@ -127,6 +127,7 @@ const DEFAULT_DL_TDOA_ANCHOR_CFO: uci::DlTdoaAnchorCfo = uci::DlTdoaAnchorCfo::A
 const DEFAULT_DL_TDOA_TX_ACTIVE_RANGING_ROUNDS: bool = false;
 const DEFAULT_DL_TDOA_TIME_REFERENCE_ANCHOR: bool = false;
 const DEFAULT_DL_TDOA_RESPONDER_TOF: bool = false;
+const DEFAULT_AOA_RESULT_REQ: uci::AoaResultReq = uci::AoaResultReq::AoaEnabled;
 const DEFAULT_AOA_BOUND_CONFIG: [u8; 8] = [0x00, 0xa6, 0x00, 0x5a, 0x00, 0xd3, 0x00, 0x2d];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,9 +139,20 @@ struct AoaBounds {
 }
 
 impl AoaBounds {
-    fn contains(&self, azimuth: i16, elevation: i16) -> bool {
-        (self.min_azimuth..=self.max_azimuth).contains(&azimuth)
-            && (self.min_elevation..=self.max_elevation).contains(&elevation)
+    fn contains(&self, azimuth: i16, elevation: i16, req: uci::AoaResultReq) -> bool {
+        match req {
+            uci::AoaResultReq::AoaDisabled => false,
+            uci::AoaResultReq::AoaEnabled => {
+                (self.min_azimuth..=self.max_azimuth).contains(&azimuth)
+                    && (self.min_elevation..=self.max_elevation).contains(&elevation)
+            }
+            uci::AoaResultReq::AoaEnabledAzimuthOnly => {
+                (self.min_azimuth..=self.max_azimuth).contains(&azimuth)
+            }
+            uci::AoaResultReq::AoaEnabledElevationOnly => {
+                (self.min_elevation..=self.max_elevation).contains(&elevation)
+            }
+        }
     }
 }
 const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
@@ -258,7 +270,7 @@ impl AppConfig {
                 ),
                 (
                     uci::AppConfigTlvType::AoaResultReq,
-                    Bytes::from_static(&[uci::AoaResultReq::AoaEnabled as u8]),
+                    Bytes::from_static(&[DEFAULT_AOA_RESULT_REQ as u8]),
                 ),
                 (
                     uci::AppConfigTlvType::RframeConfig,
@@ -733,6 +745,11 @@ impl AppConfig {
             .unwrap_or(DEFAULT_SUSPEND_RANGING_ROUNDS)
     }
 
+    pub fn aoa_result_req(&self) -> uci::AoaResultReq {
+        self.get_enum(uci::AppConfigTlvType::AoaResultReq)
+            .unwrap_or(DEFAULT_AOA_RESULT_REQ)
+    }
+
     pub fn set_number_of_controlees(&mut self, value: u8) {
         self.tlvs.insert(
             uci::AppConfigTlvType::NumberOfControlees,
@@ -779,9 +796,27 @@ impl AppConfig {
             .unwrap_or(DEFAULT_SLOTS_PER_RR)
     }
 
-    pub fn session_info_ntf_config(&self) -> uci::SessionInfoNtfConfig {
-        self.get_enum(uci::AppConfigTlvType::SessionInfoNtfConfig)
-            .unwrap_or(DEFAULT_SESSION_INFO_NTF_CONFIG)
+    pub fn effective_session_info_ntf_config(&self) -> uci::SessionInfoNtfConfig {
+        let config = self
+            .get_enum(uci::AppConfigTlvType::SessionInfoNtfConfig)
+            .unwrap_or(DEFAULT_SESSION_INFO_NTF_CONFIG);
+        if self.aoa_result_req() == uci::AoaResultReq::AoaDisabled {
+            match config {
+                uci::SessionInfoNtfConfig::EnableAoaTrigger
+                | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger => {
+                    uci::SessionInfoNtfConfig::Disable
+                }
+                uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
+                    uci::SessionInfoNtfConfig::EnableProximityTrigger
+                }
+                uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
+                    uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
+                }
+                _ => config,
+            }
+        } else {
+            config
+        }
     }
 
     pub fn in_band_termination_attempt_count(&self) -> u8 {
@@ -925,8 +960,10 @@ impl AppConfig {
     pub fn is_within_bounds(&self, distance: u16, azimuth: i16, elevation: i16) -> bool {
         let within_proximity =
             (self.near_proximity_config()..=self.far_proximity_config()).contains(&distance);
-        let within_aoa = self.aoa_bound_config().contains(azimuth, elevation);
-        match self.session_info_ntf_config() {
+        let within_aoa =
+            self.aoa_bound_config()
+                .contains(azimuth, elevation, self.aoa_result_req());
+        match self.effective_session_info_ntf_config() {
             uci::SessionInfoNtfConfig::EnableProximityTrigger
             | uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger => within_proximity,
             uci::SessionInfoNtfConfig::EnableAoaTrigger
@@ -935,7 +972,8 @@ impl AppConfig {
             | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
                 within_proximity && within_aoa
             }
-            uci::SessionInfoNtfConfig::Enable | uci::SessionInfoNtfConfig::Disable => true,
+            uci::SessionInfoNtfConfig::Enable => true,
+            uci::SessionInfoNtfConfig::Disable => false,
         }
     }
 

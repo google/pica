@@ -524,17 +524,6 @@ enum CapTlvType : 8 {
     },
 }
 
-
-// AOA result request type.
-// Values set for AOA_RESULT_REQ config ID.
-enum AoaResultReqType : 8 {
-    AOA_DISABLE = 0x0,
-    AOA_ENABLE = 0x01,
-    AOA_ENABLE_AZIMUTH = 0x02,
-    AOA_ENABLE_ELEVATION = 0x03,
-    AOA_ENABLE_INTERLEAVED = 0xF0,
-}
-
 enum DeviceState : 8 {
     DEVICE_STATE_READY = 0x01,
     DEVICE_STATE_ACTIVE = 0x02,

@@ -882,21 +882,6 @@ class CapTlvType(enum.IntEnum):
             return v
 
 
-class AoaResultReqType(enum.IntEnum):
-    AOA_DISABLE = 0x0
-    AOA_ENABLE = 0x1
-    AOA_ENABLE_AZIMUTH = 0x2
-    AOA_ENABLE_ELEVATION = 0x3
-    AOA_ENABLE_INTERLEAVED = 0xf0
-
-    @staticmethod
-    def from_int(v: int) -> Union[int, 'AoaResultReqType']:
-        try:
-            return AoaResultReqType(v)
-        except ValueError as exn:
-            raise exn
-
-
 class DeviceState(enum.IntEnum):
     DEVICE_STATE_READY = 0x1
     DEVICE_STATE_ACTIVE = 0x2
