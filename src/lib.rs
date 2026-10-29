@@ -41,6 +41,7 @@ mod device;
 use device::{Device, DeviceEffect};
 
 mod session;
+use session::Session;
 
 mod mac_address;
 pub use mac_address::MacAddress;
@@ -282,6 +283,137 @@ impl TwoWayRangingMeasurement {
     }
 }
 
+/// IEEE 802.15.4z fundamental UWB chipping rate (`499.2 MHz`).
+const CHIPS_PER_MS: u64 = 499_200;
+/// Ranging counter ticks per UWB chip (`2^7 = 128`, `~15.65 ps` per tick).
+const TICKS_PER_CHIP: u64 = 128;
+/// UWB chips per Ranging Scheduling Time Unit (`1 RSTU = 416 chips ≈ 0.833 µs`).
+const CHIPS_PER_RSTU: u64 = 416;
+
+const RSTU_PER_MS: u64 = CHIPS_PER_MS / CHIPS_PER_RSTU;
+const TICKS_PER_RSTU: u64 = CHIPS_PER_RSTU * TICKS_PER_CHIP;
+const TICKS_PER_MS: u64 = RSTU_PER_MS * TICKS_PER_RSTU;
+const TICKS_PER_S: u64 = TICKS_PER_MS * 1000;
+/// Speed of light in air (`299,702,547 m/s`, FiRa UCI Table 33).
+const SPEED_OF_LIGHT_M_PER_S: u64 = 299_702_547;
+const SPEED_OF_LIGHT_CM_PER_S: u64 = SPEED_OF_LIGHT_M_PER_S * 100;
+
+fn cm_to_tof_ticks(cm: u16) -> u64 {
+    (u64::from(cm) * TICKS_PER_S) / SPEED_OF_LIGHT_CM_PER_S
+}
+
+/// FiRa UCI Table 35 sentinel (`0x8000` in signed Q6.10) when CFO is omitted or unsupported.
+const INVALID_CFO: u16 = 0x8000;
+const TIMESTAMP_40_BIT_MASK: u64 = (1u64 << 40) - 1;
+const MAX_RESPONDERS_PER_ROUND: usize = 8;
+
+/// Carries the peer's `MacAddress` alongside `DlTdoaRangingMeasurement`, which omits the
+/// address in PDL so short and extended MAC notifications can share the inner layout.
+#[derive(Debug)]
+struct DlTdoaMeasurement {
+    mac_address: MacAddress,
+    measurement: uci::DlTdoaRangingMeasurement,
+}
+
+impl DlTdoaMeasurement {
+    fn with_response_timing(
+        self,
+        init_to_resp: RangingMeasurement,
+        includes_tof: bool,
+        slot_offset_ticks: u64,
+        final_slot_offset_ticks: Option<u64>,
+    ) -> Self {
+        let tof_ticks = cm_to_tof_ticks(init_to_resp.range);
+        let responder_reply_time =
+            u32::try_from(slot_offset_ticks.saturating_sub(tof_ticks)).unwrap_or(u32::MAX);
+        let initiator_reply_time = final_slot_offset_ticks.map_or(0, |final_offset| {
+            let rx_offset = slot_offset_ticks.saturating_add(tof_ticks);
+            u32::try_from(final_offset.saturating_sub(rx_offset)).unwrap_or(u32::MAX)
+        });
+        let initiator_responder_tof = if includes_tof {
+            u16::try_from(tof_ticks).unwrap_or(u16::MAX)
+        } else {
+            0
+        };
+        Self {
+            mac_address: self.mac_address,
+            measurement: uci::DlTdoaRangingMeasurement {
+                initiator_reply_time,
+                responder_reply_time,
+                initiator_responder_tof,
+                ..self.measurement
+            },
+        }
+    }
+
+    fn new(
+        anchor: &device::DlTdoaAnchor,
+        local: RangingMeasurement,
+        message_type: uci::DlTdoaMessageType,
+        block_index: u16,
+        tx_timestamp_length: uci::DlTdoaTimestampLength,
+        tx_timestamp: u64,
+    ) -> Self {
+        let rx_timestamp = tx_timestamp.wrapping_add(cm_to_tof_ticks(local.range));
+        let is_final = message_type == uci::DlTdoaMessageType::FinalDtm;
+        let (wgs84_location, relative_location) = if is_final {
+            (None, None)
+        } else {
+            match &anchor.location {
+                Some(app_config::DlTdoaAnchorLocation::Wgs84(loc)) => (Some(loc.clone()), None),
+                Some(app_config::DlTdoaAnchorLocation::Relative(loc)) => (None, Some(loc.clone())),
+                None => (None, None),
+            }
+        };
+        let active_ranging_rounds = if is_final {
+            Vec::new()
+        } else {
+            anchor.active_ranging_rounds.clone()
+        };
+        let (tx_timestamp_40, tx_timestamp_64) = match tx_timestamp_length {
+            uci::DlTdoaTimestampLength::FortyBit => {
+                (Some(tx_timestamp & TIMESTAMP_40_BIT_MASK), None)
+            }
+            uci::DlTdoaTimestampLength::SixtyFourBit => (None, Some(tx_timestamp)),
+        };
+
+        Self {
+            mac_address: anchor.mac_address,
+            measurement: uci::DlTdoaRangingMeasurement {
+                status: uci::Status::Ok,
+                message_type,
+                tx_timestamp_type: anchor.tx_timestamp_conf.timestamp_type,
+                block_index,
+                round_index: anchor.round_index,
+                nlos: 0,
+                aoa_azimuth: degrees_to_q9_7(local.azimuth) as u16,
+                aoa_azimuth_fom: 100,
+                aoa_elevation: degrees_to_q9_7(i16::from(local.elevation)) as u16,
+                aoa_elevation_fom: 100,
+                rssi: u8::MAX,
+                tx_timestamp_40,
+                tx_timestamp_64,
+                rx_timestamp_40: None,
+                rx_timestamp_64: Some(rx_timestamp),
+                anchor_cfo: if message_type == uci::DlTdoaMessageType::ResponseDtm
+                    && !anchor.includes_anchor_cfo
+                {
+                    INVALID_CFO
+                } else {
+                    0
+                },
+                cfo: 0,
+                initiator_reply_time: 0,
+                responder_reply_time: 0,
+                initiator_responder_tof: 0,
+                wgs84_location,
+                relative_location,
+                active_ranging_rounds,
+            },
+        }
+    }
+}
+
 struct DrainPackets<'a>(&'a mut VecDeque<(Handle, UciPacket)>);
 
 impl Iterator for DrainPackets<'_> {
@@ -492,6 +624,223 @@ impl Pica {
             .find_map(|(&handle, &addr)| (addr == mac_address).then_some(handle))
     }
 
+    /// Groups active anchors by `round_index` with each round's initiator placed first.
+    fn dl_tdoa_anchors(
+        &self,
+        device_handle: Handle,
+        session_id: u32,
+        session: &Session,
+    ) -> Vec<(Handle, device::DlTdoaAnchor)> {
+        let mac_mode = session.app_config.mac_address_mode();
+        let active_rounds = session.dt_tag_active_rounds();
+        let mut candidates: Vec<(Handle, device::DlTdoaAnchor)> = self
+            .anchors
+            .iter()
+            .filter(|(_, mac)| {
+                matches!(
+                    (mac_mode, *mac),
+                    (uci::MacAddressMode::Mode0, MacAddress::Short(_))
+                        | (uci::MacAddressMode::Mode2, MacAddress::Extended(_))
+                )
+            })
+            .flat_map(|(&handle, &mac)| {
+                active_rounds.iter().copied().map(move |round_index| {
+                    (
+                        handle,
+                        device::DlTdoaAnchor::virtual_anchor(mac, round_index),
+                    )
+                })
+            })
+            .chain(
+                self.devices
+                    .values()
+                    .filter(|entry| entry.device.handle != device_handle)
+                    .flat_map(|entry| {
+                        entry
+                            .device
+                            .active_dl_tdoa_anchors(session, session_id)
+                            .into_iter()
+                            .map(move |anchor| (entry.device.handle, anchor))
+                    }),
+            )
+            .collect();
+        candidates.sort_by_key(|(handle, anchor)| {
+            let role_rank = match anchor.acting_role {
+                Some(uci::DtAnchorActingRole::Initiator) => 0,
+                None => 1,
+                Some(uci::DtAnchorActingRole::Responder) => 2,
+            };
+            (
+                anchor.round_index,
+                role_rank,
+                !anchor.is_time_reference,
+                *handle,
+            )
+        });
+        candidates
+    }
+
+    /// Assigns slot `0` to `PollDtm`, slots `1..=K` to `ResponseDtm`s, and slot `K + 1` to
+    /// `FinalDtm` (under `DsTwr`) within each active round of the current ranging block.
+    fn dl_tdoa_measurements(
+        &self,
+        device_handle: Handle,
+        session_id: u32,
+        session: &Session,
+    ) -> Vec<DlTdoaMeasurement> {
+        let block_stride = session.app_config.dl_tdoa_block_stride();
+        let total_blocks = u64::from(session.ranging_count) * u64::from(block_stride);
+        let block_index = total_blocks as u16;
+        let block_ticks = u64::from(session.app_config.ranging_duration()) * TICKS_PER_MS;
+        let slot_ticks = u64::from(session.app_config.slot_duration()) * TICKS_PER_RSTU;
+        let slots_per_rr = session.app_config.slots_per_rr();
+        let round_ticks = u64::from(slots_per_rr) * slot_ticks;
+        let anchors = self.dl_tdoa_anchors(device_handle, session_id, session);
+
+        anchors
+            .chunk_by(|(_, a), (_, b)| a.round_index == b.round_index)
+            .filter_map(|round_chunk| {
+                let ((init_handle, init_anchor), responders) = round_chunk.split_first()?;
+                if init_anchor.acting_role == Some(uci::DtAnchorActingRole::Responder) {
+                    return None;
+                }
+                let init_local = self
+                    .ranging_estimator
+                    .estimate(&device_handle, init_handle)?;
+                let tx_timestamp_length = init_anchor.tx_timestamp_conf.timestamp_length;
+                let round_base_ticks = total_blocks
+                    .wrapping_mul(block_ticks)
+                    .wrapping_add(u64::from(init_anchor.round_index) * round_ticks);
+
+                let reserved_slots = match init_anchor.ranging_method {
+                    uci::DlTdoaRangingMethod::SsTwr => 1,
+                    uci::DlTdoaRangingMethod::DsTwr => 2,
+                };
+                let max_responders = usize::from(slots_per_rr.saturating_sub(reserved_slots))
+                    .min(MAX_RESPONDERS_PER_ROUND);
+                let active_responders: Vec<_> = responders
+                    .iter()
+                    .filter(|(_, anchor)| {
+                        anchor.acting_role != Some(uci::DtAnchorActingRole::Initiator)
+                    })
+                    .filter_map(|(resp_handle, resp_anchor)| {
+                        let init_to_resp =
+                            self.ranging_estimator.estimate(init_handle, resp_handle)?;
+                        Some((resp_handle, resp_anchor, init_to_resp))
+                    })
+                    .take(max_responders)
+                    .collect();
+
+                let final_slot_offset_ticks = (init_anchor.ranging_method
+                    == uci::DlTdoaRangingMethod::DsTwr
+                    && !active_responders.is_empty())
+                .then(|| (active_responders.len() as u64 + 1) * slot_ticks);
+
+                let poll_dtm = DlTdoaMeasurement::new(
+                    init_anchor,
+                    init_local,
+                    uci::DlTdoaMessageType::PollDtm,
+                    block_index,
+                    tx_timestamp_length,
+                    round_base_ticks,
+                );
+
+                let response_dtms: Vec<_> = active_responders
+                    .into_iter()
+                    .zip(1u64..)
+                    .filter_map(
+                        move |((resp_handle, resp_anchor, init_to_resp), slot_idx)| {
+                            let local = self
+                                .ranging_estimator
+                                .estimate(&device_handle, resp_handle)?;
+                            let includes_tof = init_anchor.ranging_method
+                                == uci::DlTdoaRangingMethod::SsTwr
+                                || resp_anchor.includes_responder_tof;
+                            let slot_offset_ticks = slot_idx * slot_ticks;
+                            Some(
+                                DlTdoaMeasurement::new(
+                                    resp_anchor,
+                                    local,
+                                    uci::DlTdoaMessageType::ResponseDtm,
+                                    block_index,
+                                    tx_timestamp_length,
+                                    round_base_ticks.wrapping_add(slot_offset_ticks),
+                                )
+                                .with_response_timing(
+                                    init_to_resp,
+                                    includes_tof,
+                                    slot_offset_ticks,
+                                    final_slot_offset_ticks,
+                                ),
+                            )
+                        },
+                    )
+                    .collect();
+
+                let final_dtm = final_slot_offset_ticks
+                    .filter(|_| !response_dtms.is_empty())
+                    .map(|final_offset| {
+                        DlTdoaMeasurement::new(
+                            init_anchor,
+                            init_local,
+                            uci::DlTdoaMessageType::FinalDtm,
+                            block_index,
+                            tx_timestamp_length,
+                            round_base_ticks.wrapping_add(final_offset),
+                        )
+                    });
+
+                Some(
+                    std::iter::once(poll_dtm)
+                        .chain(response_dtms)
+                        .chain(final_dtm),
+                )
+            })
+            .flatten()
+            .take(usize::from(u8::MAX))
+            .collect()
+    }
+
+    fn dl_tdoa_ranging(&mut self, device_handle: Handle, session_id: u32) {
+        let Some(session) = self
+            .get_device(device_handle)
+            .and_then(|d| d.session(session_id))
+        else {
+            return;
+        };
+        let send_ntf = session.app_config.dl_tdoa_role() == Some(uci::DeviceRole::DtTag)
+            && session.app_config.session_info_ntf_config() != uci::SessionInfoNtfConfig::Disable;
+        let ntf_packet = if send_ntf {
+            let measurements = self.dl_tdoa_measurements(device_handle, session_id, session);
+            session.encode_dl_tdoa_session_info_ntf(measurements)
+        } else {
+            None
+        };
+
+        let Some(entry) = self.devices.get_mut(&device_handle) else {
+            return;
+        };
+        let device = &mut entry.device;
+        let Some(session) = device.session_mut(session_id) else {
+            return;
+        };
+        if ntf_packet.is_some() {
+            session.sequence_number += 1;
+        }
+
+        session.ranging_count += 1;
+        let effects = if session.has_reached_max_measurements() {
+            device.stop_active_session(session_id, ReasonCode::MaxNumberOfMeasurementsReached)
+        } else {
+            Vec::new()
+        };
+
+        if let Some(packet) = ntf_packet {
+            self.send_packet(device_handle, packet);
+        }
+        self.apply_device_effects(device_handle, effects);
+    }
+
     fn ranging(&mut self, device_handle: Handle, session_id: u32) {
         tracing::debug!("[{device_handle}] Ranging event");
         tracing::debug!("  session_id={session_id}");
@@ -511,6 +860,7 @@ impl Pica {
         }
 
         if session.app_config.is_dl_tdoa() {
+            self.dl_tdoa_ranging(device_handle, session_id);
             return;
         }
 
@@ -733,9 +1083,7 @@ impl Pica {
                 }
             }
             session.ranging_count += 1;
-            let max_measurements = u32::from(session.app_config.max_number_of_measurements());
-            let max_reached = max_measurements > 0 && session.ranging_count >= max_measurements;
-            if max_reached {
+            if session.has_reached_max_measurements() {
                 device.stop_active_session(session_id, ReasonCode::MaxNumberOfMeasurementsReached)
             } else {
                 Vec::new()

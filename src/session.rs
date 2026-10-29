@@ -17,8 +17,9 @@
 //! - [UCI] FiRa Consortium UWB Command Interface Generic Technical specification
 
 use crate::packets::uci::{self, *};
-use crate::{AppConfig, MacAddress};
+use crate::{AppConfig, DlTdoaMeasurement, MacAddress, UciPacket};
 use bytes::{Bytes, BytesMut};
+use pdl_runtime::Packet;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -52,6 +53,12 @@ impl DataTransfer {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DlTdoaRangingRounds {
+    Tag(Vec<u8>),
+    Anchor(Vec<uci::DtAnchorRangingRound>),
+}
+
 pub struct Session {
     /// cf. [UCI] 7.1
     pub state: SessionState,
@@ -64,6 +71,7 @@ pub struct Session {
     pub session_type: SessionType,
     pub sequence_number: u32,
     pub ranging_count: u32,
+    dl_tdoa_rounds: Option<DlTdoaRangingRounds>,
     pub app_config: AppConfig,
     pub in_range_peers: HashSet<MacAddress>,
     next_ranging_at: Option<Instant>,
@@ -80,9 +88,44 @@ impl Session {
             session_type,
             sequence_number: 0,
             ranging_count: 0,
+            dl_tdoa_rounds: None,
             app_config: AppConfig::new(session_type),
             in_range_peers: HashSet::new(),
             next_ranging_at: None,
+        }
+    }
+
+    pub fn dt_tag_active_rounds(&self) -> &[u8] {
+        match &self.dl_tdoa_rounds {
+            Some(DlTdoaRangingRounds::Tag(rounds)) => rounds.as_slice(),
+            _ => &[],
+        }
+    }
+
+    pub fn dt_anchor_ranging_rounds(&self) -> &[uci::DtAnchorRangingRound] {
+        match &self.dl_tdoa_rounds {
+            Some(DlTdoaRangingRounds::Anchor(rounds)) => rounds.as_slice(),
+            _ => &[],
+        }
+    }
+
+    pub fn set_dt_tag_ranging_rounds(&mut self, round_indexes: Vec<u8>) {
+        self.dl_tdoa_rounds = Some(DlTdoaRangingRounds::Tag(round_indexes));
+    }
+
+    pub fn set_dt_anchor_ranging_rounds(&mut self, rounds: Vec<uci::DtAnchorRangingRound>) {
+        self.dl_tdoa_rounds = Some(DlTdoaRangingRounds::Anchor(rounds));
+    }
+
+    pub fn missing_dl_tdoa_rounds_reason(&self) -> Option<ReasonCode> {
+        match self.app_config.dl_tdoa_role()? {
+            uci::DeviceRole::DtAnchor if self.dt_anchor_ranging_rounds().is_empty() => {
+                Some(ReasonCode::ErrorDtAnchorRangingRoundsNotConfigured)
+            }
+            uci::DeviceRole::DtTag if self.dt_tag_active_rounds().is_empty() => {
+                Some(ReasonCode::ErrorDtTagRangingRoundsNotConfigured)
+            }
+            _ => None,
         }
     }
 
@@ -213,6 +256,11 @@ impl Session {
         self.clear_data();
     }
 
+    pub fn has_reached_max_measurements(&self) -> bool {
+        let max_measurements = u32::from(self.app_config.max_number_of_measurements());
+        max_measurements != 0 && self.ranging_count >= max_measurements
+    }
+
     pub fn data_message_snd(
         &mut self,
         data: DataPacket,
@@ -303,5 +351,59 @@ impl Session {
             session_token,
         }
         .try_into()
+    }
+
+    pub fn encode_dl_tdoa_session_info_ntf(
+        &self,
+        measurements: Vec<DlTdoaMeasurement>,
+    ) -> Option<UciPacket> {
+        match self.app_config.mac_address_mode() {
+            MacAddressMode::Mode0 => Some(
+                ShortMacDlTDoASessionInfoNtf {
+                    sequence_number: self.sequence_number,
+                    session_token: self.id,
+                    rcr_indicator: 0,
+                    current_ranging_interval: self.ranging_interval_ms(),
+                    dl_tdoa_measurements: measurements
+                        .into_iter()
+                        .filter_map(|m| match m.mac_address {
+                            MacAddress::Short(addr) => Some(ShortAddressDlTdoaRangingMeasurement {
+                                mac_address: u16::from_le_bytes(addr),
+                                measurement: m.measurement,
+                            }),
+                            MacAddress::Extended(_) => None,
+                        })
+                        .collect(),
+                }
+                .encode_to_vec()
+                .expect("failed to encode ShortMacDlTDoASessionInfoNtf"),
+            ),
+            MacAddressMode::Mode2 => Some(
+                ExtendedMacDlTDoASessionInfoNtf {
+                    sequence_number: self.sequence_number,
+                    session_token: self.id,
+                    rcr_indicator: 0,
+                    current_ranging_interval: self.ranging_interval_ms(),
+                    dl_tdoa_measurements: measurements
+                        .into_iter()
+                        .filter_map(|m| match m.mac_address {
+                            MacAddress::Extended(addr) => {
+                                Some(ExtendedAddressDlTdoaRangingMeasurement {
+                                    mac_address: u64::from_le_bytes(addr),
+                                    measurement: m.measurement,
+                                })
+                            }
+                            MacAddress::Short(_) => None,
+                        })
+                        .collect(),
+                }
+                .encode_to_vec()
+                .expect("failed to encode ExtendedMacDlTDoASessionInfoNtf"),
+            ),
+            mode => {
+                tracing::warn!("Unsupported MAC address mode {mode:?}");
+                None
+            }
+        }
     }
 }
