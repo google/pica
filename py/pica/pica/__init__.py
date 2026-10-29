@@ -97,10 +97,11 @@ class Host:
         return await self.data_queue.get()
 
     def send_control(self, packet: uci.ControlPacket):
-        # TODO packet fragmentation.
-        packet = bytearray(packet.serialize())
-        packet[3] = len(packet) - 4
-        self.writer.write(packet)
+        raw = packet.serialize()
+        chunks = [raw[i : i + 255] for i in range(4, len(raw), 255)] or [b""]
+        for i, chunk in enumerate(chunks):
+            pbf = 0x10 if i < len(chunks) - 1 else 0
+            self.writer.write(bytes([raw[0] | pbf, raw[1], raw[2], len(chunk)]) + chunk)
 
     def send_data(self, packet: uci.DataPacket):
         packet = bytearray(packet.serialize())

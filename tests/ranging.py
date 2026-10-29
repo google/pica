@@ -547,6 +547,78 @@ async def multicast_list_ntf(host: Host, peer: Host):
         )
     )
 
+    host.send_control(
+        uci.SessionUpdateControllerMulticastListCmd(
+            session_token=0,
+            action=uci.UpdateMulticastListAction.REMOVE_CONTROLEE,
+            payload=uci.SessionUpdateControllerMulticastListCmdPayload(
+                controlees=[
+                    uci.Controlee(
+                        short_address=list(peer.mac_address),
+                        subsession_id=0,
+                    )
+                ]
+            ).serialize(),
+        )
+    )
+    await host.expect_control(
+        uci.SessionUpdateControllerMulticastListRsp(
+            status=uci.Status.OK,
+            controlee_status=[
+                uci.ControleeStatus(
+                    mac_address=list(peer.mac_address),
+                    status=uci.MulticastUpdateStatus.OK_MULTICAST_LIST_UPDATE,
+                )
+            ],
+        )
+    )
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=0,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.STS_CONFIG,
+                    v=bytes([uci.StsConfig.PROVISIONED_FOR_RESPONDER_SUB_SESSION_KEY]),
+                )
+            ],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    # 8 * 38-byte controlees -> 310-byte payload, placing the 8th MAC address in the 2nd PBF fragment.
+    controlees = [
+        uci.Controlee_V2_0_32_Byte_Version(
+            short_address=bytearray([0, i + 3]),
+            subsession_id=i + 1,
+            subsession_key=bytearray(32),
+        )
+        for i in range(8)
+    ]
+    host.send_control(
+        uci.SessionUpdateControllerMulticastListCmd(
+            session_token=0,
+            action=uci.UpdateMulticastListAction.ADD_CONTROLEE_WITH_EXTENDED_SUB_SESSION_KEY,
+            payload=uci.SessionUpdateControllerMulticastListCmd_2_0_32_Byte_Payload(
+                controlees=controlees
+            ).serialize(),
+        )
+    )
+    await host.expect_control(
+        uci.SessionUpdateControllerMulticastListRsp(
+            status=uci.Status.OK,
+            controlee_status=[
+                uci.ControleeStatus(
+                    mac_address=[0, i + 3],
+                    status=uci.MulticastUpdateStatus.OK_MULTICAST_LIST_UPDATE,
+                )
+                for i in range(8)
+            ],
+        )
+    )
+
     host.send_control(uci.SessionDeinitCmd(session_token=0))
 
     await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
