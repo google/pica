@@ -556,24 +556,15 @@ impl AppConfig {
                 }
                 _ => try_parse_enum::<uci::HoppingMode>(id, value),
             },
-            uci::AppConfigTlvType::DeviceMacAddress => match self.mac_address_mode() {
-                uci::MacAddressMode::Mode0 => try_parse_array::<2>(id, value),
-                uci::MacAddressMode::Mode1 => Err(AppConfigError::UnsupportedMacAddressMode(
-                    uci::MacAddressMode::Mode1,
-                )),
-                uci::MacAddressMode::Mode2 => try_parse_array::<8>(id, value),
-            },
-            uci::AppConfigTlvType::DstMacAddress => {
-                let mac_address_size = match self.mac_address_mode() {
-                    uci::MacAddressMode::Mode0 => 2,
-                    uci::MacAddressMode::Mode1 => {
-                        return Err(AppConfigError::UnsupportedMacAddressMode(
-                            uci::MacAddressMode::Mode1,
-                        ));
-                    }
-                    uci::MacAddressMode::Mode2 => 8,
+            uci::AppConfigTlvType::DeviceMacAddress | uci::AppConfigTlvType::DstMacAddress => {
+                let mac_size = self.mac_address_size().ok_or_else(|| {
+                    AppConfigError::UnsupportedMacAddressMode(self.mac_address_mode())
+                })?;
+                let expected = if id == uci::AppConfigTlvType::DstMacAddress {
+                    usize::from(self.number_of_controlees()) * mac_size
+                } else {
+                    mac_size
                 };
-                let expected = self.number_of_controlees() as usize * mac_address_size;
                 if value.len() != expected {
                     return Err(AppConfigError::InvalidLength {
                         id,
@@ -766,10 +757,9 @@ impl AppConfig {
     pub fn dst_mac_address(&self) -> impl Iterator<Item = MacAddress> + '_ {
         let (slice, chunk_size) = match (
             self.tlvs.get(&uci::AppConfigTlvType::DstMacAddress),
-            self.mac_address_mode(),
+            self.mac_address_size(),
         ) {
-            (Some(v), uci::MacAddressMode::Mode0) => (v.as_ref(), 2),
-            (Some(v), uci::MacAddressMode::Mode2) => (v.as_ref(), 8),
+            (Some(v), Some(size)) => (v.as_ref(), size),
             _ => (&[] as &[u8], 2),
         };
         slice
@@ -941,6 +931,14 @@ impl AppConfig {
             .unwrap_or(DEFAULT_MAC_ADDRESS_MODE)
     }
 
+    fn mac_address_size(&self) -> Option<usize> {
+        match self.mac_address_mode() {
+            uci::MacAddressMode::Mode0 => Some(2),
+            uci::MacAddressMode::Mode2 => Some(8),
+            uci::MacAddressMode::Mode1 => None,
+        }
+    }
+
     fn aoa_bound_config(&self) -> AoaBounds {
         let [
             min_az_lo,
@@ -1045,5 +1043,58 @@ impl AppConfig {
 
     pub fn can_receive_data_transfer(&self) -> bool {
         self.device_role() == Some(uci::DeviceRole::Responder)
+    }
+
+    pub fn invalid_start_reason(&self) -> Option<uci::ReasonCode> {
+        let Some(mac_size) = self.mac_address_size() else {
+            return Some(uci::ReasonCode::ErrorMacAddressModeNotSupported);
+        };
+
+        if let Some(mac) = self.tlvs.get(&uci::AppConfigTlvType::DeviceMacAddress)
+            && mac.len() != mac_size
+        {
+            return Some(uci::ReasonCode::ErrorMacAddressModeNotSupported);
+        }
+
+        if let Some(dst_macs) = self.tlvs.get(&uci::AppConfigTlvType::DstMacAddress)
+            && !dst_macs.is_empty()
+            && dst_macs.len() != usize::from(self.number_of_controlees()) * mac_size
+        {
+            return Some(uci::ReasonCode::ErrorInvalidDstAddressList);
+        }
+
+        let controlee_count = usize::from(self.number_of_controlees());
+        if controlee_count == 0 || controlee_count > crate::device::MAX_NUMBER_OF_CONTROLEES {
+            return Some(uci::ReasonCode::ErrorInvalidNumOfControlees);
+        }
+
+        if self.multi_node_mode() == Some(uci::MultiNodeMode::OneToOne) && controlee_count > 1 {
+            return Some(uci::ReasonCode::ErrorInvalidNumOfControlees);
+        }
+
+        if self.slots_per_rr() == 0 {
+            return Some(uci::ReasonCode::ErrorInsufficientSlotsPerRr);
+        }
+
+        if self.slot_duration() == 0 {
+            return Some(uci::ReasonCode::ErrorSlotLengthNotSupported);
+        }
+
+        if self.ranging_duration() == 0 {
+            return Some(uci::ReasonCode::ErrorInvalidRangingDuration);
+        }
+
+        if matches!(
+            self.session_type,
+            uci::SessionType::FiraRangingSession
+                | uci::SessionType::FiraRangingAndInBandDataSession
+                | uci::SessionType::FiraDataTransferSession
+        ) && u64::from(self.slot_duration()) * u64::from(self.slots_per_rr())
+            > u64::from(self.ranging_duration()) * crate::RSTU_PER_MS
+        {
+            return Some(uci::ReasonCode::ErrorInvalidRangingDuration);
+        }
+
+        None
     }
 }

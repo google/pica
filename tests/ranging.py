@@ -1084,6 +1084,7 @@ async def run(address: str, uci_port: int):
 
         await verify_device_capabilities(host0)
         await verify_command_error_fallbacks(host0)
+        await verify_app_config_validation(host0)
         await ccc_ranging_session(host0)
         await aliro_ranging_session(host0)
         await dl_tdoa_ranging_session(host0, host1, address, uci_port)
@@ -1251,6 +1252,213 @@ async def verify_command_error_fallbacks(host: Host):
     assert rsp.mt == uci.MessageType.RESPONSE
     assert rsp.oid == uci.SessionConfigOpcodeId.STATUS
     assert rsp.payload == bytes([uci.Status.UNKNOWN_OID])
+
+
+async def expect_session_start_error(
+    host: Host, session_id: int, reason_code: uci.ReasonCode
+):
+    host.send_control(uci.SessionStartCmd(session_id=session_id))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+    ntf = await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=session_id,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=reason_code,
+        )
+    )
+    ntf.show()
+
+
+async def verify_app_config_validation(host: Host):
+    session_id = 42
+
+    async def set_config(tlvs: list[uci.AppConfigTlv]):
+        host.send_control(
+            uci.SessionSetAppConfigCmd(session_token=session_id, tlvs=tlvs)
+        )
+        await host.expect_control(
+            uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+        )
+
+    host.send_control(
+        uci.SessionInitCmd(
+            session_id=session_id, session_type=uci.SessionType.FIRA_RANGING_SESSION
+        )
+    )
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=session_id,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+        )
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                v=bytes([uci.DeviceRole.INITIATOR]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                v=bytes([uci.DeviceType.CONTROLLER]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS,
+                v=bytes([0x12, 0x34]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
+                v=bytes([uci.MacAddressMode.MODE_0]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                v=bytes([0x06]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                v=bytes([1]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                v=bytes([0x56, 0x78]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                v=int(200).to_bytes(4, byteorder="little"),
+            ),
+        ]
+    )
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=session_id,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+        )
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
+                v=bytes([uci.MacAddressMode.MODE_2]),
+            )
+        ]
+    )
+    await expect_session_start_error(
+        host, session_id, uci.ReasonCode.ERROR_MAC_ADDRESS_MODE_NOT_SUPPORTED
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
+                v=bytes([uci.MacAddressMode.MODE_0]),
+            )
+        ]
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                v=bytes([2]),
+            )
+        ]
+    )
+    await expect_session_start_error(
+        host, session_id, uci.ReasonCode.ERROR_INVALID_DST_ADDRESS_LIST
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                v=bytes([0x56, 0x78, 0x9A, 0xBC]),
+            )
+        ]
+    )
+    await expect_session_start_error(
+        host, session_id, uci.ReasonCode.ERROR_INVALID_NUM_OF_CONTROLEES
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                v=bytes([1]),
+            ),
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                v=bytes([0x56, 0x78]),
+            ),
+        ]
+    )
+
+    # Default 25 slots * 2400 RSTU = 60,000 RSTU (50 ms at 1200 RSTU/ms).
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                v=int(49).to_bytes(4, byteorder="little"),
+            )
+        ]
+    )
+    await expect_session_start_error(
+        host, session_id, uci.ReasonCode.ERROR_INVALID_RANGING_DURATION
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                v=int(50).to_bytes(4, byteorder="little"),
+            )
+        ]
+    )
+    host.send_control(uci.SessionStartCmd(session_id=session_id))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=session_id,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    host.send_control(uci.SessionStopCmd(session_id=session_id))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=session_id,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+    host.send_control(uci.SessionDeinitCmd(session_token=session_id))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=session_id,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+        )
+    )
 
 
 async def ccc_ranging_session(host: Host):
@@ -1687,14 +1895,8 @@ async def dl_tdoa_ranging_session(
         [1],
         status=uci.Status.REJECTED,
     )
-    host_anchor.send_control(uci.SessionStartCmd(session_id=3))
-    await host_anchor.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
-    await host_anchor.expect_control(
-        uci.SessionStatusNtf(
-            session_token=3,
-            session_state=uci.SessionState.SESSION_STATE_IDLE,
-            reason_code=0x40,
-        )
+    await expect_session_start_error(
+        host_anchor, 3, uci.ReasonCode.ERROR_DT_ANCHOR_RANGING_ROUNDS_NOT_CONFIGURED
     )
     await update_anchor_rounds(
         host_anchor,
@@ -1722,6 +1924,10 @@ async def dl_tdoa_ranging_session(
                 v=bytes([1]),
             )
         ],
+    )
+
+    await expect_session_start_error(
+        host_tag, 3, uci.ReasonCode.ERROR_DT_TAG_RANGING_ROUNDS_NOT_CONFIGURED
     )
 
     await update_tag_rounds(

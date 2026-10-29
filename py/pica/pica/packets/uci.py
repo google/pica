@@ -970,6 +970,8 @@ class ReasonCode(enum.IntEnum):
     ERROR_REF_UWB_SESSION_RANGING_DURATION_MISMATCH = 0x3d
     ERROR_REF_UWB_SESSION_INVALID_OFFSET_TIME = 0x3e
     ERROR_REF_UWB_SESSION_LOST = 0x3f
+    ERROR_DT_ANCHOR_RANGING_ROUNDS_NOT_CONFIGURED = 0x40
+    ERROR_DT_TAG_RANGING_ROUNDS_NOT_CONFIGURED = 0x41
     VENDOR_SPECIFIC_REASON_CODE_2 = 0xff
 
     @staticmethod
@@ -2610,7 +2612,7 @@ class SessionDeinitRsp(SessionConfigPacket):
 class SessionStatusNtf(SessionConfigPacket):
     session_token: int = field(kw_only=True, default=0)
     session_state: SessionState = field(kw_only=True, default=SessionState.SESSION_STATE_INIT)
-    reason_code: int = field(kw_only=True, default=0)
+    reason_code: ReasonCode = field(kw_only=True, default=ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS)
 
     def __post_init__(self):
         self.mt = MessageType.NOTIFICATION
@@ -2626,7 +2628,7 @@ class SessionStatusNtf(SessionConfigPacket):
         value_ = int.from_bytes(span[0:4], byteorder='little')
         fields['session_token'] = value_
         fields['session_state'] = SessionState.from_int(span[4])
-        fields['reason_code'] = span[5]
+        fields['reason_code'] = ReasonCode.from_int(span[5])
         span = span[6:]
         return SessionStatusNtf(**fields), span
 
@@ -2637,9 +2639,6 @@ class SessionStatusNtf(SessionConfigPacket):
             self.session_token &= 4294967295
         _span.extend(int.to_bytes((self.session_token << 0), length=4, byteorder='little'))
         _span.append((self.session_state << 0))
-        if self.reason_code > 255:
-            print(f"Invalid value for field SessionStatusNtf::reason_code: {self.reason_code} > 255; the value will be truncated")
-            self.reason_code &= 255
         _span.append((self.reason_code << 0))
         return SessionConfigPacket.serialize(self, payload = bytes(_span))
 

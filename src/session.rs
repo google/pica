@@ -117,16 +117,18 @@ impl Session {
         self.dl_tdoa_rounds = Some(DlTdoaRangingRounds::Anchor(rounds));
     }
 
-    pub fn missing_dl_tdoa_rounds_reason(&self) -> Option<ReasonCode> {
-        match self.app_config.dl_tdoa_role()? {
-            uci::DeviceRole::DtAnchor if self.dt_anchor_ranging_rounds().is_empty() => {
-                Some(ReasonCode::ErrorDtAnchorRangingRoundsNotConfigured)
-            }
-            uci::DeviceRole::DtTag if self.dt_tag_active_rounds().is_empty() => {
-                Some(ReasonCode::ErrorDtTagRangingRoundsNotConfigured)
-            }
-            _ => None,
-        }
+    pub fn invalid_start_reason(&self) -> Option<ReasonCode> {
+        self.app_config
+            .invalid_start_reason()
+            .or_else(|| match self.app_config.dl_tdoa_role()? {
+                uci::DeviceRole::DtAnchor if self.dt_anchor_ranging_rounds().is_empty() => {
+                    Some(ReasonCode::ErrorDtAnchorRangingRoundsNotConfigured)
+                }
+                uci::DeviceRole::DtTag if self.dt_tag_active_rounds().is_empty() => {
+                    Some(ReasonCode::ErrorDtTagRangingRoundsNotConfigured)
+                }
+                _ => None,
+            })
     }
 
     #[must_use]
@@ -143,7 +145,7 @@ impl Session {
         Some(SessionStatusNtf {
             session_token: self.id,
             session_state,
-            reason_code: reason_code.into(),
+            reason_code,
         })
     }
 
