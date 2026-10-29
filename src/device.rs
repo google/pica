@@ -61,6 +61,7 @@ pub const DEFAULT_CAPS_INFO: &[(CapTlvType, &[u8])] = &[
     (CapTlvType::SupportedHprfParameterSets, &[0xff]),
     (CapTlvType::SupportedAoa, &[0xff]),
     (CapTlvType::SupportedAoaResultReqAntennaInterleaving, &[0x1]),
+    (CapTlvType::SupportedRssiReporting, &[0x1]),
     (CapTlvType::SupportedExtendedMacAddress, &[0x1]),
     (
         CapTlvType::SupportedMaxMessageSize,

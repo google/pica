@@ -120,6 +120,7 @@ const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferS
     uci::SessionDataTransferStatusNtfConfig::Disable;
 const DEFAULT_SUSPEND_RANGING_ROUNDS: uci::SuspendRangingRounds =
     uci::SuspendRangingRounds::Disable;
+const DEFAULT_RSSI_REPORTING: uci::RssiReporting = uci::RssiReporting::Disable;
 const DEFAULT_DATA_REPETITION_COUNT: u8 = 0;
 const DEFAULT_BLOCK_STRIDE_LENGTH: u8 = 0;
 const DEFAULT_DL_TDOA_BLOCK_SKIPPING: u8 = 0;
@@ -278,7 +279,7 @@ impl AppConfig {
                 ),
                 (
                     uci::AppConfigTlvType::RssiReporting,
-                    Bytes::from_static(&[uci::RssiReporting::Disable as u8]),
+                    Bytes::from_static(&[DEFAULT_RSSI_REPORTING as u8]),
                 ),
                 (uci::AppConfigTlvType::SfdId, Bytes::from_static(&[2])),
                 (
@@ -748,6 +749,11 @@ impl AppConfig {
     pub fn aoa_result_req(&self) -> uci::AoaResultReq {
         self.get_enum(uci::AppConfigTlvType::AoaResultReq)
             .unwrap_or(DEFAULT_AOA_RESULT_REQ)
+    }
+
+    pub fn rssi_reporting(&self) -> uci::RssiReporting {
+        self.get_enum(uci::AppConfigTlvType::RssiReporting)
+            .unwrap_or(DEFAULT_RSSI_REPORTING)
     }
 
     pub fn set_number_of_controlees(&mut self, value: u8) {

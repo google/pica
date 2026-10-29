@@ -183,6 +183,12 @@ async def controller(
         rsp = await host.expect_control(uci.CoreGetDeviceInfoRsp)
         assert rsp.status == uci.Status.OK
 
+        host.send_control(uci.CoreGetCapsInfoCmd())
+        caps_rsp = await host.expect_control(uci.CoreGetCapsInfoRsp)
+        assert caps_rsp.status == uci.Status.OK
+        caps = {tlv.t: list(tlv.v) for tlv in caps_rsp.tlvs}
+        assert caps.get(0xE6) == [0x01]
+
         host.send_control(uci.CoreSetConfigCmd(parameters=[]))
         rsp = await host.expect_control(uci.CoreSetConfigRsp)
         assert rsp.status == uci.Status.REJECTED
@@ -201,6 +207,7 @@ async def controller(
         assert len(event.two_way_ranging_measurements) == 1
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+        assert event.two_way_ranging_measurements[0].rssi == 0
 
     host.send_control(
         uci.SessionSetAppConfigCmd(
@@ -236,6 +243,10 @@ async def controller(
                     cfg_id=uci.AppConfigTlvType.SUSPEND_RANGING_ROUNDS,
                     v=[uci.SuspendRangingRounds.DISABLE],
                 ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RSSI_REPORTING,
+                    v=[uci.RssiReporting.ENABLE],
+                ),
             ],
         )
     )
@@ -250,6 +261,7 @@ async def controller(
     assert len(event.two_way_ranging_measurements) == 1
     assert event.two_way_ranging_measurements[0].status == uci.Status.OK
     assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+    assert event.two_way_ranging_measurements[0].rssi == 100
 
     event = await host.expect_control(ntf_type, timeout=2.0)
     event.show()
@@ -258,6 +270,7 @@ async def controller(
     assert len(event.two_way_ranging_measurements) == 1
     assert event.two_way_ranging_measurements[0].status == uci.Status.RANGING_RX_TIMEOUT
     assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+    assert event.two_way_ranging_measurements[0].rssi == 0
 
     host.send_control(uci.SessionStopCmd(session_id=0))
 
@@ -661,6 +674,7 @@ async def controlee(
         assert len(event.two_way_ranging_measurements) == 1
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
+        assert event.two_way_ranging_measurements[0].rssi == 0
 
     with pytest.raises(TimeoutError):
         await host.expect_control(ntf_type, timeout=0.8)
@@ -899,6 +913,7 @@ async def ranging_max_measurements(host: Host, peer: Host):
     assert event.two_way_ranging_measurements[0].mac_address == int.from_bytes(
         peer.mac_address, "little"
     )
+    assert event.two_way_ranging_measurements[0].rssi == 0
 
     await host.expect_control(
         uci.SessionStatusNtf(
@@ -1630,6 +1645,7 @@ async def dl_tdoa_ranging_session(
             uci.ShortMacDlTDoASessionInfoNtf, timeout=2.0
         )
         assert len(event3.dl_tdoa_measurements) == 3
+        assert all(m.measurement.rssi == 0 for m in event3.dl_tdoa_measurements)
 
         m_init = event3.dl_tdoa_measurements[0]
         assert m_init.mac_address == int.from_bytes(anchor_mac, "little")
@@ -1699,6 +1715,15 @@ async def dl_tdoa_ranging_session(
                 ),
             ],
         )
+        await set_config(
+            host_tag,
+            [
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RSSI_REPORTING,
+                    v=bytes([uci.RssiReporting.ENABLE]),
+                )
+            ],
+        )
         await update_tag_rounds(host_tag, [0, 1])
 
         event_fanout = await host_tag.expect_control(
@@ -1712,6 +1737,7 @@ async def dl_tdoa_ranging_session(
             m.measurement.initiator_reply_time == 0
             for m in event_fanout.dl_tdoa_measurements
         )
+        assert all(m.measurement.rssi == 100 for m in event_fanout.dl_tdoa_measurements)
 
         await stop_deinit_session(host_tag, 3)
         await stop_deinit_session(host_responder, 3)

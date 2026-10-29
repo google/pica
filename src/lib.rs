@@ -158,6 +158,16 @@ fn encode_aoa(measurement: RangingMeasurement, req: uci::AoaResultReq) -> (u16, 
     }
 }
 
+// -50 dBm in UCI's unsigned Q7.1 (-dBm * 2) RSSI encoding.
+const DEFAULT_RSSI: u8 = 100;
+
+fn reported_rssi(app_config: &AppConfig) -> u8 {
+    match app_config.rssi_reporting() {
+        uci::RssiReporting::Enable => DEFAULT_RSSI,
+        uci::RssiReporting::Disable => 0,
+    }
+}
+
 #[derive(Debug)]
 enum TwoWayRangingMeasurement {
     Short(ShortAddressTwoWayRangingMeasurement),
@@ -179,6 +189,7 @@ impl TwoWayRangingMeasurement {
             aoa_destination_elevation,
             aoa_destination_elevation_fom,
         ) = encode_aoa(remote, uci::AoaResultReq::AoaEnabled);
+        let rssi = reported_rssi(app_config);
         match mac_address {
             MacAddress::Short(address) => {
                 Self::Short(ShortAddressTwoWayRangingMeasurement {
@@ -195,7 +206,7 @@ impl TwoWayRangingMeasurement {
                     aoa_destination_elevation,
                     aoa_destination_elevation_fom,
                     slot_index: 0,
-                    rssi: u8::MAX,
+                    rssi,
                 })
             }
             MacAddress::Extended(address) => {
@@ -213,7 +224,7 @@ impl TwoWayRangingMeasurement {
                     aoa_destination_elevation,
                     aoa_destination_elevation_fom,
                     slot_index: 0,
-                    rssi: u8::MAX,
+                    rssi,
                 })
             }
         }
@@ -377,6 +388,7 @@ impl DlTdoaMeasurement {
     ) -> Self {
         let (aoa_azimuth, aoa_azimuth_fom, aoa_elevation, aoa_elevation_fom) =
             encode_aoa(local, app_config.aoa_result_req());
+        let rssi = reported_rssi(app_config);
         let rx_timestamp = tx_timestamp.wrapping_add(cm_to_tof_ticks(local.range));
         let is_final = message_type == uci::DlTdoaMessageType::FinalDtm;
         let (wgs84_location, relative_location) = if is_final {
@@ -413,7 +425,7 @@ impl DlTdoaMeasurement {
                 aoa_azimuth_fom,
                 aoa_elevation,
                 aoa_elevation_fom,
-                rssi: u8::MAX,
+                rssi,
                 tx_timestamp_40,
                 tx_timestamp_64,
                 rx_timestamp_40: None,
