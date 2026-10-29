@@ -187,7 +187,7 @@ async def controller(
         caps_rsp = await host.expect_control(uci.CoreGetCapsInfoRsp)
         assert caps_rsp.status == uci.Status.OK
         caps = {tlv.t: list(tlv.v) for tlv in caps_rsp.tlvs}
-        assert caps.get(0xE6) == [0x01]
+        assert caps.get(uci.CapTlvType.SUPPORTED_RSSI_REPORTING) == [0x01]
 
         host.send_control(uci.CoreSetConfigCmd(parameters=[]))
         rsp = await host.expect_control(uci.CoreSetConfigRsp)
@@ -1082,6 +1082,7 @@ async def run(address: str, uci_port: int):
         assert rsp2.status == uci.Status.OK
         assert rsp2.timeStamp >= rsp1.timeStamp
 
+        await verify_device_capabilities(host0)
         await verify_command_error_fallbacks(host0)
         await ccc_ranging_session(host0)
         await aliro_ranging_session(host0)
@@ -1093,6 +1094,115 @@ async def run(address: str, uci_port: int):
         host1.disconnect()
 
     logging.debug("Ranging test completed")
+
+
+async def verify_device_capabilities(host: Host):
+    host.send_control(uci.CoreGetDeviceInfoCmd())
+    device_info = await host.expect_control(uci.CoreGetDeviceInfoRsp)
+    assert device_info.status == uci.Status.OK
+    assert device_info.mac_version == 0x0002
+    assert device_info.phy_version == 0x0002
+    assert device_info.uci_version == 0x0002
+
+    host.send_control(uci.CoreGetCapsInfoCmd())
+    caps_rsp = await host.expect_control(uci.CoreGetCapsInfoRsp)
+    assert caps_rsp.status == uci.Status.OK
+
+    caps = {tlv.t: bytes(tlv.v) for tlv in caps_rsp.tlvs}
+    assert len(caps) == len(caps_rsp.tlvs)
+
+    assert caps[uci.CapTlvType.SUPPORTED_FIRA_PHY_VERSION_RANGE] == bytes([1, 1, 2, 0])
+    assert caps[uci.CapTlvType.SUPPORTED_FIRA_MAC_VERSION_RANGE] == bytes([1, 1, 2, 0])
+
+    assert caps[uci.CapTlvType.SUPPORTED_MAX_MESSAGE_SIZE] == (4096).to_bytes(
+        2, "little"
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_MAX_DATA_PACKET_PAYLOAD_SIZE] == (
+        1020
+    ).to_bytes(2, "little")
+
+    assert caps[uci.CapTlvType.SUPPORTED_DEVICE_TYPE] == bytes(
+        [(1 << uci.DeviceType.CONTROLEE) | (1 << uci.DeviceType.CONTROLLER)]
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_DEVICE_ROLES] == (
+        (1 << uci.DeviceRole.RESPONDER)
+        | (1 << uci.DeviceRole.INITIATOR)
+        | (1 << uci.DeviceRole.DT_ANCHOR)
+        | (1 << uci.DeviceRole.DT_TAG)
+    ).to_bytes(2, "little")
+    assert caps[uci.CapTlvType.SUPPORTED_RANGING_METHOD] == (
+        (1 << uci.RangingRoundUsage.SS_TWR_DEFERRED_MODE)
+        | (1 << uci.RangingRoundUsage.DS_TWR_DEFERRED_MODE)
+        | (1 << uci.RangingRoundUsage.SS_TWR_NON_DEFERRED_MODE)
+        | (1 << uci.RangingRoundUsage.DS_TWR_NON_DEFERRED_MODE)
+        | (1 << uci.RangingRoundUsage.ONE_WAY_RANGING_DL_TDOA)
+    ).to_bytes(2, "little")
+
+    assert caps[uci.CapTlvType.SUPPORTED_STS_CONFIG] == bytes(
+        [
+            (1 << uci.StsConfig.STATIC)
+            | (1 << uci.StsConfig.DYNAMIC)
+            | (1 << uci.StsConfig.DYNAMIC_FOR_RESPONDER_SUB_SESSION_KEY)
+            | (1 << uci.StsConfig.PROVISIONED)
+            | (1 << uci.StsConfig.PROVISIONED_FOR_RESPONDER_SUB_SESSION_KEY)
+        ]
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_MULTI_NODE_MODES] == bytes(
+        [(1 << uci.MultiNodeMode.ONE_TO_ONE) | (1 << uci.MultiNodeMode.ONE_TO_MANY)]
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_RANGING_TIME_STRUCT] == bytes(
+        [1 << uci.RangingTimeStruct.BLOCK_BASED_SCHEDULING]
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_SCHEDULED_MODE] == bytes(
+        [
+            (1 << uci.ScheduleMode.CONTENTION_BASED)
+            | (1 << uci.ScheduleMode.TIME_SCHEDULED)
+        ]
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_HOPPING_MODE] == bytes([0x00])
+    assert caps[uci.CapTlvType.SUPPORTED_BLOCK_STRIDING] == bytes([0x01])
+    assert caps[uci.CapTlvType.SUPPORTED_UWB_INITIATION_TIME] == bytes([0x01])
+    assert caps[uci.CapTlvType.SUPPORTED_CHANNELS] == bytes([0xFF])
+    assert caps[uci.CapTlvType.SUPPORTED_RFRAME_CONFIG] == bytes(
+        [
+            (1 << uci.RframeConfig.SP0)
+            | (1 << uci.RframeConfig.SP1)
+            | (1 << uci.RframeConfig.SP3)
+        ]
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_CC_CONSTRAINT_LENGTH] == bytes([0x03])
+    assert caps[uci.CapTlvType.SUPPORTED_BPRF_PARAMETER_SETS] == bytes([0x3F])
+    assert caps[uci.CapTlvType.SUPPORTED_HPRF_PARAMETER_SETS] == (
+        (1 << 35) - 1
+    ).to_bytes(5, "little")
+    assert caps[uci.CapTlvType.SUPPORTED_AOA] == bytes([0x0F])
+    assert caps[uci.CapTlvType.SUPPORTED_EXTENDED_MAC_ADDRESS] == bytes([0x01])
+    assert caps[uci.CapTlvType.SUPPORTED_SUSPEND_RANGING_SUPPORT] == bytes([0x01])
+    assert caps[uci.CapTlvType.SUPPORTED_SESSION_KEY_LENGTH] == bytes([0x03])
+    assert caps[uci.CapTlvType.SUPPORTED_DT_ANCHOR_MAX_ACTIVE_RR] == bytes([16])
+    assert caps[uci.CapTlvType.SUPPORTED_DT_TAG_MAX_ACTIVE_RR] == bytes([16])
+    assert caps[uci.CapTlvType.SUPPORTED_DT_TAG_BLOCK_SKIPPING] == bytes([0x01])
+
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_CHAPS_PER_SLOT] == bytes([0xFF])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_SYNC_CODES] == bytes(
+        [0xFF, 0xFF, 0xFF, 0xFF]
+    )
+    assert caps[
+        uci.CapTlvType.CCC_SUPPORTED_HOPPING_CONFIG_MODES_AND_SEQUENCES
+    ] == bytes([0xFF])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_CHANNELS] == bytes([0xFF])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_VERSIONS] == bytes([1, 0])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_UWB_CONFIGS] == bytes([0])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_PULSE_SHAPE_COMBOS] == bytes([0])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_RAN_MULTIPLIER] == bytes([1, 0, 0, 0])
+
+    assert caps[uci.CapTlvType.ALIRO_SUPPORTED_MAC_MODES] == bytes([0x03])
+    assert caps[uci.CapTlvType.ALIRO_SUPPORTED_PROTOCOL_VERSION] == bytes([1, 0])
+
+    assert caps[uci.CapTlvType.SUPPORTED_AOA_RESULT_REQ_ANTENNA_INTERLEAVING] == bytes(
+        [0x01]
+    )
+    assert caps[uci.CapTlvType.SUPPORTED_RSSI_REPORTING] == bytes([0x01])
 
 
 async def verify_command_error_fallbacks(host: Host):
