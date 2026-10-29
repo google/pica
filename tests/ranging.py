@@ -197,6 +197,7 @@ async def controller(
     for _ in range(2):
         event = await host.expect_control(ntf_type, timeout=2.0)
         event.show()
+        assert event.current_ranging_interval == 500
         assert len(event.two_way_ranging_measurements) == 1
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
@@ -245,6 +246,7 @@ async def controller(
     event = await host.expect_control(ntf_type, timeout=2.0)
     event.show()
     assert event.sequence_number == 2
+    assert event.current_ranging_interval == 500
     assert len(event.two_way_ranging_measurements) == 1
     assert event.two_way_ranging_measurements[0].status == uci.Status.OK
     assert event.two_way_ranging_measurements[0].mac_address == expected_mac
@@ -252,6 +254,7 @@ async def controller(
     event = await host.expect_control(ntf_type, timeout=2.0)
     event.show()
     assert event.sequence_number == 3
+    assert event.current_ranging_interval == 500
     assert len(event.two_way_ranging_measurements) == 1
     assert event.two_way_ranging_measurements[0].status == uci.Status.RANGING_RX_TIMEOUT
     assert event.two_way_ranging_measurements[0].mac_address == expected_mac
@@ -654,6 +657,7 @@ async def controlee(
     for _ in range(2):
         event = await host.expect_control(ntf_type, timeout=2.0)
         event.show()
+        assert event.current_ranging_interval == 500
         assert len(event.two_way_ranging_measurements) == 1
         assert event.two_way_ranging_measurements[0].status == uci.Status.OK
         assert event.two_way_ranging_measurements[0].mac_address == expected_mac
@@ -664,6 +668,7 @@ async def controlee(
     event = await host.expect_control(ntf_type, timeout=2.0)
     event.show()
     assert event.sequence_number == 2
+    assert event.current_ranging_interval == 500
     assert len(event.two_way_ranging_measurements) == 1
     assert event.two_way_ranging_measurements[0].status == uci.Status.OK
     assert event.two_way_ranging_measurements[0].mac_address == expected_mac
@@ -994,6 +999,7 @@ async def run(address: str, uci_port: int):
         await ccc_ranging_session(host0)
         await aliro_ranging_session(host0)
         await dl_tdoa_ranging_session(host0, host1, address, uci_port)
+        await twr_block_stride_ranging(host0, host1)
     finally:
         host0.disconnect()
         host1.disconnect()
@@ -1711,6 +1717,222 @@ async def dl_tdoa_ranging_session(
         await stop_deinit_session(host_anchor, 3)
     finally:
         host_responder.disconnect()
+
+
+async def twr_block_stride_ranging(host_controller: Host, host_controlee: Host):
+    sid = 0
+
+    async def init_twr_session(
+        host: Host,
+        role: uci.DeviceRole,
+        device_type: uci.DeviceType,
+        peer: Host,
+        duration_ms: int,
+        stride: int,
+    ):
+        host.send_control(
+            uci.SessionInitCmd(
+                session_id=sid, session_type=uci.SessionType.FIRA_RANGING_SESSION
+            )
+        )
+        await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_INIT,
+                reason_code=0,
+            )
+        )
+        host.send_control(
+            uci.SessionSetAppConfigCmd(
+                session_token=sid,
+                tlvs=[
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                        v=bytes([role]),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                        v=bytes([device_type]),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS,
+                        v=host.mac_address,
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+                        v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+                        v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                        v=bytes([uci.RangingRoundUsage.DS_TWR_DEFERRED_MODE]),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                        v=int.to_bytes(duration_ms, 4, "little"),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.BLOCK_STRIDE_LENGTH,
+                        v=bytes([stride]),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES,
+                        v=bytes([1]),
+                    ),
+                    uci.AppConfigTlv(
+                        cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS,
+                        v=peer.mac_address,
+                    ),
+                ],
+            )
+        )
+        await host.expect_control(
+            uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+        )
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_IDLE,
+                reason_code=0,
+            )
+        )
+
+    async def set_config(host: Host, tlvs: list[uci.AppConfigTlv]):
+        host.send_control(uci.SessionSetAppConfigCmd(session_token=sid, tlvs=tlvs))
+        await host.expect_control(
+            uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+        )
+
+    async def start_session(host: Host):
+        host.send_control(uci.SessionStartCmd(session_id=sid))
+        await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+                reason_code=0,
+            )
+        )
+        await host.expect_control(
+            uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+        )
+
+    async def stop_deinit_session(host: Host):
+        host.send_control(uci.SessionStopCmd(session_id=sid))
+        await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_IDLE,
+                reason_code=0,
+            )
+        )
+        await host.expect_control(
+            uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+        )
+        host.send_control(uci.SessionDeinitCmd(session_token=sid))
+        await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=sid,
+                session_state=uci.SessionState.SESSION_STATE_DEINIT,
+                reason_code=0,
+            )
+        )
+
+    await init_twr_session(
+        host_controlee,
+        uci.DeviceRole.RESPONDER,
+        uci.DeviceType.CONTROLEE,
+        host_controller,
+        300,
+        2,
+    )
+    await init_twr_session(
+        host_controller,
+        uci.DeviceRole.INITIATOR,
+        uci.DeviceType.CONTROLLER,
+        host_controlee,
+        100,
+        1,
+    )
+
+    await start_session(host_controlee)
+    c1 = await host_controlee.expect_control(
+        uci.ShortMacTwoWaySessionInfoNtf, timeout=1.0
+    )
+    assert c1.current_ranging_interval == 300
+    await set_config(
+        host_controlee,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.BLOCK_STRIDE_LENGTH,
+                v=bytes([5]),
+            )
+        ],
+    )
+    c2 = await host_controlee.expect_control(
+        uci.ShortMacTwoWaySessionInfoNtf, timeout=1.0
+    )
+    assert c2.current_ranging_interval == 300
+    await set_config(
+        host_controlee,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG,
+                v=bytes([uci.SessionInfoNtfConfig.DISABLE]),
+            )
+        ],
+    )
+
+    await start_session(host_controller)
+    event1 = await host_controller.expect_control(
+        uci.ShortMacTwoWaySessionInfoNtf, timeout=1.0
+    )
+    assert event1.current_ranging_interval == 200
+    assert event1.two_way_ranging_measurements[0].status == uci.Status.OK
+
+    await set_config(
+        host_controller,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.BLOCK_STRIDE_LENGTH,
+                v=bytes([19]),
+            )
+        ],
+    )
+    with pytest.raises(TimeoutError):
+        await host_controller.expect_control(
+            uci.ShortMacTwoWaySessionInfoNtf, timeout=0.5
+        )
+
+    await set_config(
+        host_controller,
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.BLOCK_STRIDE_LENGTH,
+                v=bytes([0]),
+            )
+        ],
+    )
+    event2 = await host_controller.expect_control(
+        uci.ShortMacTwoWaySessionInfoNtf, timeout=1.0
+    )
+    assert event2.current_ranging_interval == 100
+    assert event2.sequence_number == 1
+
+    event3 = await host_controller.expect_control(
+        uci.ShortMacTwoWaySessionInfoNtf, timeout=1.0
+    )
+    assert event3.current_ranging_interval == 100
+    assert event3.sequence_number == 2
+
+    await stop_deinit_session(host_controller)
+    await stop_deinit_session(host_controlee)
 
 
 def main():

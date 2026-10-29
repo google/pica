@@ -688,7 +688,7 @@ impl Pica {
         session_id: u32,
         session: &Session,
     ) -> Vec<DlTdoaMeasurement> {
-        let block_stride = session.app_config.dl_tdoa_block_stride();
+        let block_stride = session.app_config.block_stride();
         let total_blocks = u64::from(session.ranging_count) * u64::from(block_stride);
         let block_index = total_blocks as u16;
         let block_ticks = u64::from(session.app_config.ranging_duration()) * TICKS_PER_MS;
@@ -1039,8 +1039,8 @@ impl Pica {
                         ShortMacTwoWaySessionInfoNtf {
                             sequence_number: session.sequence_number,
                             session_token: session_id,
-                            rcr_indicator: 0,            //TODO
-                            current_ranging_interval: 0, //TODO
+                            rcr_indicator: 0,
+                            current_ranging_interval: session.ranging_interval_ms(),
                             two_way_ranging_measurements: measurements
                                 .into_iter()
                                 .filter_map(|m| match m {
@@ -1057,8 +1057,8 @@ impl Pica {
                         ExtendedMacTwoWaySessionInfoNtf {
                             sequence_number: session.sequence_number,
                             session_token: session_id,
-                            rcr_indicator: 0,            //TODO
-                            current_ranging_interval: 0, //TODO
+                            rcr_indicator: 0,
+                            current_ranging_interval: session.ranging_interval_ms(),
                             two_way_ranging_measurements: measurements
                                 .into_iter()
                                 .filter_map(|m| match m {

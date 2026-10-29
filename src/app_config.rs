@@ -121,6 +121,7 @@ const DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG: uci::SessionDataTransferS
 const DEFAULT_SUSPEND_RANGING_ROUNDS: uci::SuspendRangingRounds =
     uci::SuspendRangingRounds::Disable;
 const DEFAULT_DATA_REPETITION_COUNT: u8 = 0;
+const DEFAULT_BLOCK_STRIDE_LENGTH: u8 = 0;
 const DEFAULT_DL_TDOA_BLOCK_SKIPPING: u8 = 0;
 const DEFAULT_DL_TDOA_ANCHOR_CFO: uci::DlTdoaAnchorCfo = uci::DlTdoaAnchorCfo::AnchorCfoIncluded;
 const DEFAULT_DL_TDOA_TX_ACTIVE_RANGING_ROUNDS: bool = false;
@@ -335,7 +336,7 @@ impl AppConfig {
                 ),
                 (
                     uci::AppConfigTlvType::BlockStrideLength,
-                    Bytes::from_static(&[0]),
+                    Bytes::from_static(&[DEFAULT_BLOCK_STRIDE_LENGTH]),
                 ),
                 (
                     uci::AppConfigTlvType::ResultReportConfig,
@@ -864,8 +865,19 @@ impl AppConfig {
             .unwrap_or(DEFAULT_DL_TDOA_BLOCK_SKIPPING)
     }
 
-    pub fn dl_tdoa_block_stride(&self) -> u32 {
-        u32::from(self.dl_tdoa_block_skipping()) + 1
+    fn block_stride_length(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::BlockStrideLength)
+            .unwrap_or(DEFAULT_BLOCK_STRIDE_LENGTH)
+    }
+
+    pub fn block_stride(&self) -> u32 {
+        match self.dl_tdoa_role() {
+            Some(uci::DeviceRole::DtTag) => u32::from(self.dl_tdoa_block_skipping()) + 1,
+            None if self.device_type() == Some(uci::DeviceType::Controller) => {
+                u32::from(self.block_stride_length()) + 1
+            }
+            _ => 1,
+        }
     }
 
     fn near_proximity_config(&self) -> u16 {

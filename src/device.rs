@@ -768,7 +768,7 @@ impl Device {
         }
 
         if invalid_parameters.is_empty() {
-            session.app_config = app_config;
+            session.set_app_config(app_config);
             let effects = if session.state == SessionState::SessionStateInit {
                 session
                     .set_state(
