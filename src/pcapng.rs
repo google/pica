@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! PCAPng packet capture encoding for UCI packets (link type 293).
+//! PCAPng packet capture encoding for UCI packets (link type 299).
 
 use std::io::Write;
 use std::time::Duration;
 
 /// 48-byte PCAPng file header (Section Header Block and Interface Description
-/// Block declaring UCI link type 293).
+/// Block declaring UCI link type 299).
 pub const HEADER: [u8; 48] = [
     // Section Header Block (28 bytes)
     0x0A, 0x0D, 0x0D, 0x0A, // Block Type (0x0A0D_0D0A)
@@ -31,7 +31,7 @@ pub const HEADER: [u8; 48] = [
     // Interface Description Block (20 bytes)
     0x01, 0x00, 0x00, 0x00, // Block Type (0x0000_0001)
     20, 0, 0, 0, // Block Total Length (20)
-    0x25, 0x01, // LinkType (293)
+    0x2B, 0x01, // LinkType (299)
     0, 0, // Reserved (0)
     0, 0, 0, 0, // SnapLen (no limit)
     20, 0, 0, 0, // Block Total Length (20)
