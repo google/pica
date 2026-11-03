@@ -1,139 +1,73 @@
 [![Crate](https://img.shields.io/crates/v/pica?style=flat-square)](https://crates.io/crates/pica)
-[![Build workflow](https://img.shields.io/github/actions/workflow/status/google/pica/build.yml?style=flat-square)](https://github.com/google/pica/actions/workflows/build_and_test.yml?query=branch%3Amain)
+[![Build workflow](https://img.shields.io/github/actions/workflow/status/google/pica/build_and_test.yml?branch=main&style=flat-square)](https://github.com/google/pica/actions/workflows/build_and_test.yml?query=branch%3Amain)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+
+<img src="./res/pica_logo.png" alt="Pica logo" width="120">
 
 # Pica
 
-Pica is a virtual UWB Controller implementing the FiRa UCI specification.
-It has been designed for testing UWB ranging capabilities.
-Pica supports the following features:
+Pica is a virtual [Ultra-Wideband (UWB)](https://en.wikipedia.org/wiki/Ultra-wideband) subsystem and spatial simulator implementing the **FiRa UCI 2.0** specification.
 
-- Pica keeps an internal representation of a 3-D scene.
-- Pica lets multiple clients connect through TCP sockets.
-  Each new connection spawns an attached UWB subsystem. Connected hosts can
-  interact together as if they existed in a single 3-D scene.
-- Pica implements a nice GUI through a web server.
-- Pica provides HTTP commands to interact with the scene directly such as create and destroy
-  virtual anchors.
+With it, you can scale testing of UWB software without physical devices.
+While Pica aims to be high-fidelity, it does _not_ simulate low-level radio behavior.
 
-# Build and Run
+## Why Pica?
+
+- Uses the same protocol (UCI) that UWB chips do
+- Supports a user-defined distance and angle model
+- Deterministic, repeatable simulation (no internal randomness)
+- Powers UWB in the Android Emulator
+
+## Feature Roadmap
+
+✅ Supported · ⏳ Planned · ➖ Not planned · ❌ Out of scope
+
+### FiRa
+
+| Feature | Release | Status |
+| :--- | :--- | :--- |
+| Two-Way Ranging (TWR) | 1.x | ✅ |
+| Angle of Arrival (AoA) | 1.x | ✅ |
+| Device Test Mode | 1.x | ❌ |
+| Downlink TDoA (DL-TDoA) | 2.0 | ✅ |
+| Data Transfer | 2.0 | ✅ |
+| One-Way AoA (OWR AoA) | 2.0 | ⏳ |
+| Contention-based ranging (ESS-TWR, ADS-TWR) | 2.0 | ➖ |
+| Uplink TDoA (UL-TDoA) | 2.0 | ➖ |
+| Hybrid UWB Scheduling (HUS) | 3.0 | ➖ |
+| Dedicated data transfer | 3.0 | ⏳ |
+| Logical Link data exchange | 3.0 | ⏳ |
+| Downlink TDoA v2 | 4.0 | ⏳ |
+
+### Industry Profiles
+
+| Profile | Version | Status |
+| :--- | :--- | :--- |
+| [CCC Digital Key](https://carconnectivity.org/digital-key/) | 3.0 | ✅ |
+| [Aliro](https://csa-iot.org/all-solutions/aliro/) | 1.0 | ✅ |
+
+## Language Support
+
+- **Rust**: Use the `pica` crate.
+- **C/C++**: Build `pica` with the `ffi` feature.
+- **Python**: The `pica` package in `py/pica` connects to a running Pica server.
+
+## Playground and Tests
+
+Run the web playground, then open `http://127.0.0.1:3000`. UWB software connects on TCP port `7000`. To save packet captures, add `-- --pcapng-dir <DIR>`.
 
 ```bash
-$> git clone https://github.com/google/pica.git
-$> cd pica/
-$> cargo run
+git clone https://github.com/google/pica.git && cd pica
+cargo run --bin pica-http
 ```
-
-You should receive the following output:
-
-```
-Pica: Listening on: 7000
-Pica: Web server started on http://0.0.0.0:3000
-```
-
-You can now open the web interface at `http://0.0.0.0:3000` and the HTTP commands documentation
-at `http://0.0.0.0:3000/openapi`. The scene should be empty and look like this:
 
 ![Pica empty scene](./res/empty_scene.png)
 
-# Command line
-
-A command line tool is available to trigger some action such as creating an anchor.
-Run pica in a terminal then open a new one and do:
-```
-$> cd pica/
-$> python3 scripts/console.py
-```
-
-If you hit `Enter`, the console will list you all the available commands:
-```
-device_reset                    Reset the UWBS.
-get_device_info                 Retrieve the device information like (UCI version and other vendor specific info).
-get_caps_info                   Get the capability of the UWBS.
-session_init                    Initialize the session
-session_deinit                  Deinitialize the session
-session_set_app_config          set APP Configuration Parameters for the requested UWB session.
-session_get_app_config          retrieve the current APP Configuration Parameters of the requested UWB session.
-session_get_count               Retrieve number of UWB sessions in the UWBS.
-session_get_state               Query the current state of the UWB session.
-range_start                     start a UWB session.
-range_stop                      Stop a UWB session.
-get_ranging_count               Get the number of times ranging has been attempted during the ranging session..
-pica_create_anchor              Create a Pica anchor
-pica_destroy_anchor             Destroy a Pica anchor
-pica_get_state                  Return the internal Pica state
-pica_init_uci_device            Initialize an uci device
-pica_set_position               Set the position of a Device
-```
-
-If you wish to create a virtual anchor:
+Run the tests:
 
 ```bash
-$> cd pica/ && python3 scripts/console.py # If the console is not started yet
-$> --> pica_create_anchor 00:00 # pica_create_anchor <mac_address>
-$> --> pica_create_anchor 00:01 # Create another one
+cargo build
+cargo test --features ffi
+pip install ./py/pica/ 'pytest==7.4.4' 'pytest-asyncio==0.23.3'
+pytest -v
 ```
-# Architecture
-
-- *Device* UWB subsystem created for a connected host.
-- *Session* UWB ranging session opened by a connected host.
-- *Anchor* virtual UWB host, responding to ranging requests from
-  connected hosts.
-
-```
-                 ┌────────────────────┐
-                 │ Web                │
-                 │                    │
-                 └─────┬─────────▲────┘
-                       │         │    HTTP localhost:3000
-  ┌────────────────────▼─────────┴───────┐
-  │                                      │
-  │                 Pica                 │
-  │                                      │
-  │  ┌────────┐  ┌────────┐  ┌────────┐  │
-  │  │Anchor1 │  │Device1 │  │Device2 │  │
-  │  ├────────┤  │        │  │        │  │
-  │  │Anchor2 │  ├────────┤  ├────────┤  │
-  │  ├────────┤  │Session1│  │Session1│  │
-  │  │...     │  ├────────┤  ├────────┤  │
-  │  │        │  │Session2│  │Session2│  │
-  │  └────────┘  └──▲──┬──┘  └──▲──┬──┘  │
-  │                 │  │        │  │     │
-  └─────────────────┼──┼────────┼──┼─────┘
-                    │  │        │  │  TCP localhost:7000
-                 ┌──┴──▼──┐  ┌──┴──▼──┐
-                 │Client1 │  │Client2 │
-                 │        │  │        │
-                 ├────────┤  ├────────┤
-                 │VirtIO  │  │        │
-                 ├────────┤  │        │
-                 │UWB HAL │  │        │
-                 ├────────┤  │Python  │
-                 │Cuttle  │  │console │
-                 │fish    │  │        │
-                 └────────┘  └────────┘
-```
-
-# Http commands
-
-Pica also implements HTTP commands, the documentation is available at `http://0.0.0.0:3000/openapi`.
-The set of HTTP commands let the user interact with Pica amd modify its scene.
-
-# Tests
-
-Setup your python env:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install pytest
-pip install pytest_asyncio
-pip install -e py/pica/
-```
-
-Then run the tests
-
-```bash
-pytest --log-cli-level=DEBUG -v
-```
-
-The tests are located in `./tests/`
