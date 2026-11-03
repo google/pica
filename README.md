@@ -9,7 +9,7 @@
 Pica is a virtual [Ultra-Wideband (UWB)](https://en.wikipedia.org/wiki/Ultra-wideband) subsystem and spatial simulator implementing the **FiRa UCI 2.0** specification.
 
 With it, you can scale testing of UWB software without physical devices.
-While Pica aims to be high-fidelity, it does _not_ simulate low-level radio behavior.
+While Pica aims to reproduce chip behavior faithfully, it does _not_ simulate the radio itself.
 
 ## Why Pica?
 
@@ -18,7 +18,22 @@ While Pica aims to be high-fidelity, it does _not_ simulate low-level radio beha
 - Deterministic, repeatable simulation (no internal randomness)
 - Powers UWB in the Android Emulator
 
+## How It Works
+
+Here is how Pica is embedded in the Android Emulator through [Netsim](https://github.com/google/betosim):
+
+```mermaid
+flowchart LR
+    subgraph netsim [Netsim]
+        pica[Pica] <-->|distance and angle| model[Device position/pose]
+    end
+    emu1[Android Emulator 1] <-->|UCI| pica
+    emu2[Android Emulator 2] <-->|UCI| pica
+```
+
 ## Feature Roadmap
+
+Something missing? [Contribute](CONTRIBUTING.md)!
 
 ✅ Supported · ⏳ Planned · ➖ Not planned · ❌ Out of scope
 
@@ -50,7 +65,7 @@ While Pica aims to be high-fidelity, it does _not_ simulate low-level radio beha
 
 - **Rust**: Use the `pica` crate.
 - **C/C++**: Build `pica` with the `ffi` feature.
-- **Python**: The `pica` package in `py/pica` connects to a running Pica server.
+- **Python**: The `pica` package in `py/pica` sends and reads UCI over TCP, so you can script tests against the playground.
 
 ## Playground and Tests
 
@@ -68,6 +83,8 @@ Run the tests:
 ```bash
 cargo build
 cargo test --features ffi
+python3 -m venv venv
+source venv/bin/activate
 pip install ./py/pica/ 'pytest==7.4.4' 'pytest-asyncio==0.23.3'
 pytest -v
 ```
