@@ -30,6 +30,11 @@ pub enum AppConfigError {
     UnsupportedParameter(uci::AppConfigTlvType),
     #[error("invalid RangingDuration: must be non-zero")]
     InvalidRangingDuration,
+    #[error("ranging round usage {usage:?} is not supported for {session_type:?}")]
+    UnsupportedRangingRoundUsage {
+        session_type: uci::SessionType,
+        usage: uci::RangingRoundUsage,
+    },
 }
 
 /// [UCI] 8.3 Application Configuration Parameters.
@@ -506,7 +511,21 @@ impl AppConfig {
         match id {
             uci::AppConfigTlvType::DeviceType => try_parse_enum::<uci::DeviceType>(id, value),
             uci::AppConfigTlvType::RangingRoundUsage => {
-                try_parse_enum::<uci::RangingRoundUsage>(id, value)
+                let bytes = try_parse_enum::<uci::RangingRoundUsage>(id, value)?;
+                if matches!(
+                    self.session_type,
+                    uci::SessionType::FiraRangingAndInBandDataSession
+                        | uci::SessionType::FiraDataTransferSession
+                        | uci::SessionType::FiraInBandDataPhase
+                        | uci::SessionType::FiraRangingWithDataPhase
+                ) && bytes.as_ref() == [uci::RangingRoundUsage::OneWayRangingDlTdoa as u8]
+                {
+                    return Err(AppConfigError::UnsupportedRangingRoundUsage {
+                        session_type: self.session_type,
+                        usage: uci::RangingRoundUsage::OneWayRangingDlTdoa,
+                    });
+                }
+                Ok(bytes)
             }
             uci::AppConfigTlvType::StsConfig => try_parse_enum::<uci::StsConfig>(id, value),
             uci::AppConfigTlvType::MultiNodeMode => try_parse_enum::<uci::MultiNodeMode>(id, value),
@@ -1033,6 +1052,7 @@ impl AppConfig {
             | uci::SessionType::FiraInBandDataPhase
             | uci::SessionType::FiraRangingWithDataPhase => {
                 self.device_role().is_some()
+                    && (self.is_dl_tdoa() || self.device_type().is_some())
                     && self.multi_node_mode().is_some()
                     && self.ranging_round_usage().is_some()
                     && self.device_mac_address().is_some()

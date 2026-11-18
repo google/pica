@@ -866,9 +866,14 @@ impl Device {
                         status: uci::Status::ReadOnly,
                     })
                 }
-                uci::ConfigParameterId::LowPowerMode => {
-                    self.config.low_power_mode = parameter.value.first().copied().unwrap_or(1) != 0;
-                }
+                uci::ConfigParameterId::LowPowerMode => match parameter.value.as_slice() {
+                    [0] => self.config.low_power_mode = false,
+                    [1] => self.config.low_power_mode = true,
+                    _ => invalid_parameters.push(uci::ConfigParameterStatus {
+                        id: parameter.id,
+                        status: uci::Status::InvalidParam,
+                    }),
+                },
                 uci::ConfigParameterId::Rfu(id) => {
                     tracing::warn!("unknown config parameter id 0x{:02x}", *id);
                     invalid_parameters.push(uci::ConfigParameterStatus {
@@ -1019,18 +1024,29 @@ impl Device {
         &self,
         cmd: SessionQueryMaxDataSizeInRangingCmd,
     ) -> SessionQueryMaxDataSizeInRangingRsp {
-        if self.session(cmd.session_token).is_some() {
-            SessionQueryMaxDataSizeInRangingRsp {
-                session_token: cmd.session_token,
-                status: uci::Status::Ok,
-                max_data_size: MAX_DATA_PACKET_PAYLOAD_SIZE as u16,
-            }
-        } else {
-            SessionQueryMaxDataSizeInRangingRsp {
+        match self.session(cmd.session_token) {
+            None => SessionQueryMaxDataSizeInRangingRsp {
                 session_token: cmd.session_token,
                 status: uci::Status::ErrorSessionNotExist,
                 max_data_size: 0,
+            },
+            Some(session)
+                if matches!(
+                    session.state,
+                    SessionState::SessionStateIdle | SessionState::SessionStateActive
+                ) =>
+            {
+                SessionQueryMaxDataSizeInRangingRsp {
+                    session_token: cmd.session_token,
+                    status: uci::Status::Ok,
+                    max_data_size: MAX_DATA_PACKET_PAYLOAD_SIZE as u16,
+                }
             }
+            Some(_) => SessionQueryMaxDataSizeInRangingRsp {
+                session_token: cmd.session_token,
+                status: uci::Status::Rejected,
+                max_data_size: 0,
+            },
         }
     }
 

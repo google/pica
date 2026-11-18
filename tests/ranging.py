@@ -1284,17 +1284,57 @@ async def verify_app_config_validation(host: Host):
             uci.SessionSetAppConfigRsp(status=status, cfg_status=cfg_status or [])
         )
 
+    async def init_session(session_type: uci.SessionType):
+        host.send_control(
+            uci.SessionInitCmd(session_id=session_id, session_type=session_type)
+        )
+        await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=session_id,
+                session_state=uci.SessionState.SESSION_STATE_INIT,
+                reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+            )
+        )
+
+    async def deinit_session():
+        host.send_control(uci.SessionDeinitCmd(session_token=session_id))
+        await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+        await host.expect_control(
+            uci.SessionStatusNtf(
+                session_token=session_id,
+                session_state=uci.SessionState.SESSION_STATE_DEINIT,
+                reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+            )
+        )
+
     host.send_control(
-        uci.SessionInitCmd(
-            session_id=session_id, session_type=uci.SessionType.FIRA_RANGING_SESSION
+        uci.CoreSetConfigCmd(
+            parameters=[
+                uci.ConfigParameter(
+                    id=uci.ConfigParameterId.LOW_POWER_MODE, value=bytes([2])
+                )
+            ]
         )
     )
-    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
     await host.expect_control(
-        uci.SessionStatusNtf(
-            session_token=session_id,
-            session_state=uci.SessionState.SESSION_STATE_INIT,
-            reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+        uci.CoreSetConfigRsp(
+            status=uci.Status.INVALID_PARAM,
+            parameters=[
+                uci.ConfigParameterStatus(
+                    id=uci.ConfigParameterId.LOW_POWER_MODE,
+                    status=uci.Status.INVALID_PARAM,
+                )
+            ],
+        )
+    )
+
+    await init_session(uci.SessionType.FIRA_RANGING_SESSION)
+
+    host.send_control(uci.SessionQueryMaxDataSizeInRangingCmd(session_token=session_id))
+    await host.expect_control(
+        uci.SessionQueryMaxDataSizeInRangingRsp(
+            session_token=session_id, status=uci.Status.REJECTED, max_data_size=0
         )
     )
 
@@ -1314,10 +1354,6 @@ async def verify_app_config_validation(host: Host):
             uci.AppConfigTlv(
                 cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
                 v=bytes([uci.DeviceRole.INITIATOR]),
-            ),
-            uci.AppConfigTlv(
-                cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
-                v=bytes([uci.DeviceType.CONTROLLER]),
             ),
             uci.AppConfigTlv(
                 cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS,
@@ -1363,6 +1399,21 @@ async def verify_app_config_validation(host: Host):
                 cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
                 v=int(200).to_bytes(4, byteorder="little"),
             ),
+        ]
+    )
+    host.send_control(uci.SessionGetStateCmd(session_token=session_id))
+    await host.expect_control(
+        uci.SessionGetStateRsp(
+            status=uci.Status.OK,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+        )
+    )
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.DEVICE_TYPE,
+                v=bytes([uci.DeviceType.CONTROLLER]),
+            )
         ]
     )
     await host.expect_control(
@@ -1493,15 +1544,29 @@ async def verify_app_config_validation(host: Host):
     await host.expect_control(
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
-    host.send_control(uci.SessionDeinitCmd(session_token=session_id))
-    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
-    await host.expect_control(
-        uci.SessionStatusNtf(
-            session_token=session_id,
-            session_state=uci.SessionState.SESSION_STATE_DEINIT,
-            reason_code=uci.ReasonCode.STATE_CHANGE_WITH_SESSION_MANAGEMENT_COMMANDS,
+    await deinit_session()
+
+    for session_type in (
+        uci.SessionType.FIRA_DATA_TRANSFER_SESSION,
+        uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION,
+    ):
+        await init_session(session_type)
+        await set_config(
+            [
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    v=bytes([uci.RangingRoundUsage.ONE_WAY_RANGING_DL_TDOA]),
+                )
+            ],
+            uci.Status.INVALID_PARAM,
+            [
+                uci.AppConfigStatus(
+                    cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE,
+                    status=uci.Status.INVALID_PARAM,
+                )
+            ],
         )
-    )
+        await deinit_session()
 
 
 async def ccc_ranging_session(host: Host):
@@ -1719,7 +1784,7 @@ async def dl_tdoa_ranging_session(
         host: Host,
         sid: int,
         role: uci.DeviceRole,
-        dev_type: uci.DeviceType,
+        dev_type: uci.DeviceType | None,
         mac_address: bytes,
         extra_tlvs: list[uci.AppConfigTlv] | None = None,
     ):
@@ -1738,7 +1803,6 @@ async def dl_tdoa_ranging_session(
         )
         base_tlvs = {
             uci.AppConfigTlvType.DEVICE_ROLE: [role],
-            uci.AppConfigTlvType.DEVICE_TYPE: [dev_type],
             uci.AppConfigTlvType.DEVICE_MAC_ADDRESS: mac_address,
             uci.AppConfigTlvType.MULTI_NODE_MODE: [uci.MultiNodeMode.ONE_TO_ONE],
             uci.AppConfigTlvType.SCHEDULE_MODE: [uci.ScheduleMode.CONTENTION_BASED],
@@ -1748,6 +1812,8 @@ async def dl_tdoa_ranging_session(
             uci.AppConfigTlvType.RANGING_DURATION: int(100).to_bytes(4, "little"),
             uci.AppConfigTlvType.MAC_ADDRESS_MODE: [uci.MacAddressMode.MODE_0],
         }
+        if dev_type is not None:
+            base_tlvs[uci.AppConfigTlvType.DEVICE_TYPE] = [dev_type]
         tlvs = [
             uci.AppConfigTlv(cfg_id=k, v=bytes(v)) for k, v in base_tlvs.items()
         ] + (extra_tlvs or [])
@@ -1955,7 +2021,7 @@ async def dl_tdoa_ranging_session(
         host_tag,
         3,
         uci.DeviceRole.DT_TAG,
-        uci.DeviceType.CONTROLEE,
+        None,
         tag_mac,
     )
 
