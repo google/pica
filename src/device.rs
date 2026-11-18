@@ -1362,10 +1362,9 @@ impl Device {
         };
         let mut controlee_status_ntf = Vec::new();
         let mut controlee_status_rsp = Vec::new();
-        let mut status = uci::Status::Ok;
         let mut effects = Vec::new();
 
-        match action {
+        let status = match action {
             UpdateMulticastListAction::AddControlee
             | UpdateMulticastListAction::AddControleeWithShortSubSessionKey
             | UpdateMulticastListAction::AddControleeWithExtendedSubSessionKey => {
@@ -1381,7 +1380,6 @@ impl Device {
                         // 0x04, the UWBS shall return SESSION_UPDATE_CONTROLLER_MULTICAST_LIST_NTF
                         // with Status set to STATUS_ERROR_SUB_SESSION_KEY_NOT_APPLICABLE for each
                         // Controlee in the Controlee List.
-                        status = uci::Status::Failed;
                         update_status = MulticastUpdateStatus::ErrorSubSessionKeyNotApplicable;
                         controlee_status_ntf.push(ControleeStatus {
                             mac_address: controlee.short_address,
@@ -1391,13 +1389,11 @@ impl Device {
                         let address = MacAddress::Short(controlee.short_address);
                         if !dst_addresses.contains(&address) {
                             if dst_addresses.len() == MAX_NUMBER_OF_CONTROLEES {
-                                status = uci::Status::ErrorMulticastListFull;
                                 update_status = MulticastUpdateStatus::ErrorMulticastListFull;
                             } else {
                                 dst_addresses.push(address);
                             };
                         } else {
-                            status = uci::Status::Failed;
                             update_status = MulticastUpdateStatus::ErrorAddressAlreadyPresent;
                         }
                         controlee_status_rsp.push(ControleeStatus {
@@ -1406,8 +1402,24 @@ impl Device {
                         });
                     }
                 }
+                if !controlee_status_ntf.is_empty() {
+                    uci::Status::Failed
+                } else if controlee_status_rsp
+                    .iter()
+                    .all(|c| c.status == MulticastUpdateStatus::OkMulticastListUpdate)
+                {
+                    uci::Status::Ok
+                } else if controlee_status_rsp
+                    .iter()
+                    .all(|c| c.status == MulticastUpdateStatus::ErrorMulticastListFull)
+                {
+                    uci::Status::ErrorMulticastListFull
+                } else {
+                    uci::Status::Failed
+                }
             }
             UpdateMulticastListAction::RemoveControlee => {
+                let mut status = uci::Status::Ok;
                 for controlee in new_controlees {
                     let address = MacAddress::Short(controlee.short_address);
                     let attempt_count = session.app_config.in_band_termination_attempt_count();
@@ -1445,8 +1457,9 @@ impl Device {
                         status: update_status,
                     });
                 }
+                status
             }
-        }
+        };
 
         if dst_addresses.len() != initial_len {
             session
@@ -1932,9 +1945,7 @@ mod tests {
             .expect("expected control packet in device effects")
     }
 
-    #[test]
-    fn remove_unknown_controlee_keeps_empty_active_ccc_session_active() {
-        let session_id = 1;
+    fn init_session(session_id: u32, session_type: SessionType, tlvs: Vec<AppConfigTlv>) -> Device {
         let mut device = Device::new(0);
         send(
             &mut device,
@@ -1946,32 +1957,43 @@ mod tests {
             &mut device,
             SessionInitCmd {
                 session_id,
-                session_type: SessionType::Ccc,
+                session_type,
             },
         );
         let config_effects = send(
             &mut device,
             SessionSetAppConfigCmd {
                 session_token: session_id,
-                tlvs: vec![
-                    AppConfigTlv {
-                        cfg_id: AppConfigTlvType::DeviceType,
-                        v: vec![uci::DeviceType::Controller.into()],
-                    },
-                    AppConfigTlv {
-                        cfg_id: AppConfigTlvType::DeviceRole,
-                        v: vec![uci::DeviceRole::Initiator.into()],
-                    },
-                    AppConfigTlv {
-                        cfg_id: AppConfigTlvType::MultiNodeMode,
-                        v: vec![uci::MultiNodeMode::OneToMany.into()],
-                    },
-                ],
+                tlvs,
             },
         );
         assert_eq!(
             decode_packet::<SessionSetAppConfigRsp>(&config_effects).status,
             uci::Status::Ok
+        );
+        device
+    }
+
+    #[test]
+    fn remove_unknown_controlee_keeps_empty_active_ccc_session_active() {
+        let session_id = 1;
+        let mut device = init_session(
+            session_id,
+            SessionType::Ccc,
+            vec![
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DeviceType,
+                    v: vec![uci::DeviceType::Controller.into()],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DeviceRole,
+                    v: vec![uci::DeviceRole::Initiator.into()],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::MultiNodeMode,
+                    v: vec![uci::MultiNodeMode::OneToMany.into()],
+                },
+            ],
         );
         let start_effects = send(&mut device, SessionStartCmd { session_id });
         assert_eq!(
@@ -2013,5 +2035,85 @@ mod tests {
         let state_rsp: SessionGetStateRsp = decode_packet(&state_effects);
         assert_eq!(state_rsp.status, uci::Status::Ok);
         assert_eq!(state_rsp.session_state, SessionState::SessionStateActive);
+    }
+
+    #[test]
+    fn partial_multicast_add_when_list_full_returns_failed() {
+        let session_id = 1;
+        let mut device = init_session(
+            session_id,
+            SessionType::FiraRangingSession,
+            vec![
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DeviceType,
+                    v: vec![uci::DeviceType::Controller.into()],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DeviceRole,
+                    v: vec![uci::DeviceRole::Initiator.into()],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::MultiNodeMode,
+                    v: vec![uci::MultiNodeMode::OneToMany.into()],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::RangingRoundUsage,
+                    v: vec![uci::RangingRoundUsage::DsTwrDeferredMode.into()],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DeviceMacAddress,
+                    v: vec![0x00, 0x01],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::ScheduleMode,
+                    v: vec![uci::ScheduleMode::TimeScheduled.into()],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::NumberOfControlees,
+                    v: vec![7],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DstMacAddress,
+                    v: (1u8..=7).flat_map(|i| [0x01, i]).collect(),
+                },
+            ],
+        );
+
+        let update_effects = send(
+            &mut device,
+            SessionUpdateControllerMulticastListCmd {
+                session_token: session_id,
+                action: UpdateMulticastListAction::AddControlee,
+                payload: SessionUpdateControllerMulticastListCmdPayload {
+                    controlees: vec![
+                        uci::Controlee {
+                            short_address: [0x02, 0x01],
+                            subsession_id: 0,
+                        },
+                        uci::Controlee {
+                            short_address: [0x02, 0x02],
+                            subsession_id: 0,
+                        },
+                    ],
+                }
+                .encode_to_vec()
+                .expect("failed to encode multicast list payload"),
+            },
+        );
+        let update_rsp: SessionUpdateControllerMulticastListRsp = decode_packet(&update_effects);
+        assert_eq!(update_rsp.status, uci::Status::Failed);
+        assert_eq!(
+            update_rsp.controlee_status,
+            vec![
+                ControleeStatus {
+                    mac_address: [0x02, 0x01],
+                    status: MulticastUpdateStatus::OkMulticastListUpdate,
+                },
+                ControleeStatus {
+                    mac_address: [0x02, 0x02],
+                    status: MulticastUpdateStatus::ErrorMulticastListFull,
+                },
+            ]
+        );
     }
 }
