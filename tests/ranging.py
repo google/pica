@@ -1193,9 +1193,14 @@ async def verify_device_capabilities(host: Host):
     ] == bytes([0xFF])
     assert caps[uci.CapTlvType.CCC_SUPPORTED_CHANNELS] == bytes([0xFF])
     assert caps[uci.CapTlvType.CCC_SUPPORTED_VERSIONS] == bytes([1, 0])
-    assert caps[uci.CapTlvType.CCC_SUPPORTED_UWB_CONFIGS] == bytes([0])
-    assert caps[uci.CapTlvType.CCC_SUPPORTED_PULSE_SHAPE_COMBOS] == bytes([0])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_UWB_CONFIGS] == bytes([0, 1])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_PULSE_SHAPE_COMBOS] == bytes(
+        [0x00, 0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x22]
+    )
     assert caps[uci.CapTlvType.CCC_SUPPORTED_RAN_MULTIPLIER] == bytes([1, 0, 0, 0])
+    assert caps[uci.CapTlvType.CCC_SUPPORTED_MAX_RANGING_SESSION_NUMBER] == bytes(
+        [8, 0, 0, 0]
+    )
 
     assert caps[uci.CapTlvType.ALIRO_SUPPORTED_MAC_MODES] == bytes([0x03])
     assert caps[uci.CapTlvType.ALIRO_SUPPORTED_PROTOCOL_VERSION] == bytes([1, 0])
@@ -1404,6 +1409,29 @@ async def verify_app_config_validation(host: Host):
         ]
     )
 
+    ccc_tlvs = [
+        uci.AppConfigTlv(cfg_id=0xA0, v=bytes(16)),
+        uci.AppConfigTlv(cfg_id=0xA1, v=bytes(8)),
+        uci.AppConfigTlv(cfg_id=0xA3, v=bytes([1, 0])),
+        uci.AppConfigTlv(cfg_id=0xA4, v=bytes(2)),
+        uci.AppConfigTlv(cfg_id=0xA5, v=bytes([0])),
+        uci.AppConfigTlv(cfg_id=0xA6, v=bytes(2)),
+        uci.AppConfigTlv(cfg_id=0xA8, v=bytes(4)),
+        uci.AppConfigTlv(cfg_id=0xA9, v=bytes([0])),
+    ]
+    host.send_control(
+        uci.SessionSetAppConfigCmd(session_token=session_id, tlvs=ccc_tlvs)
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(
+            status=uci.Status.INVALID_PARAM,
+            cfg_status=[
+                uci.AppConfigStatus(cfg_id=tlv.cfg_id, status=uci.Status.INVALID_PARAM)
+                for tlv in ccc_tlvs
+            ],
+        )
+    )
+
     # Default 25 slots * 2400 RSTU = 60,000 RSTU (50 ms at 1200 RSTU/ms).
     await set_config(
         [
@@ -1595,6 +1623,21 @@ async def ccc_or_aliro_ranging_session(
                 v=bytes([(1 << 6) | 1]),
             )
         )
+    else:
+        host.send_control(
+            uci.SessionSetAppConfigCmd(
+                session_token=2,
+                tlvs=[uci.AppConfigTlv(cfg_id=0xA9, v=bytes([0]))],
+            )
+        )
+        await host.expect_control(
+            uci.SessionSetAppConfigRsp(
+                status=uci.Status.INVALID_PARAM,
+                cfg_status=[
+                    uci.AppConfigStatus(cfg_id=0xA9, status=uci.Status.INVALID_PARAM)
+                ],
+            )
+        )
     host.send_control(
         uci.SessionSetAppConfigCmd(
             session_token=2,
@@ -1603,6 +1646,21 @@ async def ccc_or_aliro_ranging_session(
     )
     await host.expect_control(
         uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=2,
+            tlvs=[uci.AppConfigTlv(cfg_id=0xA8, v=bytes(4))],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(
+            status=uci.Status.INVALID_PARAM,
+            cfg_status=[
+                uci.AppConfigStatus(cfg_id=0xA8, status=uci.Status.INVALID_PARAM)
+            ],
+        )
     )
 
     host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[]))
@@ -1635,7 +1693,6 @@ async def ccc_or_aliro_ranging_session(
     assert rsp.status == uci.Status.OK
     tlvs = {tlv.cfg_id: bytes(tlv.v) for tlv in rsp.tlvs}
     assert tlvs[0xA0] == bytes(16)
-    assert tlvs[0xA8] == bytes([0, 0, 0, 0])
     assert 0xA1 not in tlvs
     if session_type == uci.SessionType.ALIRO:
         assert tlvs.get(0xA9) == bytes([(1 << 6) | 1])
@@ -1653,6 +1710,162 @@ async def ccc_or_aliro_ranging_session(
     await host.expect_control(
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
     )
+
+    time_zero = int(123456).to_bytes(8, "little")
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=2,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.UWB_INITIATION_TIME, v=time_zero
+                )
+            ],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[0xA1]))
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    assert rsp.tlvs == [uci.AppConfigTlv(cfg_id=0xA1, v=list(time_zero))]
+
+    max_measurements = 3
+    sts_index0 = 100
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=2,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG,
+                    v=bytes([uci.SessionInfoNtfConfig.ENABLE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.STS_INDEX,
+                    v=sts_index0.to_bytes(4, "little"),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MAX_NUMBER_OF_MEASUREMENTS,
+                    v=max_measurements.to_bytes(2, "little"),
+                ),
+            ],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    host.send_control(uci.SessionStartCmd(session_id=2))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    for _ in range(max_measurements):
+        await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+        ),
+        timeout=2.0,
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[0xA8]))
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    assert rsp.tlvs == [
+        uci.AppConfigTlv(
+            cfg_id=0xA8,
+            v=list((sts_index0 + max_measurements - 1).to_bytes(4, "little")),
+        )
+    ]
+
+    sts_index_reset = 200
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=2,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.STS_INDEX,
+                    v=sts_index_reset.to_bytes(4, "little"),
+                ),
+            ],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[0xA8]))
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    assert rsp.tlvs == [uci.AppConfigTlv(cfg_id=0xA8, v=[0, 0, 0, 0])]
+
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=2,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG,
+                    v=bytes([uci.SessionInfoNtfConfig.DISABLE]),
+                ),
+                uci.AppConfigTlv(
+                    cfg_id=uci.AppConfigTlvType.MAX_NUMBER_OF_MEASUREMENTS,
+                    v=max_measurements.to_bytes(2, "little"),
+                ),
+            ],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+    host.send_control(uci.SessionStartCmd(session_id=2))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=2,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+        ),
+        timeout=2.0,
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+    host.send_control(uci.SessionGetAppConfigCmd(session_token=2, app_cfg=[0xA8]))
+    rsp = await host.expect_control(uci.SessionGetAppConfigRsp)
+    assert rsp.status == uci.Status.OK
+    assert rsp.tlvs == [
+        uci.AppConfigTlv(
+            cfg_id=0xA8,
+            v=list((sts_index_reset + max_measurements - 1).to_bytes(4, "little")),
+        )
+    ]
 
     host.send_control(uci.SessionDeinitCmd(session_token=2))
     await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))

@@ -208,9 +208,10 @@ pub struct CccCapabilities {
     pub hopping_config_modes_and_sequences: u8,
     pub channels: u8,
     pub versions: &'static [Version],
-    pub uwb_configs: u8,
-    pub pulse_shape_combos: u8,
+    pub uwb_configs: &'static [u8],
+    pub pulse_shape_combos: &'static [u8],
     pub ran_multiplier: u32,
+    pub max_ranging_session_number: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,7 +297,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    pub fn to_tlvs(&self) -> [CapTlv; 38] {
+    pub fn to_tlvs(&self) -> [CapTlv; 39] {
         let device_types = [bitmask_u8(self.device_types)];
         let device_roles = bitmask_u16(self.device_roles).to_le_bytes();
         let ranging_methods = bitmask_u16(self.ranging_methods).to_le_bytes();
@@ -319,11 +320,12 @@ impl Capabilities {
             .flat_map(|v| v.to_bytes())
             .collect();
         let ccc_ran_multiplier = self.ccc.ran_multiplier.to_le_bytes();
+        let ccc_max_ranging_session_number = self.ccc.max_ranging_session_number.to_le_bytes();
         let ccc_sync_codes = self.ccc.sync_codes.to_bytes();
         let aliro_mac_modes = [self.aliro.mac_modes.to_byte()];
         let aliro_protocol_version = self.aliro.protocol_version.to_bytes();
 
-        let tlvs: [(CapTlvType, &[u8]); 38] = [
+        let tlvs: [(CapTlvType, &[u8]); 39] = [
             (
                 CapTlvType::SupportedMaxMessageSize,
                 &self.max_message_size.to_le_bytes(),
@@ -397,12 +399,16 @@ impl Capabilities {
             ),
             (CapTlvType::CccSupportedChannels, &[self.ccc.channels]),
             (CapTlvType::CccSupportedVersions, &ccc_versions),
-            (CapTlvType::CccSupportedUwbConfigs, &[self.ccc.uwb_configs]),
+            (CapTlvType::CccSupportedUwbConfigs, self.ccc.uwb_configs),
             (
                 CapTlvType::CccSupportedPulseShapeCombos,
-                &[self.ccc.pulse_shape_combos],
+                self.ccc.pulse_shape_combos,
             ),
             (CapTlvType::CccSupportedRanMultiplier, &ccc_ran_multiplier),
+            (
+                CapTlvType::CccSupportedMaxRangingSessionNumber,
+                &ccc_max_ranging_session_number,
+            ),
             (CapTlvType::AliroSupportedMacModes, &aliro_mac_modes),
             (
                 CapTlvType::AliroSupportedProtocolVersion,
@@ -496,9 +502,10 @@ pub const DEFAULT_CAPS_INFO: Capabilities = Capabilities {
         hopping_config_modes_and_sequences: CCC_ALL_HOPPING_CONFIGS,
         channels: CCC_ALL_CHANNELS,
         versions: &[Version::new(1, 0)],
-        uwb_configs: 0,
-        pulse_shape_combos: 0,
+        uwb_configs: &[0, 1],
+        pulse_shape_combos: &[0x00, 0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x22],
         ran_multiplier: 1,
+        max_ranging_session_number: 8,
     },
     aliro: AliroCapabilities {
         mac_modes: AliroMacModes {
@@ -1149,6 +1156,10 @@ impl Device {
 
         let mut app_config = session.app_config.clone();
         let mut invalid_parameters = vec![];
+        let resets_ccc_sts = cmd
+            .tlvs
+            .iter()
+            .any(|cfg| cfg.cfg_id == AppConfigTlvType::StsIndex);
         // Defer DeviceMacAddress and DstMacAddress so MacAddressMode and
         // NumberOfControlees take effect first regardless of TLV order in the command.
         let (deferred_tlvs, immediate_tlvs): (Vec<_>, Vec<_>) =
@@ -1181,6 +1192,9 @@ impl Device {
         }
 
         if invalid_parameters.is_empty() {
+            if resets_ccc_sts {
+                session.ccc_last_sts_index_used = None;
+            }
             session.set_app_config(app_config);
             let effects = if session.state == SessionState::SessionStateInit {
                 session
@@ -1223,17 +1237,34 @@ impl Device {
             };
         };
 
+        let ccc_last_sts_index_used = session.app_config.is_ccc_or_aliro().then(|| {
+            session
+                .ccc_last_sts_index_used
+                .unwrap_or(0)
+                .to_le_bytes()
+                .to_vec()
+        });
+
         let (status, tlvs) = if cmd.app_cfg.is_empty() {
-            (uci::Status::Ok, session.app_config.to_tlvs())
+            let mut tlvs = session.app_config.to_tlvs();
+            if let Some(v) = ccc_last_sts_index_used {
+                tlvs.push(AppConfigTlv {
+                    cfg_id: AppConfigTlvType::CccLastIndexUsed,
+                    v,
+                });
+            }
+            (uci::Status::Ok, tlvs)
         } else {
             let mut valid_parameters = vec![];
             let mut invalid_parameters = vec![];
             for id in cmd.app_cfg {
-                match session.app_config.get(id) {
-                    Some(value) => valid_parameters.push(AppConfigTlv {
-                        cfg_id: id,
-                        v: value.to_vec(),
-                    }),
+                let value = if id == AppConfigTlvType::CccLastIndexUsed {
+                    ccc_last_sts_index_used.clone()
+                } else {
+                    session.app_config.get(id).map(|v| v.to_vec())
+                };
+                match value {
+                    Some(v) => valid_parameters.push(AppConfigTlv { cfg_id: id, v }),
                     None => invalid_parameters.push(AppConfigTlv {
                         cfg_id: id,
                         v: vec![],
