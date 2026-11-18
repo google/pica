@@ -16,6 +16,7 @@
 //! - [MAC] FiRa Consortium UWB MAC Technical Requirements
 //! - [UCI] FiRa Consortium UWB Command Interface Generic Technical specification
 
+use crate::app_config::UwbInitiationTime;
 use crate::packets::uci::{self, *};
 use crate::{AppConfig, DlTdoaMeasurement, MacAddress, UciPacket};
 use bytes::{Bytes, BytesMut};
@@ -59,6 +60,20 @@ enum DlTdoaRangingRounds {
     Anchor(Vec<uci::DtAnchorRangingRound>),
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RangingDeadline {
+    Initiation(Instant),
+    Interval(Instant),
+}
+
+impl RangingDeadline {
+    fn instant(self) -> Instant {
+        match self {
+            Self::Initiation(deadline) | Self::Interval(deadline) => deadline,
+        }
+    }
+}
+
 pub struct Session {
     /// cf. [UCI] 7.1
     pub state: SessionState,
@@ -74,7 +89,7 @@ pub struct Session {
     dl_tdoa_rounds: Option<DlTdoaRangingRounds>,
     pub app_config: AppConfig,
     pub in_range_peers: HashSet<MacAddress>,
-    next_ranging_at: Option<Instant>,
+    next_ranging_at: Option<RangingDeadline>,
 }
 
 impl Session {
@@ -219,14 +234,14 @@ impl Session {
         self.app_config = app_config;
         let new_interval = self.ranging_interval();
         if new_interval != old_interval
-            && let Some(deadline) = self.next_ranging_at
+            && let Some(RangingDeadline::Interval(deadline)) = self.next_ranging_at
         {
             let now = Instant::now();
-            self.next_ranging_at = Some(
+            self.next_ranging_at = Some(RangingDeadline::Interval(
                 deadline
                     .checked_sub(old_interval)
                     .map_or(now + new_interval, |last| (last + new_interval).max(now)),
-            );
+            ));
         }
     }
 
@@ -241,15 +256,27 @@ impl Session {
     }
 
     pub fn next_ranging_at(&self) -> Option<Instant> {
-        self.next_ranging_at
+        self.next_ranging_at.map(RangingDeadline::instant)
     }
 
-    pub fn start_ranging(&mut self) {
-        self.next_ranging_at = Some(Instant::now() + self.ranging_interval());
+    pub fn start_ranging(&mut self, boot_time: Instant) {
+        let now = Instant::now();
+        let candidate = match self.app_config.uwb_initiation_time() {
+            UwbInitiationTime::RelativeMs(ms) => {
+                now.checked_add(Duration::from_millis(u64::from(ms)))
+            }
+            UwbInitiationTime::AbsoluteUs(us) => boot_time.checked_add(Duration::from_micros(us)),
+        };
+        self.next_ranging_at = match candidate {
+            Some(deadline) if deadline > now => Some(RangingDeadline::Initiation(deadline)),
+            _ => now
+                .checked_add(self.ranging_interval())
+                .map(RangingDeadline::Interval),
+        };
     }
 
     pub fn poll_ranging(&mut self, now: Instant) -> bool {
-        let Some(deadline) = self.next_ranging_at else {
+        let Some(deadline) = self.next_ranging_at() else {
             return false;
         };
         if now < deadline {
@@ -257,7 +284,11 @@ impl Session {
         }
         let interval = self.ranging_interval();
         let next = deadline + interval;
-        self.next_ranging_at = Some(if next > now { next } else { now + interval });
+        self.next_ranging_at = Some(RangingDeadline::Interval(if next > now {
+            next
+        } else {
+            now + interval
+        }));
         true
     }
 
@@ -417,6 +448,157 @@ impl Session {
                 tracing::warn!("Unsupported MAC address mode {mode:?}");
                 None
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with(ranging_duration_ms: u32, initiation_time: Option<&[u8]>) -> AppConfig {
+        let mut cfg = AppConfig::new(SessionType::FiraRangingSession);
+        cfg.set(
+            uci::AppConfigTlvType::RangingDuration,
+            &ranging_duration_ms.to_le_bytes(),
+        )
+        .expect("valid RANGING_DURATION");
+        if let Some(bytes) = initiation_time {
+            cfg.set(uci::AppConfigTlvType::UwbInitiationTime, bytes)
+                .expect("valid UWB_INITIATION_TIME");
+        }
+        cfg
+    }
+
+    #[test]
+    fn start_ranging_zero_initiation_time_uses_ranging_interval() {
+        let boot_time = Instant::now() - Duration::from_secs(60);
+        let interval = Duration::from_millis(500);
+
+        for bytes in [
+            None,
+            Some(&0u32.to_le_bytes()[..]),
+            Some(&0u64.to_le_bytes()[..]),
+        ] {
+            let mut session = Session::new(1, SessionType::FiraRangingSession, 0);
+            session.set_app_config(config_with(500, bytes));
+
+            let before = Instant::now();
+            session.start_ranging(boot_time);
+            let after = Instant::now();
+
+            let deadline = session.next_ranging_at().expect("deadline set");
+            assert!(deadline >= before + interval && deadline <= after + interval);
+            assert!(!session.poll_ranging(before + Duration::from_millis(499)));
+            assert!(session.poll_ranging(deadline));
+            assert_eq!(session.next_ranging_at(), Some(deadline + interval));
+        }
+    }
+
+    #[test]
+    fn start_ranging_relative_ms_delays_first_round() {
+        let boot_time = Instant::now() - Duration::from_secs(60);
+        let mut session = Session::new(2, SessionType::FiraRangingSession, 0);
+        session.set_app_config(config_with(200, Some(&5000u32.to_le_bytes())));
+
+        let before = Instant::now();
+        session.start_ranging(boot_time);
+        let after = Instant::now();
+
+        let delay = Duration::from_millis(5000);
+        let deadline = session.next_ranging_at().expect("deadline set");
+        assert!(deadline >= before + delay && deadline <= after + delay);
+        assert!(!session.poll_ranging(before + Duration::from_millis(4999)));
+        assert!(session.poll_ranging(deadline));
+        assert_eq!(
+            session.next_ranging_at(),
+            Some(deadline + Duration::from_millis(200))
+        );
+    }
+
+    #[test]
+    fn start_ranging_absolute_us_uses_boot_time() {
+        let boot_time = Instant::now();
+        let mut session = Session::new(3, SessionType::FiraRangingSession, 0);
+        session.set_app_config(config_with(200, Some(&10_000_000u64.to_le_bytes())));
+
+        session.start_ranging(boot_time);
+        let expected = boot_time + Duration::from_micros(10_000_000);
+        assert_eq!(session.next_ranging_at(), Some(expected));
+        assert!(!session.poll_ranging(expected - Duration::from_micros(1)));
+        assert!(session.poll_ranging(expected));
+        assert_eq!(
+            session.next_ranging_at(),
+            Some(expected + Duration::from_millis(200))
+        );
+    }
+
+    #[test]
+    fn start_ranging_expired_absolute_us_falls_back_to_interval() {
+        let boot_time = Instant::now() - Duration::from_secs(60);
+        let interval = Duration::from_millis(500);
+
+        for us in [500u64, 60_000_000] {
+            let mut session = Session::new(4, SessionType::FiraRangingSession, 0);
+            session.set_app_config(config_with(500, Some(&us.to_le_bytes())));
+
+            let before = Instant::now();
+            session.start_ranging(boot_time);
+            let after = Instant::now();
+
+            let deadline = session.next_ranging_at().expect("deadline set");
+            assert!(deadline >= before + interval && deadline <= after + interval);
+        }
+    }
+
+    #[test]
+    fn set_app_config_with_zero_initiation_time_reschedules_immediately() {
+        let boot_time = Instant::now();
+        let mut session = Session::new(5, SessionType::FiraRangingSession, 0);
+        session.set_app_config(config_with(200, Some(&0u64.to_le_bytes())));
+        session.start_ranging(boot_time);
+        let initial_deadline = session.next_ranging_at().expect("deadline set");
+
+        session.set_app_config(config_with(1000, Some(&0u64.to_le_bytes())));
+        let updated_deadline = session.next_ranging_at().expect("updated deadline");
+        assert!(updated_deadline >= initial_deadline + Duration::from_millis(800));
+    }
+
+    #[test]
+    fn set_app_config_before_first_round_preserves_initiation_deadline() {
+        let boot_time = Instant::now();
+
+        for initiation_bytes in [&5000u32.to_le_bytes()[..], &10_000_000u64.to_le_bytes()[..]] {
+            let mut session = Session::new(6, SessionType::FiraRangingSession, 0);
+            session.set_app_config(config_with(200, Some(initiation_bytes)));
+            session.start_ranging(boot_time);
+            let initial_deadline = session.next_ranging_at().expect("deadline set");
+
+            session.set_app_config(config_with(1000, Some(initiation_bytes)));
+            assert_eq!(session.next_ranging_at(), Some(initial_deadline));
+        }
+    }
+
+    #[test]
+    fn set_app_config_after_first_round_reschedules_from_interval() {
+        let boot_time = Instant::now();
+
+        for initiation_bytes in [&5000u32.to_le_bytes()[..], &10_000_000u64.to_le_bytes()[..]] {
+            let mut session = Session::new(7, SessionType::FiraRangingSession, 0);
+            session.set_app_config(config_with(1000, Some(initiation_bytes)));
+            session.start_ranging(boot_time);
+            let initial_deadline = session.next_ranging_at().expect("deadline set");
+
+            assert!(session.poll_ranging(initial_deadline));
+            let round1_deadline = session.next_ranging_at().expect("round 1 deadline");
+            assert_eq!(
+                round1_deadline,
+                initial_deadline + Duration::from_millis(1000)
+            );
+
+            session.set_app_config(config_with(2000, Some(initiation_bytes)));
+            let updated_deadline = session.next_ranging_at().expect("updated deadline");
+            assert!(updated_deadline >= round1_deadline + Duration::from_millis(1000));
         }
     }
 }

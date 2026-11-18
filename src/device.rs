@@ -1526,7 +1526,7 @@ impl Device {
             );
         }
 
-        session.start_ranging();
+        session.start_ranging(self.boot_time);
 
         let session_ntf = session
             .set_state(

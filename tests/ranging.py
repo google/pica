@@ -1090,6 +1090,7 @@ async def run(address: str, uci_port: int):
         await dl_tdoa_ranging_session(host0, host1, address, uci_port)
         await twr_block_stride_ranging(host0, host1)
         await aoa_result_req_ranging(host0, host1)
+        await uwb_initiation_time_ranging(host0)
     finally:
         host0.disconnect()
         host1.disconnect()
@@ -2749,6 +2750,79 @@ async def aoa_result_req_ranging(host0: Host, host1: Host):
     await deinit_session(host0, dl_sid)
     await stop_session(host1, dl_sid)
     await deinit_session(host1, dl_sid)
+
+
+async def uwb_initiation_time_ranging(host: Host):
+    sid = 12
+
+    async def send_ok(pkt, rsp_type, *ntfs):
+        host.send_control(pkt)
+        rsp = await host.expect_control(rsp_type)
+        assert rsp.status == uci.Status.OK
+        for ntf in ntfs:
+            await host.expect_control(ntf)
+
+    await send_ok(
+        uci.SessionInitCmd(
+            session_id=sid, session_type=uci.SessionType.FIRA_RANGING_SESSION
+        ),
+        uci.SessionInitRsp,
+        uci.SessionStatusNtf,
+    )
+    T = uci.AppConfigTlvType
+    cfg = {
+        T.DEVICE_ROLE: [uci.DeviceRole.INITIATOR],
+        T.DEVICE_TYPE: [uci.DeviceType.CONTROLLER],
+        T.DEVICE_MAC_ADDRESS: host.mac_address,
+        T.DST_MAC_ADDRESS: [0x56, 0x78],
+        T.MULTI_NODE_MODE: [uci.MultiNodeMode.ONE_TO_ONE],
+        T.SCHEDULE_MODE: [uci.ScheduleMode.TIME_SCHEDULED],
+        T.RANGING_ROUND_USAGE: [uci.RangingRoundUsage.DS_TWR_DEFERRED_MODE],
+        T.RANGING_DURATION: (100).to_bytes(4, "little"),
+        T.MAX_NUMBER_OF_MEASUREMENTS: (1).to_bytes(2, "little"),
+    }
+    await send_ok(
+        uci.SessionSetAppConfigCmd(
+            session_token=sid,
+            tlvs=[uci.AppConfigTlv(cfg_id=k, v=bytes(v)) for k, v in cfg.items()],
+        ),
+        uci.SessionSetAppConfigRsp,
+        uci.SessionStatusNtf,
+    )
+
+    host.send_control(uci.CoreQueryTimeStampCmd())
+    ts_rsp = await host.expect_control(uci.CoreQueryTimeStampRsp)
+    assert ts_rsp.status == uci.Status.OK
+    await send_ok(
+        uci.SessionSetAppConfigCmd(
+            session_token=sid,
+            tlvs=[
+                uci.AppConfigTlv(
+                    cfg_id=T.UWB_INITIATION_TIME,
+                    v=(ts_rsp.timeStamp + 1_000_000).to_bytes(8, "little"),
+                )
+            ],
+        ),
+        uci.SessionSetAppConfigRsp,
+    )
+    await send_ok(
+        uci.SessionStartCmd(session_id=sid),
+        uci.SessionStartRsp,
+        uci.SessionStatusNtf,
+        uci.CoreDeviceStatusNtf,
+    )
+
+    with pytest.raises(TimeoutError):
+        await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=0.2)
+
+    await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+    await host.expect_control(uci.SessionStatusNtf)
+    await host.expect_control(uci.CoreDeviceStatusNtf)
+    await send_ok(
+        uci.SessionDeinitCmd(session_token=sid),
+        uci.SessionDeinitRsp,
+        uci.SessionStatusNtf,
+    )
 
 
 def main():

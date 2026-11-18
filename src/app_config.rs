@@ -30,6 +30,29 @@ pub enum AppConfigError {
     UnsupportedParameter(uci::AppConfigTlvType),
 }
 
+/// Configured start delay or UWBS timestamp from `UWB_INITIATION_TIME` (`0x2B`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UwbInitiationTime {
+    RelativeMs(u32),
+    AbsoluteUs(u64),
+}
+
+impl UwbInitiationTime {
+    fn from_wire(value: &[u8]) -> Result<Self, AppConfigError> {
+        if let Ok(raw) = <[u8; 4]>::try_from(value) {
+            Ok(Self::RelativeMs(u32::from_le_bytes(raw)))
+        } else if let Ok(raw) = <[u8; 8]>::try_from(value) {
+            Ok(Self::AbsoluteUs(u64::from_le_bytes(raw)))
+        } else {
+            Err(AppConfigError::InvalidLength {
+                id: uci::AppConfigTlvType::UwbInitiationTime,
+                expected: 8,
+                actual: value.len(),
+            })
+        }
+    }
+}
+
 /// [UCI] 8.3 Application Configuration Parameters.
 /// Sub-session Key provided for Provisioned STS for Responder specific Key mode
 /// (STS_CONFIG equal to 0x04).
@@ -188,6 +211,7 @@ const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
 pub struct AppConfig {
     session_type: uci::SessionType,
     tlvs: HashMap<uci::AppConfigTlvType, Bytes>,
+    uwb_initiation_time: UwbInitiationTime,
 }
 
 impl AppConfig {
@@ -423,11 +447,16 @@ impl AppConfig {
                 return Self {
                     session_type,
                     tlvs: HashMap::new(),
+                    uwb_initiation_time: UwbInitiationTime::AbsoluteUs(0),
                 };
             }
         }
 
-        Self { session_type, tlvs }
+        Self {
+            session_type,
+            tlvs,
+            uwb_initiation_time: UwbInitiationTime::AbsoluteUs(0),
+        }
     }
 
     /// Retrieve the APP configuration value with the selected identifier
@@ -621,13 +650,11 @@ impl AppConfig {
             }
             uci::AppConfigTlvType::StaticStsIv => try_parse_array::<6>(id, value),
             uci::AppConfigTlvType::UwbInitiationTime => {
-                // Implement backward compatibility for UCI 1.0
-                // where the value is 4 bytes instead of 8.
-                if let Ok(bytes) = <[u8; 4]>::try_from(value) {
-                    let v = u64::from(u32::from_le_bytes(bytes));
-                    Ok(Bytes::copy_from_slice(&v.to_le_bytes()))
-                } else {
-                    try_parse_u64(id, value)
+                match UwbInitiationTime::from_wire(value)? {
+                    UwbInitiationTime::RelativeMs(ms) => {
+                        Ok(Bytes::copy_from_slice(&u64::from(ms).to_le_bytes()))
+                    }
+                    UwbInitiationTime::AbsoluteUs(_) => Ok(Bytes::copy_from_slice(value)),
                 }
             }
             uci::AppConfigTlvType::BprfPhrDataRate => {
@@ -670,6 +697,9 @@ impl AppConfig {
         let bytes = self
             .parse_tlv(id, value)
             .inspect_err(|err| tracing::error!("{err}"))?;
+        if id == uci::AppConfigTlvType::UwbInitiationTime {
+            self.uwb_initiation_time = UwbInitiationTime::from_wire(value)?;
+        }
         self.tlvs.insert(id, bytes);
         Ok(())
     }
@@ -780,6 +810,10 @@ impl AppConfig {
     pub fn ranging_duration(&self) -> u32 {
         self.get_u32(uci::AppConfigTlvType::RangingDuration)
             .unwrap_or(DEFAULT_RANGING_DURATION)
+    }
+
+    pub fn uwb_initiation_time(&self) -> UwbInitiationTime {
+        self.uwb_initiation_time
     }
 
     pub fn slot_duration(&self) -> u16 {
@@ -1096,5 +1130,76 @@ impl AppConfig {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uwb_initiation_time_defaults_to_zero() {
+        for session_type in [
+            uci::SessionType::FiraRangingSession,
+            uci::SessionType::DeviceTestMode,
+        ] {
+            let cfg = AppConfig::new(session_type);
+            assert_eq!(cfg.uwb_initiation_time(), UwbInitiationTime::AbsoluteUs(0));
+        }
+    }
+
+    #[test]
+    fn uwb_initiation_time_4_byte_preserves_8_byte_wire_tlv() {
+        let mut cfg = AppConfig::new(uci::SessionType::FiraRangingSession);
+        for ms in [0u32, 500] {
+            assert_eq!(
+                cfg.set(uci::AppConfigTlvType::UwbInitiationTime, &ms.to_le_bytes()),
+                Ok(())
+            );
+            assert_eq!(cfg.uwb_initiation_time(), UwbInitiationTime::RelativeMs(ms));
+            assert_eq!(
+                cfg.get(uci::AppConfigTlvType::UwbInitiationTime)
+                    .map(Bytes::as_ref),
+                Some(&u64::from(ms).to_le_bytes()[..])
+            );
+        }
+    }
+
+    #[test]
+    fn uwb_initiation_time_8_byte_decodes_absolute_us() {
+        for session_type in [
+            uci::SessionType::FiraRangingSession,
+            uci::SessionType::Ccc,
+            uci::SessionType::Aliro,
+        ] {
+            let mut cfg = AppConfig::new(session_type);
+            for us in [0u64, 500, 1_234_567] {
+                assert_eq!(
+                    cfg.set(uci::AppConfigTlvType::UwbInitiationTime, &us.to_le_bytes()),
+                    Ok(())
+                );
+                assert_eq!(cfg.uwb_initiation_time(), UwbInitiationTime::AbsoluteUs(us));
+                assert_eq!(
+                    cfg.get(uci::AppConfigTlvType::UwbInitiationTime)
+                        .map(Bytes::as_ref),
+                    Some(&us.to_le_bytes()[..])
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn uwb_initiation_time_rejects_invalid_lengths() {
+        let mut cfg = AppConfig::new(uci::SessionType::FiraRangingSession);
+        for value in [&[1, 2][..], &[1; 5][..]] {
+            assert_eq!(
+                cfg.set(uci::AppConfigTlvType::UwbInitiationTime, value),
+                Err(AppConfigError::InvalidLength {
+                    id: uci::AppConfigTlvType::UwbInitiationTime,
+                    expected: 8,
+                    actual: value.len(),
+                })
+            );
+        }
     }
 }
