@@ -1272,12 +1272,16 @@ async def expect_session_start_error(
 async def verify_app_config_validation(host: Host):
     session_id = 42
 
-    async def set_config(tlvs: list[uci.AppConfigTlv]):
+    async def set_config(
+        tlvs: list[uci.AppConfigTlv],
+        status: uci.Status = uci.Status.OK,
+        cfg_status: list[uci.AppConfigStatus] | None = None,
+    ):
         host.send_control(
             uci.SessionSetAppConfigCmd(session_token=session_id, tlvs=tlvs)
         )
         await host.expect_control(
-            uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+            uci.SessionSetAppConfigRsp(status=status, cfg_status=cfg_status or [])
         )
 
     host.send_control(
@@ -1436,6 +1440,22 @@ async def verify_app_config_validation(host: Host):
     )
     await host.expect_control(
         uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+    await set_config(
+        [
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                v=int(0).to_bytes(4, byteorder="little"),
+            )
+        ],
+        uci.Status.INVALID_PARAM,
+        [
+            uci.AppConfigStatus(
+                cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+                status=uci.Status.INVALID_PARAM,
+            )
+        ],
     )
 
     host.send_control(uci.SessionStopCmd(session_id=session_id))

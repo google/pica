@@ -28,6 +28,8 @@ pub enum AppConfigError {
     UnsupportedMacAddressMode(uci::MacAddressMode),
     #[error("unsupported app config parameter {0:?}")]
     UnsupportedParameter(uci::AppConfigTlvType),
+    #[error("invalid RangingDuration: must be non-zero")]
+    InvalidRangingDuration,
 }
 
 /// [UCI] 8.3 Application Configuration Parameters.
@@ -583,8 +585,14 @@ impl AppConfig {
             | uci::AppConfigTlvType::MtuSize
             | uci::AppConfigTlvType::CccUwbConfigId
             | uci::AppConfigTlvType::CccUrskTtl => try_parse_u16(id, value),
-            uci::AppConfigTlvType::RangingDuration
-            | uci::AppConfigTlvType::StsIndex
+            uci::AppConfigTlvType::RangingDuration => {
+                let bytes = try_parse_u32(id, value)?;
+                if bytes.as_ref() == [0; 4] {
+                    return Err(AppConfigError::InvalidRangingDuration);
+                }
+                Ok(bytes)
+            }
+            uci::AppConfigTlvType::StsIndex
             | uci::AppConfigTlvType::SubSessionId
             | uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
             uci::AppConfigTlvType::MacFcsType => try_parse_enum::<uci::MacFcsType>(id, value),
@@ -1078,10 +1086,6 @@ impl AppConfig {
 
         if self.slot_duration() == 0 {
             return Some(uci::ReasonCode::ErrorSlotLengthNotSupported);
-        }
-
-        if self.ranging_duration() == 0 {
-            return Some(uci::ReasonCode::ErrorInvalidRangingDuration);
         }
 
         if matches!(
