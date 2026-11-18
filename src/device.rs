@@ -796,9 +796,14 @@ impl Device {
             .collect()
     }
 
-    pub fn can_receive_data_transfer(&self, session_id: u32, dst_mac_address: MacAddress) -> bool {
+    pub fn can_receive_data_transfer(
+        &self,
+        sender_role: uci::DeviceRole,
+        session_id: u32,
+        dst_mac_address: MacAddress,
+    ) -> bool {
         self.session(session_id)
-            .is_some_and(|session| session.can_receive_data_transfer(dst_mac_address))
+            .is_some_and(|session| session.can_receive_data_transfer(sender_role, dst_mac_address))
     }
 
     // The fira norm specify to send a response, then reset, then

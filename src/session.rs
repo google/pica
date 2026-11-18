@@ -171,10 +171,15 @@ impl Session {
             && self.app_config.can_start_data_transfer()
     }
 
-    pub fn can_receive_data_transfer(&self, dst_mac_address: MacAddress) -> bool {
+    pub fn can_receive_data_transfer(
+        &self,
+        sender_role: uci::DeviceRole,
+        dst_mac_address: MacAddress,
+    ) -> bool {
         self.state == SessionState::SessionStateActive
             && self.supports_data_transfer()
             && self.app_config.can_receive_data_transfer()
+            && self.app_config.device_role() != Some(sender_role)
             && self.app_config.device_mac_address() == Some(dst_mac_address)
     }
 

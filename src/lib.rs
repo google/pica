@@ -956,15 +956,18 @@ impl Pica {
 
         let peer_handle = if let Some(data_transfer) = &session.data_transfer
             && session.can_start_data_transfer()
+            && let Some(sender_role) = session.app_config.device_role()
         {
             let dst_mac_address = data_transfer.dst_mac_address;
             self.devices
                 .values()
                 .find(|peer_entry| {
                     peer_entry.device.handle != device_handle
-                        && peer_entry
-                            .device
-                            .can_receive_data_transfer(session_id, dst_mac_address)
+                        && peer_entry.device.can_receive_data_transfer(
+                            sender_role,
+                            session_id,
+                            dst_mac_address,
+                        )
                 })
                 .map(|peer_entry| peer_entry.device.handle)
         } else {
