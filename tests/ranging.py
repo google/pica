@@ -1878,6 +1878,100 @@ async def ccc_or_aliro_ranging_session(
     )
 
 
+async def set_app_config(host: Host, sid: int, cfg: dict):
+    host.send_control(
+        uci.SessionSetAppConfigCmd(
+            session_token=sid,
+            tlvs=[uci.AppConfigTlv(cfg_id=k, v=bytes(v)) for k, v in cfg.items()],
+        )
+    )
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+
+
+async def init_session(host: Host, sid: int, session_type: uci.SessionType, cfg: dict):
+    host.send_control(uci.SessionInitCmd(session_id=sid, session_type=session_type))
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=sid,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+    await set_app_config(host, sid, cfg)
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=sid,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+
+async def start_session(host: Host, sid: int):
+    host.send_control(uci.SessionStartCmd(session_id=sid))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=sid,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+
+async def stop_session(host: Host, sid: int):
+    host.send_control(uci.SessionStopCmd(session_id=sid))
+    await host.expect_control(uci.SessionStopRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=sid,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY)
+    )
+
+
+async def deinit_session(host: Host, sid: int):
+    host.send_control(uci.SessionDeinitCmd(session_token=sid))
+    await host.expect_control(uci.SessionDeinitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=sid,
+            session_state=uci.SessionState.SESSION_STATE_DEINIT,
+            reason_code=0,
+        )
+    )
+
+
+async def collect(host: Host, sid: int, count: int) -> list[list]:
+    rounds = []
+    for _ in range(count):
+        ntf = await host.expect_control(uci.ShortMacTwoWaySessionInfoNtf, timeout=2.0)
+        rounds.append(ntf.two_way_ranging_measurements)
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=sid,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=uci.ReasonCode.MAX_NUMBER_OF_MEASUREMENTS_REACHED,
+        ),
+        timeout=2.0,
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_READY),
+        timeout=2.0,
+    )
+    return rounds
+
+
 async def dl_tdoa_ranging_session(
     host_tag: Host, host_anchor: Host, address: str, uci_port: int
 ):

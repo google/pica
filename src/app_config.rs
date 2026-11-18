@@ -1008,17 +1008,64 @@ impl AppConfig {
         }
     }
 
+    fn is_compatible_for_ccc_or_aliro_ranging(&self, peer_config: &Self) -> bool {
+        const SHARED_CCC_TLVS: &[uci::AppConfigTlvType] = &[
+            uci::AppConfigTlvType::ChannelNumber,
+            uci::AppConfigTlvType::PreambleCodeIndex,
+            uci::AppConfigTlvType::SlotDuration,
+            uci::AppConfigTlvType::SlotsPerRr,
+            uci::AppConfigTlvType::RangingDuration,
+            uci::AppConfigTlvType::HoppingMode,
+            uci::AppConfigTlvType::CccHopModeKey,
+            uci::AppConfigTlvType::StsIndex,
+            uci::AppConfigTlvType::CccUwbConfigId,
+            uci::AppConfigTlvType::CccPulseshapeCombo,
+            uci::AppConfigTlvType::CccRangingProtocolVer,
+        ];
+        const SHARED_ALIRO_TLVS: &[uci::AppConfigTlvType] = &[
+            uci::AppConfigTlvType::AliroMacMode,
+            uci::AppConfigTlvType::SessionKey,
+        ];
+
+        let opposite_role = matches!(
+            (self.device_role(), peer_config.device_role()),
+            (
+                Some(uci::DeviceRole::Initiator),
+                Some(uci::DeviceRole::Responder)
+            ) | (
+                Some(uci::DeviceRole::Responder),
+                Some(uci::DeviceRole::Initiator)
+            )
+        );
+        let aliro_extra = if self.session_type == uci::SessionType::Aliro {
+            SHARED_ALIRO_TLVS
+        } else {
+            &[]
+        };
+
+        self.session_type == peer_config.session_type
+            && opposite_role
+            && SHARED_CCC_TLVS
+                .iter()
+                .chain(aliro_extra)
+                .all(|&id| self.get(id) == peer_config.get(id))
+    }
+
     pub fn is_compatible_for_ranging(&self, peer_config: &Self) -> bool {
-        self.device_role() != peer_config.device_role()
-            && self.device_type() != peer_config.device_type()
-            && self.mac_address_mode() == peer_config.mac_address_mode()
-            && self.channel_number() == peer_config.channel_number()
-            && self
-                .device_mac_address()
-                .is_some_and(|mac| peer_config.dst_mac_address().any(|a| a == mac))
-            && peer_config
-                .device_mac_address()
-                .is_some_and(|mac| self.dst_mac_address().any(|a| a == mac))
+        if self.is_ccc_or_aliro() || peer_config.is_ccc_or_aliro() {
+            self.is_compatible_for_ccc_or_aliro_ranging(peer_config)
+        } else {
+            self.device_role() != peer_config.device_role()
+                && self.device_type() != peer_config.device_type()
+                && self.mac_address_mode() == peer_config.mac_address_mode()
+                && self.channel_number() == peer_config.channel_number()
+                && self
+                    .device_mac_address()
+                    .is_some_and(|mac| peer_config.dst_mac_address().any(|a| a == mac))
+                && peer_config
+                    .device_mac_address()
+                    .is_some_and(|mac| self.dst_mac_address().any(|a| a == mac))
+        }
     }
 
     pub fn is_compatible_for_dl_tdoa(&self, tag_config: &Self) -> bool {

@@ -880,6 +880,45 @@ impl Pica {
         self.apply_device_effects(device_handle, effects);
     }
 
+    fn zero_mac(mode: uci::MacAddressMode) -> Option<MacAddress> {
+        match mode {
+            uci::MacAddressMode::Mode0 => Some(MacAddress::Short([0; 2])),
+            uci::MacAddressMode::Mode2 => Some(MacAddress::Extended([0; 8])),
+            uci::MacAddressMode::Mode1 => None,
+        }
+    }
+
+    fn is_peer_suspended(device: &Device, session_id: u32) -> bool {
+        device.session(session_id).is_some_and(|peer_session| {
+            peer_session.app_config.suspend_ranging_rounds() == uci::SuspendRangingRounds::Enable
+        })
+    }
+
+    fn two_way_measurement(
+        &self,
+        app_config: &AppConfig,
+        device_handle: Handle,
+        peer_handle: Option<Handle>,
+        mac_address: &MacAddress,
+    ) -> TwoWayRangingMeasurement {
+        peer_handle
+            .and_then(|peer_handle| {
+                let local = self
+                    .ranging_estimator
+                    .estimate(&device_handle, &peer_handle)?;
+                let remote = self
+                    .ranging_estimator
+                    .estimate(&peer_handle, &device_handle)?;
+                Some(TwoWayRangingMeasurement::new(
+                    app_config,
+                    mac_address,
+                    local,
+                    remote,
+                ))
+            })
+            .unwrap_or_else(|| TwoWayRangingMeasurement::timeout(mac_address))
+    }
+
     fn ranging(&mut self, device_handle: Handle, session_id: u32) {
         tracing::debug!("[{device_handle}] Ranging event");
         tracing::debug!("  session_id={session_id}");
@@ -905,53 +944,74 @@ impl Pica {
 
         let mut measurements = Vec::new();
 
-        for mac_address in session.get_dst_mac_address() {
-            let peer_handle = if let Some(anchor_handle) = self.anchor_handle(mac_address) {
-                Some(anchor_handle)
-            } else if let Some(peer_entry) = self.devices.values().find(|peer_entry| {
+        if session.app_config.is_ccc_or_aliro() {
+            let compatible_peers = self.devices.values().filter(|peer_entry| {
                 peer_entry.device.handle != device_handle
                     && peer_entry.device.can_start_ranging(session, session_id)
-                    && peer_entry
-                        .device
-                        .session(session_id)
-                        .and_then(|s| s.app_config.device_mac_address())
-                        == Some(mac_address)
-            }) {
-                if peer_entry
-                    .device
-                    .session(session_id)
-                    .is_some_and(|peer_session| {
-                        peer_session.app_config.suspend_ranging_rounds()
-                            == uci::SuspendRangingRounds::Enable
-                    })
-                {
-                    if session.app_config.device_type() == Some(uci::DeviceType::Controlee) {
+            });
+            let peer_handle = match session.app_config.device_role() {
+                Some(uci::DeviceRole::Initiator) => compatible_peers
+                    .filter(|peer_entry| !Self::is_peer_suspended(&peer_entry.device, session_id))
+                    .min_by_key(|peer_entry| peer_entry.device.handle)
+                    .map(|peer_entry| peer_entry.device.handle),
+                Some(uci::DeviceRole::Responder) => {
+                    let mut peer_handle: Option<Handle> = None;
+                    let mut any_suspended = false;
+                    for peer_entry in compatible_peers {
+                        if Self::is_peer_suspended(&peer_entry.device, session_id) {
+                            any_suspended = true;
+                        } else if peer_handle.is_none_or(|h| peer_entry.device.handle < h) {
+                            peer_handle = Some(peer_entry.device.handle);
+                        }
+                    }
+                    if peer_handle.is_none() && any_suspended {
                         return;
                     }
-                    None
-                } else {
-                    Some(peer_entry.device.handle)
+                    peer_handle
                 }
-            } else {
-                None
+                _ => None,
             };
-            let measurement = peer_handle
-                .and_then(|peer_handle| {
-                    let local = self
-                        .ranging_estimator
-                        .estimate(&device.handle, &peer_handle)?;
-                    let remote = self
-                        .ranging_estimator
-                        .estimate(&peer_handle, &device.handle)?;
-                    Some(TwoWayRangingMeasurement::new(
-                        &session.app_config,
-                        &mac_address,
-                        local,
-                        remote,
-                    ))
-                })
-                .unwrap_or_else(|| TwoWayRangingMeasurement::timeout(&mac_address));
-            measurements.push(measurement);
+            if let Some(mac_address) = Self::zero_mac(session.app_config.mac_address_mode())
+                && peer_handle.is_some()
+            {
+                measurements.push(self.two_way_measurement(
+                    &session.app_config,
+                    device_handle,
+                    peer_handle,
+                    &mac_address,
+                ));
+            }
+        } else {
+            for mac_address in session.get_dst_mac_address() {
+                let peer_handle = if let Some(anchor_handle) = self.anchor_handle(mac_address) {
+                    Some(anchor_handle)
+                } else if let Some(peer_entry) = self.devices.values().find(|peer_entry| {
+                    peer_entry.device.handle != device_handle
+                        && peer_entry.device.can_start_ranging(session, session_id)
+                        && peer_entry
+                            .device
+                            .session(session_id)
+                            .and_then(|s| s.app_config.device_mac_address())
+                            == Some(mac_address)
+                }) {
+                    if Self::is_peer_suspended(&peer_entry.device, session_id) {
+                        if session.app_config.device_type() == Some(uci::DeviceType::Controlee) {
+                            return;
+                        }
+                        None
+                    } else {
+                        Some(peer_entry.device.handle)
+                    }
+                } else {
+                    None
+                };
+                measurements.push(self.two_way_measurement(
+                    &session.app_config,
+                    device.handle,
+                    peer_handle,
+                    &mac_address,
+                ));
+            }
         }
 
         let peer_handle = if let Some(data_transfer) = &session.data_transfer
