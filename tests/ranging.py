@@ -1299,6 +1299,17 @@ async def verify_app_config_validation(host: Host):
     )
 
     await set_config(
+        [uci.AppConfigTlv(cfg_id=uci.AppConfigTlvType.DEVICE_ROLE, v=bytes([0xFF]))],
+        uci.Status.INVALID_PARAM,
+        [
+            uci.AppConfigStatus(
+                cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
+                status=uci.Status.INVALID_PARAM,
+            )
+        ],
+    )
+
+    await set_config(
         [
             uci.AppConfigTlv(
                 cfg_id=uci.AppConfigTlvType.DEVICE_ROLE,
@@ -1316,6 +1327,18 @@ async def verify_app_config_validation(host: Host):
                 cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
                 v=bytes([uci.MacAddressMode.MODE_0]),
             ),
+        ]
+    )
+    host.send_control(uci.SessionGetStateCmd(session_token=session_id))
+    await host.expect_control(
+        uci.SessionGetStateRsp(
+            status=uci.Status.OK,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+        )
+    )
+
+    await set_config(
+        [
             uci.AppConfigTlv(
                 cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
                 v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),

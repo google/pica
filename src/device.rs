@@ -1168,44 +1168,34 @@ impl Device {
             }
         }
 
-        if !app_config.has_mandatory_parameters() {
-            tracing::error!(
-                "[{}:0x{session_handle:x}] missing mandatory APP config parameters",
-                self.handle
-            );
+        if !invalid_parameters.is_empty() {
             return SessionSetAppConfigRsp {
-                status: uci::Status::Rejected,
-                cfg_status: vec![],
+                status: uci::Status::InvalidParam,
+                cfg_status: invalid_parameters,
             }
             .into();
         }
 
-        if invalid_parameters.is_empty() {
-            session.set_app_config(app_config);
-            let effects = if session.state == SessionState::SessionStateInit {
-                session
-                    .set_state(
-                        SessionState::SessionStateIdle,
-                        ReasonCode::StateChangeWithSessionManagementCommands,
-                    )
-                    .map(DeviceEffect::send_control)
-            } else {
-                None
-            };
-            CommandOutput::with_effects(
-                SessionSetAppConfigRsp {
-                    status: uci::Status::Ok,
-                    cfg_status: invalid_parameters,
-                },
-                effects,
-            )
+        session.set_app_config(app_config);
+        let effects = if session.state == SessionState::SessionStateInit
+            && session.app_config.has_mandatory_parameters()
+        {
+            session
+                .set_state(
+                    SessionState::SessionStateIdle,
+                    ReasonCode::StateChangeWithSessionManagementCommands,
+                )
+                .map(DeviceEffect::send_control)
         } else {
+            None
+        };
+        CommandOutput::with_effects(
             SessionSetAppConfigRsp {
-                status: uci::Status::InvalidParam,
+                status: uci::Status::Ok,
                 cfg_status: invalid_parameters,
-            }
-            .into()
-        }
+            },
+            effects,
+        )
     }
 
     fn session_get_app_config(&self, cmd: SessionGetAppConfigCmd) -> SessionGetAppConfigRsp {
