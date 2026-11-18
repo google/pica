@@ -156,7 +156,7 @@ impl AoaBounds {
         }
     }
 }
-const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
+const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 4] = [
     (
         uci::AppConfigTlvType::RangingDuration,
         Bytes::from_static(const { &96u32.to_le_bytes() }),
@@ -168,10 +168,6 @@ const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
     (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[6])),
     (
         uci::AppConfigTlvType::CccHopModeKey,
-        Bytes::from_static(&[0, 0, 0, 0]),
-    ),
-    (
-        uci::AppConfigTlvType::CccLastIndexUsed,
         Bytes::from_static(&[0, 0, 0, 0]),
     ),
 ];
@@ -430,6 +426,13 @@ impl AppConfig {
         Self { session_type, tlvs }
     }
 
+    pub fn is_ccc_or_aliro(&self) -> bool {
+        matches!(
+            self.session_type,
+            uci::SessionType::Ccc | uci::SessionType::Aliro
+        )
+    }
+
     /// Retrieve the APP configuration value with the selected identifier
     /// Returns `Some` if the identifier is set, `None` otherwise.
     pub fn get(&self, id: uci::AppConfigTlvType) -> Option<&Bytes> {
@@ -447,6 +450,23 @@ impl AppConfig {
     }
 
     fn parse_tlv(&self, id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
+        match id {
+            uci::AppConfigTlvType::CccHopModeKey
+            | uci::AppConfigTlvType::CccUwbTime0
+            | uci::AppConfigTlvType::CccRangingProtocolVer
+            | uci::AppConfigTlvType::CccUwbConfigId
+            | uci::AppConfigTlvType::CccPulseshapeCombo
+            | uci::AppConfigTlvType::CccUrskTtl
+                if !self.is_ccc_or_aliro() =>
+            {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            uci::AppConfigTlvType::AliroMacMode if self.session_type != uci::SessionType::Aliro => {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            _ => {}
+        }
+
         fn try_parse_array<const N: usize>(
             id: uci::AppConfigTlvType,
             value: &[u8],
@@ -585,8 +605,7 @@ impl AppConfig {
             | uci::AppConfigTlvType::CccUrskTtl => try_parse_u16(id, value),
             uci::AppConfigTlvType::RangingDuration
             | uci::AppConfigTlvType::StsIndex
-            | uci::AppConfigTlvType::SubSessionId
-            | uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
+            | uci::AppConfigTlvType::SubSessionId => try_parse_u32(id, value),
             uci::AppConfigTlvType::MacFcsType => try_parse_enum::<uci::MacFcsType>(id, value),
             uci::AppConfigTlvType::AoaResultReq => try_parse_enum::<uci::AoaResultReq>(id, value),
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
@@ -670,6 +689,10 @@ impl AppConfig {
         let bytes = self
             .parse_tlv(id, value)
             .inspect_err(|err| tracing::error!("{err}"))?;
+        if self.is_ccc_or_aliro() && id == uci::AppConfigTlvType::UwbInitiationTime {
+            self.tlvs
+                .insert(uci::AppConfigTlvType::CccUwbTime0, bytes.clone());
+        }
         self.tlvs.insert(id, bytes);
         Ok(())
     }
@@ -700,6 +723,10 @@ impl AppConfig {
 
     pub fn device_type(&self) -> Option<uci::DeviceType> {
         self.get_enum(uci::AppConfigTlvType::DeviceType)
+    }
+
+    pub fn sts_index(&self) -> u32 {
+        self.get_u32(uci::AppConfigTlvType::StsIndex).unwrap_or(0)
     }
 
     pub fn ranging_round_usage(&self) -> Option<uci::RangingRoundUsage> {

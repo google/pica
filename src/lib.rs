@@ -1128,6 +1128,7 @@ impl Pica {
                 }
             }
             session.ranging_count += 1;
+            session.advance_ccc_last_sts_index_used();
             if session.has_reached_max_measurements() {
                 device.stop_active_session(session_id, ReasonCode::MaxNumberOfMeasurementsReached)
             } else {
