@@ -407,6 +407,209 @@ async def data_transfer(
             event.show()
 
 
+async def _start_session(
+    host: Host,
+    peer: Host,
+    session_type: uci.SessionType,
+    role: uci.DeviceRole,
+    device_type: uci.DeviceType,
+    session_info_ntf_config: uci.SessionInfoNtfConfig | None = None,
+):
+    await init(host)
+
+    host.send_control(uci.SessionInitCmd(session_id=0, session_type=session_type))
+    await host.expect_control(uci.SessionInitRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_INIT,
+            reason_code=0,
+        )
+    )
+
+    tlvs = [
+        uci.AppConfigTlv(cfg_id=uci.AppConfigTlvType.DEVICE_ROLE, v=bytes([role])),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_TYPE, v=bytes([device_type])
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DEVICE_MAC_ADDRESS, v=host.mac_address
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.MAC_ADDRESS_MODE,
+            v=bytes([uci.MacAddressMode.MODE_0]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.MULTI_NODE_MODE,
+            v=bytes([uci.MultiNodeMode.ONE_TO_ONE]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.SCHEDULE_MODE,
+            v=bytes([uci.ScheduleMode.CONTENTION_BASED]),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.RANGING_ROUND_USAGE, v=bytes([0x06])
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.RANGING_DURATION,
+            v=int(200).to_bytes(4, byteorder="little"),
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.NUMBER_OF_CONTROLEES, v=bytes([1])
+        ),
+        uci.AppConfigTlv(
+            cfg_id=uci.AppConfigTlvType.DST_MAC_ADDRESS, v=peer.mac_address
+        ),
+    ]
+    if session_info_ntf_config is not None:
+        tlvs.append(
+            uci.AppConfigTlv(
+                cfg_id=uci.AppConfigTlvType.SESSION_INFO_NTF_CONFIG,
+                v=bytes([session_info_ntf_config]),
+            )
+        )
+
+    host.send_control(uci.SessionSetAppConfigCmd(session_token=0, tlvs=tlvs))
+    await host.expect_control(
+        uci.SessionSetAppConfigRsp(status=uci.Status.OK, cfg_status=[])
+    )
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_IDLE,
+            reason_code=0,
+        )
+    )
+
+    host.send_control(uci.SessionStartCmd(session_id=0))
+    await host.expect_control(uci.SessionStartRsp(status=uci.Status.OK))
+    await host.expect_control(
+        uci.SessionStatusNtf(
+            session_token=0,
+            session_state=uci.SessionState.SESSION_STATE_ACTIVE,
+            reason_code=0,
+        )
+    )
+    await host.expect_control(
+        uci.CoreDeviceStatusNtf(device_state=uci.DeviceState.DEVICE_STATE_ACTIVE)
+    )
+
+
+async def responder_to_initiator_data_transfer(address: str, uci_port: int, file: Path):
+    initiator = await Host.connect(address, uci_port, bytes([0x11, 0x00]))
+    responder = await Host.connect(address, uci_port, bytes([0x12, 0x00]))
+    try:
+        await _start_session(
+            initiator,
+            responder,
+            uci.SessionType.FIRA_DATA_TRANSFER_SESSION,
+            uci.DeviceRole.INITIATOR,
+            uci.DeviceType.CONTROLLER,
+        )
+        await _start_session(
+            responder,
+            initiator,
+            uci.SessionType.FIRA_DATA_TRANSFER_SESSION,
+            uci.DeviceRole.RESPONDER,
+            uci.DeviceType.CONTROLEE,
+        )
+
+        await data_transfer(responder, initiator.mac_address, file, 0)
+        await responder.expect_control(uci.SessionDataCreditNtf, timeout=2.0)
+        status_ntf = await responder.expect_control(
+            uci.SessionDataTransferStatusNtf, timeout=2.0
+        )
+        assert (
+            status_ntf.status
+            == uci.DataTransferNtfStatusCode.UCI_DATA_TRANSFER_STATUS_OK
+        )
+
+        rcv = await initiator.expect_data(uci.DataMessageRcv, timeout=2.0)
+        assert bytes(rcv.application_data) == file.read_bytes()[:MAX_DATA_MESSAGE_SIZE]
+    finally:
+        initiator.disconnect()
+        responder.disconnect()
+
+
+async def responder_to_initiator_in_band_data(address: str, uci_port: int, file: Path):
+    initiator = await Host.connect(address, uci_port, bytes([0x21, 0x00]))
+    responder = await Host.connect(address, uci_port, bytes([0x22, 0x00]))
+    try:
+        # Suppress ranging InfoNtfs so they do not race with SessionDataTransferStatusNtf.
+        await _start_session(
+            initiator,
+            responder,
+            uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION,
+            uci.DeviceRole.INITIATOR,
+            uci.DeviceType.CONTROLLER,
+            session_info_ntf_config=uci.SessionInfoNtfConfig.DISABLE,
+        )
+        await _start_session(
+            responder,
+            initiator,
+            uci.SessionType.FIRA_RANGING_AND_IN_BAND_DATA_SESSION,
+            uci.DeviceRole.RESPONDER,
+            uci.DeviceType.CONTROLEE,
+            session_info_ntf_config=uci.SessionInfoNtfConfig.DISABLE,
+        )
+
+        await data_transfer(responder, initiator.mac_address, file, 0)
+        await responder.expect_control(uci.SessionDataCreditNtf, timeout=2.0)
+        status_ntf = await responder.expect_control(
+            uci.SessionDataTransferStatusNtf, timeout=2.0
+        )
+        assert (
+            status_ntf.status
+            == uci.DataTransferNtfStatusCode.UCI_DATA_TRANSFER_STATUS_OK
+        )
+
+        rcv = await initiator.expect_data(uci.DataMessageRcv, timeout=2.0)
+        assert bytes(rcv.application_data) == file.read_bytes()[:MAX_DATA_MESSAGE_SIZE]
+    finally:
+        initiator.disconnect()
+        responder.disconnect()
+
+
+async def same_role_data_transfer_rejected(address: str, uci_port: int, file: Path):
+    sender = await Host.connect(address, uci_port, bytes([0x31, 0x00]))
+    receiver = await Host.connect(address, uci_port, bytes([0x32, 0x00]))
+    try:
+        await _start_session(
+            sender,
+            receiver,
+            uci.SessionType.FIRA_DATA_TRANSFER_SESSION,
+            uci.DeviceRole.INITIATOR,
+            uci.DeviceType.CONTROLLER,
+        )
+        await _start_session(
+            receiver,
+            sender,
+            uci.SessionType.FIRA_DATA_TRANSFER_SESSION,
+            uci.DeviceRole.INITIATOR,
+            uci.DeviceType.CONTROLLER,
+        )
+
+        await data_transfer(sender, receiver.mac_address, file, 0)
+        await sender.expect_control(uci.SessionDataCreditNtf, timeout=2.0)
+        status_ntf = await sender.expect_control(
+            uci.SessionDataTransferStatusNtf, timeout=2.0
+        )
+        assert (
+            status_ntf.status
+            == uci.DataTransferNtfStatusCode.UCI_DATA_TRANSFER_STATUS_ERROR_DATA_TRANSFER
+        )
+
+        try:
+            packet = await receiver.expect_data(uci.DataMessageRcv, timeout=0.25)
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError(f"Expected no data packet, but received {packet}")
+    finally:
+        sender.disconnect()
+        receiver.disconnect()
+
+
 async def run(address: str, uci_port: int, file: Path):
     try:
         host0 = await Host.connect(address, uci_port, bytes([0x34, 0x12]))
@@ -445,7 +648,11 @@ async def run(address: str, uci_port: int, file: Path):
     finally:
         host0.disconnect()
         host1.disconnect()
-        logging.debug("Data transfer test completed")
+
+    await responder_to_initiator_data_transfer(address, uci_port, file)
+    await responder_to_initiator_in_band_data(address, uci_port, file)
+    await same_role_data_transfer_rejected(address, uci_port, file)
+    logging.debug("Data transfer test completed")
 
 
 def main():

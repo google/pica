@@ -1037,12 +1037,19 @@ impl AppConfig {
         }
     }
 
+    fn is_bypass_data_role(&self) -> bool {
+        matches!(
+            self.device_role(),
+            Some(uci::DeviceRole::Initiator | uci::DeviceRole::Responder)
+        )
+    }
+
     pub fn can_start_data_transfer(&self) -> bool {
-        self.device_role() == Some(uci::DeviceRole::Initiator)
+        self.is_bypass_data_role()
     }
 
     pub fn can_receive_data_transfer(&self) -> bool {
-        self.device_role() == Some(uci::DeviceRole::Responder)
+        self.is_bypass_data_role()
     }
 
     pub fn invalid_start_reason(&self) -> Option<uci::ReasonCode> {
