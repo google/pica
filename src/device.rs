@@ -1168,44 +1168,34 @@ impl Device {
             }
         }
 
-        if !app_config.has_mandatory_parameters() {
-            tracing::error!(
-                "[{}:0x{session_handle:x}] missing mandatory APP config parameters",
-                self.handle
-            );
+        if !invalid_parameters.is_empty() {
             return SessionSetAppConfigRsp {
-                status: uci::Status::Rejected,
-                cfg_status: vec![],
+                status: uci::Status::InvalidParam,
+                cfg_status: invalid_parameters,
             }
             .into();
         }
 
-        if invalid_parameters.is_empty() {
-            session.set_app_config(app_config);
-            let effects = if session.state == SessionState::SessionStateInit {
-                session
-                    .set_state(
-                        SessionState::SessionStateIdle,
-                        ReasonCode::StateChangeWithSessionManagementCommands,
-                    )
-                    .map(DeviceEffect::send_control)
-            } else {
-                None
-            };
-            CommandOutput::with_effects(
-                SessionSetAppConfigRsp {
-                    status: uci::Status::Ok,
-                    cfg_status: invalid_parameters,
-                },
-                effects,
-            )
+        session.set_app_config(app_config);
+        let effects = if session.state == SessionState::SessionStateInit
+            && session.app_config.has_mandatory_parameters()
+        {
+            session
+                .set_state(
+                    SessionState::SessionStateIdle,
+                    ReasonCode::StateChangeWithSessionManagementCommands,
+                )
+                .map(DeviceEffect::send_control)
         } else {
+            None
+        };
+        CommandOutput::with_effects(
             SessionSetAppConfigRsp {
-                status: uci::Status::InvalidParam,
+                status: uci::Status::Ok,
                 cfg_status: invalid_parameters,
-            }
-            .into()
-        }
+            },
+            effects,
+        )
     }
 
     fn session_get_app_config(&self, cmd: SessionGetAppConfigCmd) -> SessionGetAppConfigRsp {
@@ -1906,5 +1896,174 @@ impl From<&uci::Controlee_V2_0_32_Byte_Version> for Controlee {
             sub_session_id: value.subsession_id,
             session_key: SubSessionKey::Extended(value.subsession_key),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn send_cmd(device: &mut Device, cmd: impl Packet) -> Vec<Vec<u8>> {
+        device
+            .receive_packet(cmd.encode_to_vec().unwrap())
+            .into_iter()
+            .filter_map(|effect| match effect {
+                DeviceEffect::SendPacket(bytes) => Some(bytes),
+                DeviceEffect::StopControleeRanging { .. } => None,
+            })
+            .collect()
+    }
+
+    fn init_session(session_id: u32) -> Device {
+        let mut device = Device::new(0);
+        let reset = send_cmd(
+            &mut device,
+            CoreDeviceResetCmd {
+                reset_config: ResetConfig::UwbsReset,
+            },
+        );
+        assert_eq!(
+            CoreDeviceResetRsp::decode_full(&reset[0]).unwrap().status,
+            uci::Status::Ok
+        );
+        let init = send_cmd(
+            &mut device,
+            SessionInitCmd {
+                session_id,
+                session_type: SessionType::FiraRangingSession,
+            },
+        );
+        assert_eq!(
+            SessionInitRsp::decode_full(&init[0]).unwrap().status,
+            uci::Status::Ok
+        );
+        device
+    }
+
+    fn tlv(cfg_id: AppConfigTlvType, v: Vec<u8>) -> AppConfigTlv {
+        AppConfigTlv { cfg_id, v }
+    }
+
+    #[test]
+    fn set_app_config_invalid_param_in_incomplete_init_returns_invalid_param() {
+        let session_id = 42;
+        let mut device = init_session(session_id);
+        let packets = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: session_id,
+                tlvs: vec![tlv(AppConfigTlvType::DeviceRole, vec![0xff])],
+            },
+        );
+        assert_eq!(packets.len(), 1);
+        let rsp = SessionSetAppConfigRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(rsp.status, uci::Status::InvalidParam);
+        assert_eq!(
+            rsp.cfg_status,
+            vec![AppConfigStatus {
+                cfg_id: AppConfigTlvType::DeviceRole,
+                status: uci::Status::InvalidParam,
+            }]
+        );
+    }
+
+    #[test]
+    fn partial_set_app_config_applies_values_and_stays_in_init() {
+        let session_id = 42;
+        let mut device = init_session(session_id);
+        let role_tlv = tlv(
+            AppConfigTlvType::DeviceRole,
+            vec![DeviceRole::Initiator.into()],
+        );
+        let set = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: session_id,
+                tlvs: vec![role_tlv.clone()],
+            },
+        );
+        assert_eq!(set.len(), 1);
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&set[0]).unwrap().status,
+            uci::Status::Ok
+        );
+
+        let state = send_cmd(
+            &mut device,
+            SessionGetStateCmd {
+                session_token: session_id,
+            },
+        );
+        let state_rsp = SessionGetStateRsp::decode_full(&state[0]).unwrap();
+        assert_eq!(state_rsp.status, uci::Status::Ok);
+        assert_eq!(state_rsp.session_state, SessionState::SessionStateInit);
+
+        let get = send_cmd(
+            &mut device,
+            SessionGetAppConfigCmd {
+                session_token: session_id,
+                app_cfg: vec![AppConfigTlvType::DeviceRole],
+            },
+        );
+        let get_rsp = SessionGetAppConfigRsp::decode_full(&get[0]).unwrap();
+        assert_eq!(get_rsp.status, uci::Status::Ok);
+        assert_eq!(get_rsp.tlvs, vec![role_tlv]);
+    }
+
+    #[test]
+    fn completing_mandatory_app_config_across_calls_transitions_to_idle() {
+        let session_id = 42;
+        let mut device = init_session(session_id);
+        let first = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: session_id,
+                tlvs: vec![
+                    tlv(
+                        AppConfigTlvType::DeviceRole,
+                        vec![DeviceRole::Initiator.into()],
+                    ),
+                    tlv(
+                        AppConfigTlvType::MultiNodeMode,
+                        vec![MultiNodeMode::OneToOne.into()],
+                    ),
+                ],
+            },
+        );
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&first[0])
+                .unwrap()
+                .status,
+            uci::Status::Ok
+        );
+
+        let second = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: session_id,
+                tlvs: vec![
+                    tlv(
+                        AppConfigTlvType::RangingRoundUsage,
+                        vec![RangingRoundUsage::DsTwrDeferredMode.into()],
+                    ),
+                    tlv(AppConfigTlvType::DeviceMacAddress, vec![0x01, 0x02]),
+                    tlv(
+                        AppConfigTlvType::ScheduleMode,
+                        vec![ScheduleMode::TimeScheduled.into()],
+                    ),
+                ],
+            },
+        );
+        assert_eq!(second.len(), 2);
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&second[0])
+                .unwrap()
+                .status,
+            uci::Status::Ok
+        );
+        let ntf = SessionStatusNtf::decode_full(&second[1]).unwrap();
+        assert_eq!(ntf.session_token, session_id);
+        assert_eq!(ntf.session_state, SessionState::SessionStateIdle);
     }
 }
