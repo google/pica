@@ -108,6 +108,7 @@ const DEFAULT_CHANNEL_NUMBER: uci::ChannelNumber = uci::ChannelNumber::ChannelNu
 const DEFAULT_NUMBER_OF_CONTROLEES: u8 = 1;
 const DEFAULT_SLOT_DURATION: u16 = 2400;
 const DEFAULT_SLOTS_PER_RR: u8 = 25;
+const DEFAULT_RESPONDER_SLOT_INDEX: u8 = 1;
 const DEFAULT_RANGING_DURATION: u32 = 200;
 const DEFAULT_SESSION_INFO_NTF_CONFIG: uci::SessionInfoNtfConfig =
     uci::SessionInfoNtfConfig::Enable;
@@ -623,6 +624,10 @@ impl AppConfig {
                 try_parse_enum::<uci::RangingTimeStruct>(id, value)
             }
             uci::AppConfigTlvType::AoaBoundConfig => try_parse_array::<8>(id, value),
+            uci::AppConfigTlvType::ResponderSlotIndex => match try_parse_u8(id, value)? {
+                0 => Err(AppConfigError::InvalidEnumValue { id, value: 0 }),
+                _ => Ok(Bytes::copy_from_slice(value)),
+            },
             uci::AppConfigTlvType::PrfMode => try_parse_enum::<uci::PrfMode>(id, value),
             uci::AppConfigTlvType::CapSizeRange | uci::AppConfigTlvType::CccRangingProtocolVer => {
                 try_parse_array::<2>(id, value)
@@ -819,6 +824,11 @@ impl AppConfig {
             .unwrap_or(DEFAULT_SLOTS_PER_RR)
     }
 
+    pub fn responder_slot_index(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::ResponderSlotIndex)
+            .unwrap_or(DEFAULT_RESPONDER_SLOT_INDEX)
+    }
+
     pub fn effective_session_info_ntf_config(&self) -> uci::SessionInfoNtfConfig {
         let config = self
             .get_enum(uci::AppConfigTlvType::SessionInfoNtfConfig)
@@ -859,7 +869,7 @@ impl AppConfig {
             .unwrap_or(DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG)
     }
 
-    fn number_of_controlees(&self) -> u8 {
+    pub fn number_of_controlees(&self) -> u8 {
         self.get_u8(uci::AppConfigTlvType::NumberOfControlees)
             .unwrap_or(DEFAULT_NUMBER_OF_CONTROLEES)
     }
@@ -1147,6 +1157,16 @@ impl AppConfig {
         }
 
         if self.slots_per_rr() == 0 {
+            return Some(uci::ReasonCode::ErrorInsufficientSlotsPerRr);
+        }
+
+        if self.device_role() == Some(uci::DeviceRole::Responder)
+            && (self.is_ccc_or_aliro()
+                || self
+                    .tlvs
+                    .contains_key(&uci::AppConfigTlvType::ResponderSlotIndex))
+            && self.responder_slot_index() >= self.slots_per_rr()
+        {
             return Some(uci::ReasonCode::ErrorInsufficientSlotsPerRr);
         }
 

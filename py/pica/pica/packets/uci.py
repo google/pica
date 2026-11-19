@@ -335,6 +335,7 @@ class AppConfigTlvType(enum.IntEnum):
     RANGING_TIME_STRUCT = 0x1a
     SLOTS_PER_RR = 0x1b
     AOA_BOUND_CONFIG = 0x1d
+    RESPONDER_SLOT_INDEX = 0x1e
     PRF_MODE = 0x1f
     CAP_SIZE_RANGE = 0x20
     TX_JITTER_WINDOW_SIZE = 0x21

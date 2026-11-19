@@ -17,7 +17,7 @@
 //! - [UCI] FiRa Consortium UWB Command Interface Generic Technical specification
 
 use crate::packets::uci::{self, *};
-use crate::{AppConfig, DlTdoaMeasurement, MacAddress, UciPacket};
+use crate::{AppConfig, DlTdoaMeasurement, Handle, MacAddress, UciPacket};
 use bytes::{Bytes, BytesMut};
 use pdl_runtime::Packet;
 use std::collections::HashSet;
@@ -59,6 +59,12 @@ enum DlTdoaRangingRounds {
     Anchor(Vec<uci::DtAnchorRangingRound>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PeerKey {
+    Mac(MacAddress),
+    Handle(Handle),
+}
+
 pub struct Session {
     /// cf. [UCI] 7.1
     pub state: SessionState,
@@ -74,7 +80,7 @@ pub struct Session {
     pub ccc_last_sts_index_used: Option<u32>,
     dl_tdoa_rounds: Option<DlTdoaRangingRounds>,
     pub app_config: AppConfig,
-    pub in_range_peers: HashSet<MacAddress>,
+    pub in_range_peers: HashSet<PeerKey>,
     next_ranging_at: Option<Instant>,
 }
 
