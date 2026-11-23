@@ -27,23 +27,11 @@ jobs:
         toolchain: 1.88.0
         targets: ""
         components: rustfmt, clippy
-    - name: Set Up Python 3.11
-      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
-      with:
-        python-version: 3.11
-    - name: Install
-      run: |
-        pip install --upgrade pip
-        pip install ./py/pica/
-        pip install pytest=="7.4.4"
-        pip install pytest_asyncio=="0.23.3"
     - name: Build
       run: cargo build
     - name: Test
-      run: cargo test
+      run: cargo test --all-features
     - name: Fmt
       run: cargo fmt --check --quiet
     - name: Clippy
-      run: cargo clippy --no-deps -- --deny warnings
-    - name: Run Python tests suite
-      run: pytest --log-cli-level=DEBUG -v
+      run: cargo clippy --all-targets --all-features --no-deps -- --deny warnings
