@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -90,9 +90,9 @@ pub fn spawn_device(
     out_tx
 }
 
-pub async fn wait_for_tick(delay: Option<Duration>) {
-    match delay {
-        Some(d) => tokio::time::sleep(d).await,
+pub async fn wait_for_tick(deadline: Option<Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(tokio::time::Instant::from_std(d)).await,
         None => std::future::pending::<()>().await,
     }
 }

@@ -54,11 +54,6 @@ impl Default for DeviceConfig {
 }
 
 pub struct Device {
-    /// Flag set when the device has received the Core Device Reset command.
-    /// The first command received by the device is expected to be Core Device
-    /// Reset, receiving any other command before this is indicative of a
-    /// bad host state.
-    is_reset: bool,
     pub handle: usize,
     config: DeviceConfig,
     /// [UCI] 5. UWBS Device State Machine
@@ -66,7 +61,9 @@ pub struct Device {
     pub sessions: HashMap<u32, Session>,
     country_code: [u8; 2],
     pub n_active_sessions: usize,
-    boot_time: Instant,
+    /// Timestamp set when the device receives the Core Device Reset command.
+    /// Receiving any other command while `None` indicates a bad host state.
+    boot_time: Option<Instant>,
 }
 
 /// Side effect emitted by a device state transition or command.
@@ -131,13 +128,12 @@ impl Device {
     pub fn new(handle: usize) -> Self {
         Device {
             handle,
-            is_reset: false,
             config: Default::default(),
             state: DeviceState::DeviceStateError, // Will be overwitten
             sessions: Default::default(),
             country_code: Default::default(),
             n_active_sessions: 0,
-            boot_time: Instant::now(),
+            boot_time: None,
         }
     }
 
@@ -216,7 +212,7 @@ impl Device {
             })
     }
 
-    fn receive_command(&mut self, cmd: ControlPacket) -> Vec<DeviceEffect> {
+    fn receive_command(&mut self, cmd: ControlPacket, now: Instant) -> Vec<DeviceEffect> {
         use AndroidPacketChild::*;
         use ControlPacketChild::*;
         use CorePacketChild::*;
@@ -226,7 +222,7 @@ impl Device {
         // Check whether the first command received is the Core Device
         // Reset command. The controller responds with Device Status
         // Notification with DEVICE_STATE_ERROR otherwise.
-        if !self.is_reset && !cmd.is_core_device_reset_cmd() {
+        if self.boot_time.is_none() && !cmd.is_core_device_reset_cmd() {
             return CommandOutput::from(uci::CoreDeviceStatusNtf {
                 device_state: DeviceState::DeviceStateError,
             })
@@ -249,12 +245,12 @@ impl Device {
 
         let output: CommandOutput = match child {
             CorePacket(cmd) => match cmd.specialize() {
-                Ok(CoreDeviceResetCmd(cmd)) => self.core_device_reset(cmd),
+                Ok(CoreDeviceResetCmd(cmd)) => self.core_device_reset(cmd, now),
                 Ok(CoreGetDeviceInfoCmd(cmd)) => self.core_get_device_info(cmd).into(),
                 Ok(CoreGetCapsInfoCmd(cmd)) => self.core_get_caps_info(cmd).into(),
                 Ok(CoreSetConfigCmd(cmd)) => self.core_set_config(cmd).into(),
                 Ok(CoreGetConfigCmd(cmd)) => self.core_get_config(cmd).into(),
-                Ok(CoreQueryTimeStampCmd(_)) => self.core_query_timestamp().into(),
+                Ok(CoreQueryTimeStampCmd(_)) => self.core_query_timestamp(now).into(),
                 child => command_error_response(
                     GroupId::Core,
                     cmd.oid.into(),
@@ -266,7 +262,7 @@ impl Device {
                 Ok(SessionInitCmd(cmd)) => self.session_init(cmd),
                 Ok(SessionDeinitCmd(cmd)) => self.session_deinit(cmd),
                 Ok(SessionGetCountCmd(cmd)) => self.session_get_count(cmd).into(),
-                Ok(SessionSetAppConfigCmd(cmd)) => self.session_set_app_config(cmd),
+                Ok(SessionSetAppConfigCmd(cmd)) => self.session_set_app_config(cmd, now),
                 Ok(SessionGetAppConfigCmd(cmd)) => self.session_get_app_config(cmd).into(),
                 Ok(SessionGetStateCmd(cmd)) => self.session_get_state(cmd).into(),
                 Ok(SessionUpdateControllerMulticastListCmd(cmd)) => {
@@ -289,7 +285,7 @@ impl Device {
                 .into(),
             },
             SessionControlPacket(cmd) => match cmd.specialize() {
-                Ok(SessionStartCmd(cmd)) => self.session_start(cmd),
+                Ok(SessionStartCmd(cmd)) => self.session_start(cmd, now),
                 Ok(SessionStopCmd(cmd)) => self.session_stop(cmd),
                 Ok(SessionGetRangingCountCmd(cmd)) => self.session_get_ranging_count(cmd).into(),
                 child => command_error_response(
@@ -329,7 +325,7 @@ impl Device {
         output.0
     }
 
-    pub fn receive_packet(&mut self, packet: Vec<u8>) -> Vec<DeviceEffect> {
+    pub fn receive_packet(&mut self, packet: Vec<u8>, now: Instant) -> Vec<DeviceEffect> {
         let Some(&[mt_gid, oid]) = packet.first_chunk::<2>() else {
             return Vec::new();
         };
@@ -379,7 +375,7 @@ impl Device {
                     }
 
                     // Parsing success, ignore non command packets.
-                    Ok(cmd) => self.receive_command(cmd),
+                    Ok(cmd) => self.receive_command(cmd, now),
                 }
             }
 

@@ -37,6 +37,7 @@ use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -534,13 +535,13 @@ async fn run_pica(
                     position: Default::default(),
                 });
             }
-            () = wait_for_tick(pica.next_tick()) => {
-                pica.tick();
+            () = wait_for_tick(pica.next_deadline()) => {
+                pica.tick(Instant::now());
             }
             Some(event) = event_rx.recv() => {
                 match event {
                     DeviceEvent::Packet(handle, packet) => {
-                        pica.handle_packet(handle, &packet);
+                        pica.handle_packet(handle, &packet, Instant::now());
                     }
                     DeviceEvent::Disconnected(handle) => {
                         device_sinks.remove(&handle);

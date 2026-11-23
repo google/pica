@@ -24,6 +24,7 @@
 use std::ffi::c_void;
 use std::ptr;
 use std::slice;
+use std::time::Instant;
 
 use crate::{Handle, MacAddress, Pica, RangingEstimator, RangingMeasurement};
 
@@ -204,7 +205,7 @@ pub unsafe extern "C" fn pica_handle_packet(
     }
     let pica = unsafe { &mut *pica };
     let slice = unsafe { slice::from_raw_parts(data, data_len) };
-    pica.handle_packet(handle, slice);
+    pica.handle_packet(handle, slice, Instant::now());
 }
 
 /// Returns the duration in milliseconds until [`pica_tick`] should next be called.
@@ -221,7 +222,10 @@ pub unsafe extern "C" fn pica_next_tick_ms(pica: *const Pica) -> i64 {
         return -1;
     }
     let pica = unsafe { &*pica };
-    match pica.next_tick() {
+    match pica
+        .next_deadline()
+        .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    {
         None => -1,
         Some(d) => d
             .as_nanos()
@@ -240,7 +244,7 @@ pub unsafe extern "C" fn pica_next_tick_ms(pica: *const Pica) -> i64 {
 pub unsafe extern "C" fn pica_tick(pica: *mut Pica) {
     if !pica.is_null() {
         unsafe {
-            (*pica).tick();
+            (*pica).tick(Instant::now());
         }
     }
 }
