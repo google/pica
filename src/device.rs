@@ -388,3 +388,619 @@ impl Device {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{FiraSessionConfig, fira_session_tlvs};
+
+    const SESSION_ID: u32 = 42;
+    const TEST_MODE_SESSION_ID: u32 = 77;
+    const MISSING_SESSION_ID: u32 = 99;
+    const LOCAL_SHORT_MAC: [u8; 2] = [0x12, 0x34];
+    const PEER_SHORT_MAC: [u8; 2] = [0x56, 0x78];
+    const EXTRA_CONTROLEE_MAC: [u8; 2] = [0x9A, 0xBC];
+    const RANGING_DURATION_MS: u32 = 100;
+    const EXPECTED_FIRA_VERSION_2_0: u16 = 0x0002;
+    const EXPECTED_MAX_DATA_SIZE: u16 = 1020;
+    const DEVICE_STATE_READY_BYTE: u8 = 0x01;
+    const DEVICE_STATE_ACTIVE_BYTE: u8 = 0x02;
+    const LOW_POWER_DISABLED_BYTE: u8 = 0x00;
+    const RFU_CONFIG_PARAM_ID: u8 = 0x7F;
+    const UCI_RESPONSE_MT: u8 = 0x02;
+    const VENDOR_RESERVED_GID: u8 = 0x0F;
+    const UNASSIGNED_GID: u8 = 0x04;
+    const TEST_OID: u8 = 0x05;
+    const VENDOR_RESERVED_GID_CMD: [u8; 4] = [0x2F, 0x05, 0x00, 0x00];
+    const UNASSIGNED_GID_CMD: [u8; 4] = [0x24, 0x05, 0x00, 0x00];
+    const UCI_STATUS_UNKNOWN_GID: u8 = 0x07;
+    const UCI_STATUS_UNKNOWN_OID: u8 = 0x08;
+    const SUBSESSION_ID: u32 = 0x0102_0304;
+    const SHORT_KEY_SUBSESSION_ID: u32 = 0x1122_3344;
+    const SUBSESSION_KEY_16: [u8; 16] = [
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+        0x1F,
+    ];
+
+    fn send_cmd_at(device: &mut Device, packet: impl Packet, now: Instant) -> Vec<Vec<u8>> {
+        device
+            .receive_packet(packet.encode_to_vec().unwrap(), now)
+            .into_iter()
+            .filter_map(|effect| match effect {
+                DeviceEffect::SendPacket(bytes) => Some(bytes),
+                DeviceEffect::StopControleeRanging { .. } => None,
+            })
+            .collect()
+    }
+
+    fn send_cmd(device: &mut Device, packet: impl Packet) -> Vec<Vec<u8>> {
+        send_cmd_at(device, packet, Instant::now())
+    }
+
+    fn take_packet<T: Packet>(packets: &mut Vec<Vec<u8>>) -> T {
+        let idx = packets
+            .iter()
+            .position(|bytes| T::decode_full(bytes).is_ok())
+            .expect("expected matching UCI packet");
+        T::decode_full(&packets.remove(idx)).unwrap()
+    }
+
+    fn reset_device() -> Device {
+        let mut device = Device::new(0);
+        let _ = device.init();
+        let packets = send_cmd(
+            &mut device,
+            CoreDeviceResetCmd {
+                reset_config: ResetConfig::UwbsReset,
+            },
+        );
+        assert_eq!(
+            CoreDeviceResetRsp::decode_full(&packets[0]).unwrap().status,
+            uci::Status::Ok
+        );
+        assert_eq!(
+            CoreDeviceStatusNtf::decode_full(&packets[1])
+                .unwrap()
+                .device_state,
+            DeviceState::DeviceStateReady
+        );
+        device
+    }
+
+    fn init_and_configure(device: &mut Device, session_id: u32, multi_node_mode: MultiNodeMode) {
+        let _ = send_cmd(
+            device,
+            SessionInitCmd {
+                session_id,
+                session_type: SessionType::FiraRangingSession,
+            },
+        );
+        let tlvs = fira_session_tlvs(&FiraSessionConfig {
+            session_id,
+            session_type: SessionType::FiraRangingSession,
+            role: DeviceRole::Initiator,
+            dev_type: DeviceType::Controller,
+            mac_mode: MacAddressMode::Mode0,
+            multi_node_mode,
+            local_mac: &LOCAL_SHORT_MAC,
+            dst_mac: Some(&PEER_SHORT_MAC),
+            ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+            ranging_duration_ms: RANGING_DURATION_MS,
+            extra_tlvs: vec![],
+        });
+        let packets = send_cmd(
+            device,
+            SessionSetAppConfigCmd {
+                session_token: session_id,
+                tlvs,
+            },
+        );
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::Ok
+        );
+    }
+
+    #[test]
+    fn command_before_reset_reports_device_state_error() {
+        let mut device = Device::new(0);
+        let packets = send_cmd(&mut device, CoreGetDeviceInfoCmd {});
+        assert_eq!(
+            CoreDeviceStatusNtf::decode_full(&packets[0])
+                .unwrap()
+                .device_state,
+            DeviceState::DeviceStateError
+        );
+    }
+
+    #[test]
+    fn core_get_device_info_returns_fira_2_0_versions() {
+        let mut device = reset_device();
+        let packets = send_cmd(&mut device, CoreGetDeviceInfoCmd {});
+        let info = CoreGetDeviceInfoRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(info.status, uci::Status::Ok);
+        assert_eq!(info.uci_version, EXPECTED_FIRA_VERSION_2_0);
+        assert_eq!(info.mac_version, EXPECTED_FIRA_VERSION_2_0);
+        assert_eq!(info.phy_version, EXPECTED_FIRA_VERSION_2_0);
+    }
+
+    #[test]
+    fn core_query_timestamp_measures_elapsed_microseconds_from_reset() {
+        use std::time::Duration;
+
+        let t0 = Instant::now();
+        let mut device = Device::new(0);
+        let _ = device.init();
+        let _ = send_cmd_at(
+            &mut device,
+            CoreDeviceResetCmd {
+                reset_config: ResetConfig::UwbsReset,
+            },
+            t0,
+        );
+        let ts1 = CoreQueryTimeStampRsp::decode_full(
+            &send_cmd_at(&mut device, CoreQueryTimeStampCmd {}, t0)[0],
+        )
+        .unwrap();
+        let ts2 = CoreQueryTimeStampRsp::decode_full(
+            &send_cmd_at(
+                &mut device,
+                CoreQueryTimeStampCmd {},
+                t0 + Duration::from_micros(500),
+            )[0],
+        )
+        .unwrap();
+        assert_eq!(ts1.status, uci::Status::Ok);
+        assert_eq!(ts1.timeStamp, 0);
+        assert_eq!(ts2.status, uci::Status::Ok);
+        assert_eq!(ts2.timeStamp, 500);
+    }
+
+    #[test]
+    fn core_set_and_get_config_updates_low_power_mode() {
+        let mut device = reset_device();
+        let set_packets = send_cmd(
+            &mut device,
+            CoreSetConfigCmd {
+                parameters: vec![ConfigParameter {
+                    id: ConfigParameterId::LowPowerMode,
+                    value: vec![LOW_POWER_DISABLED_BYTE],
+                }],
+            },
+        );
+        assert_eq!(
+            CoreSetConfigRsp::decode_full(&set_packets[0])
+                .unwrap()
+                .status,
+            uci::Status::Ok
+        );
+
+        let get_packets = send_cmd(
+            &mut device,
+            CoreGetConfigCmd {
+                parameter_ids: vec![
+                    ConfigParameterId::DeviceState,
+                    ConfigParameterId::LowPowerMode,
+                ],
+            },
+        );
+        let rsp = CoreGetConfigRsp::decode_full(&get_packets[0]).unwrap();
+        assert_eq!(rsp.status, uci::Status::Ok);
+        assert_eq!(
+            rsp.parameters,
+            vec![
+                ConfigParameter {
+                    id: ConfigParameterId::DeviceState,
+                    value: vec![DEVICE_STATE_READY_BYTE],
+                },
+                ConfigParameter {
+                    id: ConfigParameterId::LowPowerMode,
+                    value: vec![LOW_POWER_DISABLED_BYTE],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn core_set_config_rejects_read_only_and_rfu_parameters() {
+        let mut device = reset_device();
+        let rfu = ConfigParameterId::try_from(RFU_CONFIG_PARAM_ID).unwrap();
+        let packets = send_cmd(
+            &mut device,
+            CoreSetConfigCmd {
+                parameters: vec![
+                    ConfigParameter {
+                        id: ConfigParameterId::DeviceState,
+                        value: vec![DEVICE_STATE_ACTIVE_BYTE],
+                    },
+                    ConfigParameter {
+                        id: rfu,
+                        value: vec![0x01],
+                    },
+                ],
+            },
+        );
+        let rsp = CoreSetConfigRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(rsp.status, uci::Status::InvalidParam);
+        assert_eq!(
+            rsp.parameters,
+            vec![
+                ConfigParameterStatus {
+                    id: ConfigParameterId::DeviceState,
+                    status: uci::Status::ReadOnly,
+                },
+                ConfigParameterStatus {
+                    id: rfu,
+                    status: uci::Status::InvalidParam,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn core_get_config_for_rfu_param_omits_valid_parameters() {
+        let mut device = reset_device();
+        let rfu = ConfigParameterId::try_from(RFU_CONFIG_PARAM_ID).unwrap();
+        let packets = send_cmd(
+            &mut device,
+            CoreGetConfigCmd {
+                parameter_ids: vec![ConfigParameterId::DeviceState, rfu],
+            },
+        );
+        let rsp = CoreGetConfigRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(rsp.status, uci::Status::InvalidParam);
+        assert_eq!(
+            rsp.parameters,
+            vec![ConfigParameter {
+                id: rfu,
+                value: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn core_set_config_rejected_while_device_active() {
+        let mut device = reset_device();
+        init_and_configure(&mut device, SESSION_ID, MultiNodeMode::OneToOne);
+        let _ = send_cmd(
+            &mut device,
+            SessionStartCmd {
+                session_id: SESSION_ID,
+            },
+        );
+
+        let packets = send_cmd(
+            &mut device,
+            CoreSetConfigCmd {
+                parameters: vec![ConfigParameter {
+                    id: ConfigParameterId::LowPowerMode,
+                    value: vec![LOW_POWER_DISABLED_BYTE],
+                }],
+            },
+        );
+        assert_eq!(
+            CoreSetConfigRsp::decode_full(&packets[0]).unwrap().status,
+            uci::Status::Rejected
+        );
+    }
+
+    #[test]
+    fn receive_packet_ignores_packets_shorter_than_header() {
+        let mut device = reset_device();
+        assert!(device.receive_packet(vec![0x20], Instant::now()).is_empty());
+    }
+
+    #[test]
+    fn receive_command_rejects_vendor_reserved_gid() {
+        let mut device = reset_device();
+        let effects = device.receive_packet(VENDOR_RESERVED_GID_CMD.to_vec(), Instant::now());
+        assert_eq!(effects.len(), 1);
+        let DeviceEffect::SendPacket(bytes) = &effects[0] else {
+            panic!("expected SendPacket");
+        };
+        assert_eq!(bytes.len(), 5);
+        assert_eq!(bytes[0] >> 5, UCI_RESPONSE_MT);
+        assert_eq!(bytes[0] & 0x0F, VENDOR_RESERVED_GID);
+        assert_eq!(bytes[1] & 0x3F, TEST_OID);
+        assert_eq!(bytes[4], UCI_STATUS_UNKNOWN_GID);
+    }
+
+    #[test]
+    fn receive_packet_rejects_unassigned_gid() {
+        let mut device = reset_device();
+        let effects = device.receive_packet(UNASSIGNED_GID_CMD.to_vec(), Instant::now());
+        assert_eq!(effects.len(), 1);
+        let DeviceEffect::SendPacket(bytes) = &effects[0] else {
+            panic!("expected SendPacket");
+        };
+        assert_eq!(bytes.len(), 5);
+        assert_eq!(bytes[0] >> 5, UCI_RESPONSE_MT);
+        assert_eq!(bytes[0] & 0x0F, UNASSIGNED_GID);
+        assert_eq!(bytes[1] & 0x3F, TEST_OID);
+        assert_eq!(bytes[4], UCI_STATUS_UNKNOWN_GID);
+    }
+
+    #[test]
+    fn session_init_rejects_duplicate_session_id() {
+        let mut device = reset_device();
+        let first = send_cmd(
+            &mut device,
+            SessionInitCmd {
+                session_id: SESSION_ID,
+                session_type: SessionType::FiraRangingSession,
+            },
+        );
+        assert_eq!(
+            SessionInitRsp::decode_full(&first[0]).unwrap().status,
+            uci::Status::Ok
+        );
+
+        let second = send_cmd(
+            &mut device,
+            SessionInitCmd {
+                session_id: SESSION_ID,
+                session_type: SessionType::FiraRangingSession,
+            },
+        );
+        assert_eq!(
+            SessionInitRsp::decode_full(&second[0]).unwrap().status,
+            uci::Status::ErrorSessionDuplicate
+        );
+    }
+
+    #[test]
+    fn session_set_app_config_rejects_aoa_result_req_while_active() {
+        let mut device = reset_device();
+        init_and_configure(&mut device, SESSION_ID, MultiNodeMode::OneToOne);
+        let _ = send_cmd(
+            &mut device,
+            SessionStartCmd {
+                session_id: SESSION_ID,
+            },
+        );
+
+        let packets = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: SESSION_ID,
+                tlvs: vec![AppConfigTlv {
+                    cfg_id: AppConfigTlvType::AoaResultReq,
+                    v: vec![AoaResultReq::AoaDisabled as u8],
+                }],
+            },
+        );
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::ErrorSessionActive
+        );
+    }
+
+    #[test]
+    fn session_deinit_while_active_transitions_device_to_ready() {
+        let mut device = reset_device();
+        init_and_configure(&mut device, SESSION_ID, MultiNodeMode::OneToOne);
+        let _ = send_cmd(
+            &mut device,
+            SessionStartCmd {
+                session_id: SESSION_ID,
+            },
+        );
+
+        let mut packets = send_cmd(
+            &mut device,
+            SessionDeinitCmd {
+                session_token: SESSION_ID,
+            },
+        );
+        assert_eq!(
+            SessionDeinitRsp::decode_full(&packets[0]).unwrap().status,
+            uci::Status::Ok
+        );
+        let mut notifications = packets.split_off(1);
+        assert_eq!(
+            take_packet::<SessionStatusNtf>(&mut notifications).session_state,
+            SessionState::SessionStateDeinit
+        );
+        assert_eq!(
+            take_packet::<CoreDeviceStatusNtf>(&mut notifications).device_state,
+            DeviceState::DeviceStateReady
+        );
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn device_test_mode_rejects_set_app_config() {
+        let mut device = reset_device();
+        let _ = send_cmd(
+            &mut device,
+            SessionInitCmd {
+                session_id: TEST_MODE_SESSION_ID,
+                session_type: SessionType::DeviceTestMode,
+            },
+        );
+        let packets = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: TEST_MODE_SESSION_ID,
+                tlvs: vec![],
+            },
+        );
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::Rejected
+        );
+    }
+
+    #[test]
+    fn update_dt_tag_rounds_on_missing_session_returns_not_exist() {
+        let mut device = reset_device();
+        let packets = send_cmd(
+            &mut device,
+            SessionUpdateDtTagRangingRoundsCmd {
+                session_token: MISSING_SESSION_ID,
+                ranging_round_indexes: vec![],
+            },
+        );
+        assert_eq!(
+            SessionUpdateDtTagRangingRoundsRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::ErrorSessionNotExist
+        );
+    }
+
+    #[test]
+    fn unknown_session_config_oid_returns_unknown_oid() {
+        let mut device = reset_device();
+        let packets = send_cmd(
+            &mut device,
+            SessionConfigPacket {
+                mt: MessageType::Command,
+                oid: SessionConfigOpcodeId::Status,
+                payload: vec![],
+            },
+        );
+        let rsp = SessionConfigPacket::decode_full(&packets[0]).unwrap();
+        assert_eq!(rsp.mt, MessageType::Response);
+        assert_eq!(rsp.oid, SessionConfigOpcodeId::Status);
+        assert_eq!(rsp.payload, vec![UCI_STATUS_UNKNOWN_OID]);
+    }
+
+    #[test]
+    fn session_get_app_config_for_unset_param_returns_invalid_param() {
+        let mut device = reset_device();
+        let _ = send_cmd(
+            &mut device,
+            SessionInitCmd {
+                session_id: SESSION_ID,
+                session_type: SessionType::FiraRangingSession,
+            },
+        );
+        let packets = send_cmd(
+            &mut device,
+            SessionGetAppConfigCmd {
+                session_token: SESSION_ID,
+                app_cfg: vec![AppConfigTlvType::DeviceRole],
+            },
+        );
+        let get_rsp = SessionGetAppConfigRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(get_rsp.status, uci::Status::InvalidParam);
+        assert_eq!(
+            get_rsp.tlvs,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::DeviceRole,
+                v: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn session_query_max_data_size_returns_1020() {
+        let mut device = reset_device();
+        init_and_configure(&mut device, SESSION_ID, MultiNodeMode::OneToOne);
+        let packets = send_cmd(
+            &mut device,
+            SessionQueryMaxDataSizeInRangingCmd {
+                session_token: SESSION_ID,
+            },
+        );
+        let max_data = SessionQueryMaxDataSizeInRangingRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(max_data.status, uci::Status::Ok);
+        assert_eq!(max_data.max_data_size, EXPECTED_MAX_DATA_SIZE);
+    }
+
+    #[test]
+    fn session_stop_when_idle_returns_rejected() {
+        let mut device = reset_device();
+        init_and_configure(&mut device, SESSION_ID, MultiNodeMode::OneToOne);
+        let packets = send_cmd(
+            &mut device,
+            SessionStopCmd {
+                session_id: SESSION_ID,
+            },
+        );
+        assert_eq!(
+            SessionStopRsp::decode_full(&packets[0]).unwrap().status,
+            uci::Status::Rejected
+        );
+    }
+
+    #[test]
+    fn multicast_remove_last_controlee_deactivates_active_session() {
+        let mut device = reset_device();
+        init_and_configure(&mut device, SESSION_ID, MultiNodeMode::OneToMany);
+        let _ = send_cmd(
+            &mut device,
+            SessionStartCmd {
+                session_id: SESSION_ID,
+            },
+        );
+
+        let mut packets = send_cmd(
+            &mut device,
+            SessionUpdateControllerMulticastListCmd {
+                session_token: SESSION_ID,
+                action: UpdateMulticastListAction::RemoveControlee,
+                payload: SessionUpdateControllerMulticastListCmdPayload {
+                    controlees: vec![uci::Controlee {
+                        short_address: PEER_SHORT_MAC,
+                        subsession_id: SUBSESSION_ID,
+                    }],
+                }
+                .encode_to_vec()
+                .unwrap(),
+            },
+        );
+
+        let rsp = SessionUpdateControllerMulticastListRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(rsp.status, uci::Status::Ok);
+        let mut notifications = packets.split_off(1);
+        let s_ntf: SessionStatusNtf = take_packet(&mut notifications);
+        assert_eq!(s_ntf.session_state, SessionState::SessionStateIdle);
+        assert_eq!(s_ntf.reason_code, ReasonCode::ErrorInvalidNumOfControlees);
+        let m_ntf: SessionUpdateControllerMulticastListNtf = take_packet(&mut notifications);
+        assert_eq!(m_ntf.session_token, SESSION_ID);
+        let d_ntf: CoreDeviceStatusNtf = take_packet(&mut notifications);
+        assert_eq!(d_ntf.device_state, DeviceState::DeviceStateReady);
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn multicast_subsession_key_requires_provisioned_sts_config() {
+        let mut device = reset_device();
+        init_and_configure(&mut device, SESSION_ID, MultiNodeMode::OneToMany);
+
+        let packets = send_cmd(
+            &mut device,
+            SessionUpdateControllerMulticastListCmd {
+                session_token: SESSION_ID,
+                action: UpdateMulticastListAction::AddControleeWithShortSubSessionKey,
+                payload: SessionUpdateControllerMulticastListCmd_2_0_16_Byte_Payload {
+                    controlees: vec![Controlee_V2_0_16_Byte_Version {
+                        short_address: EXTRA_CONTROLEE_MAC,
+                        subsession_id: SHORT_KEY_SUBSESSION_ID,
+                        subsession_key: SUBSESSION_KEY_16,
+                    }],
+                }
+                .encode_to_vec()
+                .unwrap(),
+            },
+        );
+        let rsp = SessionUpdateControllerMulticastListRsp::decode_full(&packets[0]).unwrap();
+        assert_eq!(rsp.status, uci::Status::Failed);
+        let ntf = SessionUpdateControllerMulticastListNtf::decode_full(&packets[1]).unwrap();
+        assert_eq!(
+            ntf.controlee_status,
+            vec![ControleeStatus {
+                mac_address: EXTRA_CONTROLEE_MAC,
+                status: MulticastUpdateStatus::ErrorSubSessionKeyNotApplicable,
+            }]
+        );
+    }
+}
