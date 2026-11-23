@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::collections::hash_map::Entry;
+use std::time::Instant;
 
 use pdl_runtime::Packet;
 
@@ -121,7 +122,11 @@ impl Device {
         }
     }
 
-    pub fn session_set_app_config(&mut self, cmd: SessionSetAppConfigCmd) -> CommandOutput {
+    pub fn session_set_app_config(
+        &mut self,
+        cmd: SessionSetAppConfigCmd,
+        now: Instant,
+    ) -> CommandOutput {
         let session_handle = cmd.session_token;
 
         tracing::debug!(
@@ -207,7 +212,7 @@ impl Device {
         }
 
         if invalid_parameters.is_empty() {
-            session.set_app_config(app_config);
+            session.set_app_config(app_config, now);
             let effects = if session.state == SessionState::SessionStateInit {
                 session
                     .set_state(

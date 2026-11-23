@@ -26,7 +26,7 @@
 )]
 
 use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use pdl_runtime::Packet;
 use thiserror::Error;
@@ -305,31 +305,28 @@ impl Pica {
         }
     }
 
-    /// Feeds an incoming segmented UCI packet from `handle` into `Pica`.
-    pub fn handle_packet(&mut self, handle: Handle, packet: &[u8]) {
+    /// Feeds an incoming segmented UCI packet from `handle` into `Pica` at timestamp `now`.
+    pub fn handle_packet(&mut self, handle: Handle, packet: &[u8], now: Instant) {
         if let Some(complete_packet) = self
             .devices
             .get_mut(&handle)
             .and_then(|entry| entry.reassemble(packet))
         {
-            self.uci_packet(handle, complete_packet);
+            self.uci_packet(handle, complete_packet, now);
         }
     }
 
-    /// Returns the [`Duration`] until [`Pica::tick`] should next be called,
-    /// or `None` if no ranging timers are active and `Pica` has no time-driven
-    /// work until new input arrives.
-    pub fn next_tick(&self) -> Option<Duration> {
+    /// Returns the earliest scheduled ranging deadline across all connected devices,
+    /// or `None` if no ranging timers are active.
+    pub fn next_deadline(&self) -> Option<Instant> {
         self.devices
             .values()
             .filter_map(|entry| entry.device.next_ranging_deadline())
             .min()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
     }
 
-    /// Advances due ranging sessions.
-    pub fn tick(&mut self) {
-        let now = Instant::now();
+    /// Advances ranging sessions whose deadline is at or before `now`.
+    pub fn tick(&mut self, now: Instant) {
         let due_sessions: Vec<_> = self
             .devices
             .iter_mut()
@@ -359,9 +356,9 @@ impl Pica {
             .find_map(|(&handle, &addr)| (addr == mac_address).then_some(handle))
     }
 
-    fn uci_packet(&mut self, device_handle: Handle, packet: Vec<u8>) {
+    fn uci_packet(&mut self, device_handle: Handle, packet: Vec<u8>, now: Instant) {
         let effects = match self.get_device_mut(device_handle) {
-            Some(device) => device.receive_packet(packet),
+            Some(device) => device.receive_packet(packet, now),
             None => {
                 tracing::error!("Device {device_handle} not found");
                 return;
