@@ -83,8 +83,4 @@ Run the tests:
 ```bash
 cargo build
 cargo test --features ffi
-python3 -m venv venv
-source venv/bin/activate
-pip install ./py/pica/ 'pytest==7.4.4' 'pytest-asyncio==0.23.3'
-pytest -v
 ```
