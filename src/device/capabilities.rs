@@ -484,3 +484,269 @@ pub const DEFAULT_CAPS_INFO: Capabilities = Capabilities {
     aoa_result_req_antenna_interleaving: true,
     rssi_reporting: true,
 };
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    const EXPECTED_CAPS_TLV_COUNT: usize = 38;
+    const CUSTOM_CAPS: Capabilities = Capabilities {
+        max_message_size: 2048,
+        max_data_packet_payload_size: 512,
+        fira_phy_version_range: VersionRange::new(Version::new(1, 0), Version::new(2, 1)),
+        fira_mac_version_range: VersionRange::new(Version::new(1, 2), Version::new(2, 2)),
+        device_types: &[uci::DeviceType::Controller],
+        device_roles: &[uci::DeviceRole::Responder, uci::DeviceRole::DtAnchor],
+        ranging_methods: &[
+            uci::RangingRoundUsage::SsTwrDeferredMode,
+            uci::RangingRoundUsage::OneWayRangingDlTdoa,
+        ],
+        sts_configs: &[uci::StsConfig::Static, uci::StsConfig::Provisioned],
+        multi_node_modes: &[uci::MultiNodeMode::OneToMany],
+        ranging_time_structs: &[uci::RangingTimeStruct::BlockBasedScheduling],
+        scheduled_modes: &[uci::ScheduleMode::TimeScheduled],
+        hopping: true,
+        block_striding: true,
+        uwb_initiation_time: true,
+        channels: &[
+            uci::ChannelNumber::ChannelNumber5,
+            uci::ChannelNumber::ChannelNumber9,
+        ],
+        rframe_configs: &[uci::RframeConfig::Sp0, uci::RframeConfig::Sp3],
+        cc_constraint_length: SupportedCcConstraintLength {
+            k3: false,
+            k7: true,
+        },
+        bprf_parameter_sets: BprfParameterSets::range(2, 4),
+        hprf_parameter_sets: HprfParameterSets::range(2, 10),
+        aoa: SupportedAoa {
+            azimuth_90: true,
+            azimuth_180: false,
+            elevation: true,
+            fom: false,
+        },
+        extended_mac_address: true,
+        suspend_ranging_support: true,
+        session_key_lengths: SupportedSessionKeyLengths {
+            dynamic_sts_256: false,
+            provisioned_sts_256: true,
+        },
+        dt_anchor_max_active_rr: 8,
+        dt_tag_max_active_rr: 12,
+        dt_tag_block_skipping: true,
+        ccc: CccCapabilities {
+            chaps_per_slot: 0x05,
+            sync_codes: CccSyncCodes::range(1, 8),
+            hopping_config_modes_and_sequences: 0x0A,
+            channels: 0x03,
+            versions: &[Version::new(1, 0), Version::new(2, 1)],
+            uwb_configs: 0x07,
+            pulse_shape_combos: 0x04,
+            ran_multiplier: 3,
+        },
+        aliro: AliroCapabilities {
+            mac_modes: AliroMacModes {
+                round_1: false,
+                round_2: true,
+            },
+            protocol_version: Version::new(2, 3),
+        },
+        aoa_result_req_antenna_interleaving: true,
+        rssi_reporting: true,
+    };
+
+    #[test]
+    fn default_caps_info_emits_distinct_tlv_keys() {
+        let raw_tlvs = DEFAULT_CAPS_INFO.to_tlvs();
+        let caps: HashMap<CapTlvType, Vec<u8>> =
+            raw_tlvs.iter().map(|tlv| (tlv.t, tlv.v.clone())).collect();
+        assert_eq!(caps.len(), EXPECTED_CAPS_TLV_COUNT);
+    }
+
+    #[test]
+    fn capabilities_encode_all_tlv_formats() {
+        let raw_tlvs = CUSTOM_CAPS.to_tlvs();
+        let caps: HashMap<CapTlvType, Vec<u8>> =
+            raw_tlvs.iter().map(|tlv| (tlv.t, tlv.v.clone())).collect();
+        assert_eq!(caps.len(), raw_tlvs.len());
+
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedFiraPhyVersionRange),
+            Some(&vec![0x01, 0x00, 0x02, 0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedFiraMacVersionRange),
+            Some(&vec![0x01, 0x02, 0x02, 0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedMaxMessageSize),
+            Some(&vec![0x00, 0x08])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedMaxDataPacketPayloadSize),
+            Some(&vec![0x00, 0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedDeviceType),
+            Some(&vec![0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedDeviceRoles),
+            Some(&vec![0x81, 0x00])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedRangingMethod),
+            Some(&vec![0x22, 0x00])
+        );
+        assert_eq!(caps.get(&CapTlvType::SupportedStsConfig), Some(&vec![0x09]));
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedMultiNodeModes),
+            Some(&vec![0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedRangingTimeStruct),
+            Some(&vec![0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedScheduledMode),
+            Some(&vec![0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedHoppingMode),
+            Some(&vec![0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedBlockStriding),
+            Some(&vec![0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedUwbInitiationTime),
+            Some(&vec![0x01])
+        );
+        assert_eq!(caps.get(&CapTlvType::SupportedChannels), Some(&vec![0x09]));
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedRframeConfig),
+            Some(&vec![0x09])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedCcConstraintLength),
+            Some(&vec![0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedBprfParameterSets),
+            Some(&vec![0x0E])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedHprfParameterSets),
+            Some(&vec![0xFE, 0x03, 0x00, 0x00, 0x00])
+        );
+        assert_eq!(caps.get(&CapTlvType::SupportedAoa), Some(&vec![0x05]));
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedExtendedMacAddress),
+            Some(&vec![0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedSuspendRangingSupport),
+            Some(&vec![0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedSessionKeyLength),
+            Some(&vec![0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedDtAnchorMaxActiveRr),
+            Some(&vec![8])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedDtTagMaxActiveRr),
+            Some(&vec![12])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedDtTagBlockSkipping),
+            Some(&vec![0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedChapsPerSlot),
+            Some(&vec![0x05])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedSyncCodes),
+            Some(&vec![0xFF, 0x00, 0x00, 0x00])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedHoppingConfigModesAndSequences),
+            Some(&vec![0x0A])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedChannels),
+            Some(&vec![0x03])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedVersions),
+            Some(&vec![0x01, 0x00, 0x02, 0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedUwbConfigs),
+            Some(&vec![0x07])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedPulseShapeCombos),
+            Some(&vec![0x04])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedRanMultiplier),
+            Some(&vec![0x03, 0x00, 0x00, 0x00])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::AliroSupportedMacModes),
+            Some(&vec![0x02])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::AliroSupportedProtocolVersion),
+            Some(&vec![0x02, 0x03])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedAoaResultReqAntennaInterleaving),
+            Some(&vec![0x01])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedRssiReporting),
+            Some(&vec![0x01])
+        );
+    }
+
+    #[test]
+    fn capabilities_reflect_disabled_boolean_flags() {
+        let disabled = Capabilities {
+            hopping: false,
+            block_striding: false,
+            uwb_initiation_time: false,
+            extended_mac_address: false,
+            suspend_ranging_support: false,
+            dt_tag_block_skipping: false,
+            aoa_result_req_antenna_interleaving: false,
+            rssi_reporting: false,
+            ..CUSTOM_CAPS
+        };
+        let caps: HashMap<CapTlvType, Vec<u8>> = disabled
+            .to_tlvs()
+            .into_iter()
+            .map(|tlv| (tlv.t, tlv.v))
+            .collect();
+
+        for key in [
+            CapTlvType::SupportedHoppingMode,
+            CapTlvType::SupportedBlockStriding,
+            CapTlvType::SupportedUwbInitiationTime,
+            CapTlvType::SupportedExtendedMacAddress,
+            CapTlvType::SupportedSuspendRangingSupport,
+            CapTlvType::SupportedDtTagBlockSkipping,
+            CapTlvType::SupportedAoaResultReqAntennaInterleaving,
+            CapTlvType::SupportedRssiReporting,
+        ] {
+            assert_eq!(caps.get(&key), Some(&vec![0x00]), "for {key:?}");
+        }
+    }
+}

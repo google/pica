@@ -337,3 +337,236 @@ impl Pica {
             .map(|peer_entry| peer_entry.device.handle)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::*;
+    use crate::RangingMeasurement;
+    use crate::test_support::{
+        FiraSessionConfig, FixedEstimator, add_reset_device, start_fira_session,
+    };
+
+    const DATA_SESSION_ID: u32 = 0x4242;
+    const CONTROLLER_MAC: [u8; 2] = [0x34, 0x12];
+    const RESPONDER_MAC: [u8; 2] = [0x78, 0x56];
+    const RESPONDER_ADDR: u64 = 0x5678;
+    const RANGING_DURATION_MS: u32 = 200;
+    const SAMPLE_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 210,
+        azimuth: 14,
+        elevation: -6,
+    };
+    const OVERSIZED_DATA_HEADER: [u8; 8] = [0x42, 0x42, 0x00, 0x00, 0x78, 0x56, 0x00, 0x00];
+
+    fn start_data_session(
+        pica: &mut Pica,
+        session_id: u32,
+        session_type: SessionType,
+        role: DeviceRole,
+        dev_type: DeviceType,
+    ) -> Handle {
+        let handle = add_reset_device(pica);
+        start_fira_session(
+            pica,
+            handle,
+            &FiraSessionConfig {
+                session_id,
+                session_type,
+                role,
+                dev_type,
+                mac_mode: MacAddressMode::Mode0,
+                multi_node_mode: MultiNodeMode::OneToOne,
+                local_mac: &CONTROLLER_MAC,
+                dst_mac: Some(&RESPONDER_MAC),
+                ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+                ranging_duration_ms: RANGING_DURATION_MS,
+                extra_tlvs: vec![],
+            },
+        );
+        handle
+    }
+
+    fn send_complete_data(
+        pica: &mut Pica,
+        handle: Handle,
+        session_id: u32,
+        seq: u16,
+        payload: &[u8],
+    ) {
+        let msg = DataMessageSnd {
+            pbf: PacketBoundaryFlag::Complete,
+            session_handle: session_id,
+            destination_address: RESPONDER_ADDR,
+            data_sequence_number: seq,
+            application_data: payload.to_vec(),
+        }
+        .encode_to_vec()
+        .unwrap();
+        let pkt = DataPacket {
+            dpf: DataPacketFormat::DataSnd,
+            pbf: PacketBoundaryFlag::Complete,
+            mt: MessageType::Data,
+            payload: msg[HEADER_SIZE..].to_vec(),
+        }
+        .encode_to_vec()
+        .unwrap();
+        pica.handle_packet(handle, &pkt, Instant::now());
+    }
+
+    fn take_packet<T: Packet>(packets: &mut Vec<Vec<u8>>) -> T {
+        let idx = packets
+            .iter()
+            .position(|bytes| T::decode_full(bytes).is_ok())
+            .expect("expected matching UCI packet");
+        T::decode_full(&packets.remove(idx)).unwrap()
+    }
+
+    #[test]
+    fn missing_peer_emits_error_data_transfer() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(SAMPLE_MEASUREMENT)));
+        let controller = start_data_session(
+            &mut pica,
+            DATA_SESSION_ID,
+            SessionType::FiraDataTransferSession,
+            DeviceRole::Initiator,
+            DeviceType::Controller,
+        );
+        send_complete_data(&mut pica, controller, DATA_SESSION_ID, 7, b"ping");
+        let _ = pica.drain_packets().count();
+
+        pica.ranging(controller, DATA_SESSION_ID);
+        let mut packets: Vec<_> = pica.drain_packets().map(|(_, p)| p).collect();
+        assert_eq!(
+            take_packet::<SessionDataCreditNtf>(&mut packets).credit_availability,
+            CreditAvailability::CreditAvailable
+        );
+        assert_eq!(
+            take_packet::<SessionDataTransferStatusNtf>(&mut packets).status,
+            DataTransferNtfStatusCode::UciDataTransferStatusErrorDataTransfer
+        );
+        assert!(packets.is_empty());
+    }
+
+    #[test]
+    fn data_rcv_dpf_emits_invalid_format() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(SAMPLE_MEASUREMENT)));
+        let controller = start_data_session(
+            &mut pica,
+            DATA_SESSION_ID,
+            SessionType::FiraDataTransferSession,
+            DeviceRole::Initiator,
+            DeviceType::Controller,
+        );
+        let bad_pkt = DataPacket {
+            dpf: DataPacketFormat::DataRcv,
+            pbf: PacketBoundaryFlag::Complete,
+            mt: MessageType::Data,
+            payload: vec![0x01; 16],
+        }
+        .encode_to_vec()
+        .unwrap();
+        pica.handle_packet(controller, &bad_pkt, Instant::now());
+        let err_pkt = pica.drain_packets().next().unwrap().1;
+        assert_eq!(
+            SessionDataTransferStatusNtf::decode_full(&err_pkt)
+                .unwrap()
+                .status,
+            DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat
+        );
+    }
+
+    #[test]
+    fn data_send_on_ranging_only_session_emits_not_supported() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(SAMPLE_MEASUREMENT)));
+        let controller = start_data_session(
+            &mut pica,
+            DATA_SESSION_ID,
+            SessionType::FiraRangingSession,
+            DeviceRole::Initiator,
+            DeviceType::Controller,
+        );
+        send_complete_data(&mut pica, controller, DATA_SESSION_ID, 3, b"nope");
+        let err_pkt = pica.drain_packets().next().unwrap().1;
+        assert_eq!(
+            SessionDataTransferStatusNtf::decode_full(&err_pkt)
+                .unwrap()
+                .status,
+            DataTransferNtfStatusCode::UciDataTransferStatusSessionTypeNotSupported
+        );
+    }
+
+    #[test]
+    fn data_send_from_responder_emits_rejected() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(SAMPLE_MEASUREMENT)));
+        let responder = start_data_session(
+            &mut pica,
+            DATA_SESSION_ID,
+            SessionType::FiraDataTransferSession,
+            DeviceRole::Responder,
+            DeviceType::Controlee,
+        );
+        send_complete_data(&mut pica, responder, DATA_SESSION_ID, 5, b"blocked");
+        let err_pkt = pica.drain_packets().next().unwrap().1;
+        assert_eq!(
+            SessionDataTransferStatusNtf::decode_full(&err_pkt)
+                .unwrap()
+                .status,
+            DataTransferNtfStatusCode::UciDataTransferStatusErrorRejected
+        );
+    }
+
+    #[test]
+    fn data_send_oversized_fragment_emits_invalid_format() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(SAMPLE_MEASUREMENT)));
+        let controller = start_data_session(
+            &mut pica,
+            DATA_SESSION_ID,
+            SessionType::FiraDataTransferSession,
+            DeviceRole::Initiator,
+            DeviceType::Controller,
+        );
+        let mut payload = OVERSIZED_DATA_HEADER.to_vec();
+        payload.resize(MAX_DATA_PACKET_PAYLOAD_SIZE + 1, 0x5A);
+        let oversized_pkt = DataPacket {
+            dpf: DataPacketFormat::DataSnd,
+            pbf: PacketBoundaryFlag::Complete,
+            mt: MessageType::Data,
+            payload,
+        }
+        .encode_to_vec()
+        .unwrap();
+        pica.handle_packet(controller, &oversized_pkt, Instant::now());
+        let err_pkt = pica.drain_packets().next().unwrap().1;
+        assert_eq!(
+            SessionDataTransferStatusNtf::decode_full(&err_pkt)
+                .unwrap()
+                .status,
+            DataTransferNtfStatusCode::UciDataTransferStatusInvalidFormat
+        );
+    }
+
+    #[test]
+    fn data_send_while_in_flight_emits_no_credit_available() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(SAMPLE_MEASUREMENT)));
+        let controller = start_data_session(
+            &mut pica,
+            DATA_SESSION_ID,
+            SessionType::FiraDataTransferSession,
+            DeviceRole::Initiator,
+            DeviceType::Controller,
+        );
+        send_complete_data(&mut pica, controller, DATA_SESSION_ID, 1, b"first");
+        let _ = pica.drain_packets().count();
+
+        send_complete_data(&mut pica, controller, DATA_SESSION_ID, 2, b"second");
+        let err_pkt = pica.drain_packets().next().unwrap().1;
+        assert_eq!(
+            SessionDataTransferStatusNtf::decode_full(&err_pkt)
+                .unwrap()
+                .status,
+            DataTransferNtfStatusCode::UciDataTransferStatusErrorNoCreditAvailable
+        );
+    }
+}

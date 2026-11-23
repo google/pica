@@ -752,3 +752,881 @@ impl Pica {
         self.apply_device_effects(device_handle, effects);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{
+        FiraSessionConfig, FixedEstimator, PairwiseEstimator, add_reset_device,
+        configure_fira_session, drain_reassembled_packet, send_cmd,
+    };
+
+    const DL_TDOA_SESSION_ID: u32 = 13;
+    const INIT_ANCHOR_MAC: [u8; 2] = [0x1A, 0x2B];
+    const INIT_ANCHOR_ADDR: u16 = 0x2B1A;
+    const RESP_ANCHOR_MAC: [u8; 2] = [0x3C, 0x4D];
+    const TAG_MAC: [u8; 2] = [0x5E, 0x6F];
+    const VIRTUAL_ANCHOR_MAC: [u8; 2] = [0x22, 0x11];
+    const VIRTUAL_ANCHOR_ADDR: u16 = 0x1122;
+    const MULTI_RESPONDER_INIT_MAC: [u8; 2] = [0x10, 0x00];
+    const MULTI_RESPONDER_MAC_PREFIX: u8 = 0x10;
+    const RANGING_DURATION_100_MS: u32 = 100;
+    const RANGING_DURATION_20S_MS: u32 = 20_000;
+    const BLOCK_SKIPPED_INTERVAL_MS: u32 = 200;
+    const DEFAULT_RSSI_Q7_1: u8 = 100;
+    const AOA_FOM_FULL: u8 = 100;
+    const AZIMUTH_15_DEG_Q9_7: u16 = 0x0780;
+
+    const TAG_TO_INIT_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 300,
+        azimuth: 25,
+        elevation: -12,
+    };
+    const INIT_TO_RESP_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 600,
+        azimuth: 0,
+        elevation: 0,
+    };
+    const TAG_TO_RESP_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 450,
+        azimuth: -18,
+        elevation: 8,
+    };
+    const AOA_TEST_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 300,
+        azimuth: 15,
+        elevation: -10,
+    };
+
+    const RELATIVE_COORDS: (u32, u32, u32) = (0x012_3456, 0x023_4567, 0x34_5678);
+    const RELATIVE_LOCATION_TLV: [u8; 11] = [
+        0x03, 0x56, 0x34, 0x12, 0x70, 0x56, 0x34, 0x02, 0x78, 0x56, 0x34,
+    ];
+    const WGS84_COORDS: [u8; 12] = [
+        0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0,
+    ];
+    const WGS84_LOCATION_TLV: [u8; 13] = [
+        0x01, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0,
+    ];
+    const LOCAL_64_BIT_TX_TIMESTAMP_CONF: u8 = 0x02;
+    const COMMON_40_BIT_TX_TIMESTAMP_CONF: u8 = 0x01;
+
+    // 1 slot at 2400 RSTU = 127,795,200 ticks; 2 blocks at 100 ms = 12,779,520,000 ticks.
+    const ONE_SLOT_TICKS: u64 = 127_795_200;
+    const TWO_BLOCKS_AT_100_MS_TICKS: u64 = 12_779_520_000;
+    const TAG_TO_INIT_TOF_300_CM_TICKS: u64 = 639;
+    const TAG_TO_RESP_TOF_450_CM_TICKS: u64 = 959;
+    const DS_TWR_REPLY_TIME_AT_600_CM_TICKS: u32 = 127_793_921;
+    const INIT_TO_RESP_TOF_600_CM_TICKS: u16 = 1279;
+    const FORTY_BIT_TIMESTAMP_LIMIT: u64 = 1 << 40;
+    const ONE_BLOCK_AT_20S_MOD_40_BIT_TICKS: u64 = 178_440_372_224;
+
+    fn configure_dl_tdoa(
+        pica: &mut Pica,
+        handle: Handle,
+        session_id: u32,
+        (role, dev_type): (DeviceRole, DeviceType),
+        mac: [u8; 2],
+        ranging_duration_ms: u32,
+        extra_tlvs: Vec<AppConfigTlv>,
+    ) {
+        configure_fira_session(
+            pica,
+            handle,
+            &FiraSessionConfig {
+                session_id,
+                session_type: SessionType::FiraRangingSession,
+                role,
+                dev_type,
+                mac_mode: MacAddressMode::Mode0,
+                multi_node_mode: MultiNodeMode::OneToOne,
+                local_mac: &mac,
+                dst_mac: None,
+                ranging_round_usage: RangingRoundUsage::OneWayRangingDlTdoa,
+                ranging_duration_ms,
+                extra_tlvs,
+            },
+        );
+    }
+
+    fn start_dt_anchor(
+        pica: &mut Pica,
+        session_id: u32,
+        mac: [u8; 2],
+        ranging_duration_ms: u32,
+        rounds: Vec<DtAnchorRangingRound>,
+        extra_tlvs: Vec<AppConfigTlv>,
+    ) -> Handle {
+        let handle = add_reset_device(pica);
+        configure_dl_tdoa(
+            pica,
+            handle,
+            session_id,
+            (DeviceRole::DtAnchor, DeviceType::Controller),
+            mac,
+            ranging_duration_ms,
+            extra_tlvs,
+        );
+        let _ = send_cmd(
+            pica,
+            handle,
+            SessionUpdateDtAnchorRangingRoundsCmd {
+                session_token: session_id,
+                ranging_rounds: rounds,
+            },
+        );
+        let _ = send_cmd(pica, handle, SessionStartCmd { session_id });
+        handle
+    }
+
+    fn start_dt_tag(
+        pica: &mut Pica,
+        session_id: u32,
+        mac: [u8; 2],
+        ranging_duration_ms: u32,
+        round_indexes: Vec<u8>,
+        extra_tlvs: Vec<AppConfigTlv>,
+    ) -> Handle {
+        let handle = add_reset_device(pica);
+        configure_dl_tdoa(
+            pica,
+            handle,
+            session_id,
+            (DeviceRole::DtTag, DeviceType::Controlee),
+            mac,
+            ranging_duration_ms,
+            extra_tlvs,
+        );
+        let _ = send_cmd(
+            pica,
+            handle,
+            SessionUpdateDtTagRangingRoundsCmd {
+                session_token: session_id,
+                ranging_round_indexes: round_indexes,
+            },
+        );
+        let _ = send_cmd(pica, handle, SessionStartCmd { session_id });
+        handle
+    }
+
+    #[test]
+    fn update_dt_tag_rounds_rejects_dt_anchor_session() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        let anchor = add_reset_device(&mut pica);
+        configure_dl_tdoa(
+            &mut pica,
+            anchor,
+            DL_TDOA_SESSION_ID,
+            (DeviceRole::DtAnchor, DeviceType::Controller),
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![],
+        );
+        let packets = send_cmd(
+            &mut pica,
+            anchor,
+            SessionUpdateDtTagRangingRoundsCmd {
+                session_token: DL_TDOA_SESSION_ID,
+                ranging_round_indexes: vec![1],
+            },
+        );
+        assert_eq!(
+            SessionUpdateDtTagRangingRoundsRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::Rejected
+        );
+    }
+
+    #[test]
+    fn update_dt_anchor_rounds_rejects_empty_list() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        let anchor = add_reset_device(&mut pica);
+        configure_dl_tdoa(
+            &mut pica,
+            anchor,
+            DL_TDOA_SESSION_ID,
+            (DeviceRole::DtAnchor, DeviceType::Controller),
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![],
+        );
+        let packets = send_cmd(
+            &mut pica,
+            anchor,
+            SessionUpdateDtAnchorRangingRoundsCmd {
+                session_token: DL_TDOA_SESSION_ID,
+                ranging_rounds: vec![],
+            },
+        );
+        assert_eq!(
+            SessionUpdateDtAnchorRangingRoundsRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::InvalidParam
+        );
+    }
+
+    #[test]
+    fn dt_anchor_start_without_rounds_emits_error_reason() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        let anchor = add_reset_device(&mut pica);
+        configure_dl_tdoa(
+            &mut pica,
+            anchor,
+            DL_TDOA_SESSION_ID,
+            (DeviceRole::DtAnchor, DeviceType::Controller),
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![],
+        );
+        let packets = send_cmd(
+            &mut pica,
+            anchor,
+            SessionStartCmd {
+                session_id: DL_TDOA_SESSION_ID,
+            },
+        );
+        assert_eq!(
+            SessionStatusNtf::decode_full(&packets[1])
+                .unwrap()
+                .reason_code,
+            ReasonCode::ErrorDtAnchorRangingRoundsNotConfigured
+        );
+    }
+
+    #[test]
+    fn update_dt_tag_rounds_accepts_max_16_rounds() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        let tag = add_reset_device(&mut pica);
+        configure_dl_tdoa(
+            &mut pica,
+            tag,
+            DL_TDOA_SESSION_ID,
+            (DeviceRole::DtTag, DeviceType::Controlee),
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![],
+        );
+
+        let packets = send_cmd(
+            &mut pica,
+            tag,
+            SessionUpdateDtTagRangingRoundsCmd {
+                session_token: DL_TDOA_SESSION_ID,
+                ranging_round_indexes: (0..MAX_ACTIVE_RANGING_ROUNDS as u8).collect(),
+            },
+        );
+        assert_eq!(
+            SessionUpdateDtTagRangingRoundsRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::Ok
+        );
+    }
+
+    #[test]
+    fn update_dt_tag_rounds_rejects_more_than_16_rounds() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        let tag = add_reset_device(&mut pica);
+        configure_dl_tdoa(
+            &mut pica,
+            tag,
+            DL_TDOA_SESSION_ID,
+            (DeviceRole::DtTag, DeviceType::Controlee),
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![],
+        );
+
+        let packets = send_cmd(
+            &mut pica,
+            tag,
+            SessionUpdateDtTagRangingRoundsCmd {
+                session_token: DL_TDOA_SESSION_ID,
+                ranging_round_indexes: (0..=MAX_ACTIVE_RANGING_ROUNDS as u8).collect(),
+            },
+        );
+        assert_eq!(
+            SessionUpdateDtTagRangingRoundsRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::ErrorNumberOfActiveRangingRoundsExceeded
+        );
+    }
+
+    #[test]
+    fn dt_tag_start_without_rounds_emits_error_reason() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        let tag = add_reset_device(&mut pica);
+        configure_dl_tdoa(
+            &mut pica,
+            tag,
+            DL_TDOA_SESSION_ID,
+            (DeviceRole::DtTag, DeviceType::Controlee),
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![],
+        );
+        let packets = send_cmd(
+            &mut pica,
+            tag,
+            SessionStartCmd {
+                session_id: DL_TDOA_SESSION_ID,
+            },
+        );
+        assert_eq!(
+            SessionStatusNtf::decode_full(&packets[1])
+                .unwrap()
+                .reason_code,
+            ReasonCode::ErrorDtTagRangingRoundsNotConfigured
+        );
+    }
+
+    #[test]
+    fn dl_tdoa_relative_location_included_in_poll_dtm() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::DlTdoaAnchorLocation,
+                v: RELATIVE_LOCATION_TLV.to_vec(),
+            }],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![1],
+            vec![],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let ntf = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt).unwrap();
+        let m = &ntf.dl_tdoa_measurements[0];
+        assert_eq!(m.mac_address, INIT_ANCHOR_ADDR);
+        assert_eq!(m.measurement.message_type, DlTdoaMessageType::PollDtm);
+        assert_eq!(
+            m.measurement.relative_location,
+            Some(RelativeLocation {
+                x: RELATIVE_COORDS.0,
+                y: RELATIVE_COORDS.1,
+                z: RELATIVE_COORDS.2,
+            })
+        );
+    }
+
+    #[test]
+    fn dl_tdoa_block_skipping_advances_block_index_and_timestamps() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![1],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::DlTdoaBlockSkipping,
+                v: vec![1],
+            }],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt1 = drain_reassembled_packet(&mut pica, tag);
+        let ntf1 = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt1).unwrap();
+        assert_eq!(ntf1.current_ranging_interval, BLOCK_SKIPPED_INTERVAL_MS);
+        let m1 = &ntf1.dl_tdoa_measurements[0].measurement;
+        assert_eq!(m1.block_index, 0);
+        let tx1 = m1.tx_timestamp_64.unwrap();
+        let rx1 = m1.rx_timestamp_64.unwrap();
+        assert_eq!(rx1.checked_sub(tx1), Some(TAG_TO_INIT_TOF_300_CM_TICKS));
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt2 = drain_reassembled_packet(&mut pica, tag);
+        let ntf2 = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt2).unwrap();
+        assert_eq!(ntf2.current_ranging_interval, BLOCK_SKIPPED_INTERVAL_MS);
+        let m2 = &ntf2.dl_tdoa_measurements[0].measurement;
+        assert_eq!(m2.block_index, 2);
+        let tx2 = m2.tx_timestamp_64.unwrap();
+        let rx2 = m2.rx_timestamp_64.unwrap();
+        assert_eq!(rx2.checked_sub(tx2), Some(TAG_TO_INIT_TOF_300_CM_TICKS));
+        assert_eq!(tx2.checked_sub(tx1), Some(TWO_BLOCKS_AT_100_MS_TICKS));
+    }
+
+    #[test]
+    fn dl_tdoa_unserved_tag_round_emits_empty_measurements() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![0],
+            vec![],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let ntf = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt).unwrap();
+        assert!(ntf.dl_tdoa_measurements.is_empty());
+    }
+
+    #[test]
+    fn dl_tdoa_ds_twr_multi_anchor_synthesizes_poll_response_final() {
+        let estimator = PairwiseEstimator::default();
+        let mut pica = Pica::new(Box::new(estimator.clone()));
+
+        let init_anchor = start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![
+                DtAnchorRangingRound {
+                    round_index: 0,
+                    role: DtAnchorActingRole::Initiator,
+                },
+                DtAnchorRangingRound {
+                    round_index: 1,
+                    role: DtAnchorActingRole::Initiator,
+                },
+            ],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::DlTdoaTxActiveRangingRounds,
+                v: vec![1],
+            }],
+        );
+        let resp_anchor = start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            RESP_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Responder,
+            }],
+            vec![
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DlTdoaAnchorLocation,
+                    v: WGS84_LOCATION_TLV.to_vec(),
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DlTdoaTxTimestampConf,
+                    v: vec![LOCAL_64_BIT_TX_TIMESTAMP_CONF],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DlTdoaAnchorCfo,
+                    v: vec![DlTdoaAnchorCfo::AnchorCfoNotIncluded as u8],
+                },
+            ],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![1],
+            vec![],
+        );
+        estimator.insert(tag, init_anchor, TAG_TO_INIT_MEASUREMENT);
+        estimator.insert(init_anchor, resp_anchor, INIT_TO_RESP_MEASUREMENT);
+        estimator.insert(tag, resp_anchor, TAG_TO_RESP_MEASUREMENT);
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let ds_ntf = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt).unwrap();
+        assert_eq!(ds_ntf.dl_tdoa_measurements.len(), 3);
+
+        let poll = &ds_ntf.dl_tdoa_measurements[0].measurement;
+        assert_eq!(poll.message_type, DlTdoaMessageType::PollDtm);
+        let poll_tx = poll.tx_timestamp_64.unwrap();
+        let poll_rx = poll.rx_timestamp_64.unwrap();
+        assert_eq!(
+            poll_rx.checked_sub(poll_tx),
+            Some(TAG_TO_INIT_TOF_300_CM_TICKS)
+        );
+        assert_eq!(poll.active_ranging_rounds, vec![0]);
+
+        let resp = &ds_ntf.dl_tdoa_measurements[1].measurement;
+        assert_eq!(resp.message_type, DlTdoaMessageType::ResponseDtm);
+        assert_eq!(resp.tx_timestamp_type, DlTdoaTxTimestampType::LocalTimeBase);
+        let resp_tx = resp.tx_timestamp_64.unwrap();
+        let resp_rx = resp.rx_timestamp_64.unwrap();
+        assert_eq!(resp_tx.checked_sub(poll_tx), Some(ONE_SLOT_TICKS));
+        assert_eq!(
+            resp_rx.checked_sub(resp_tx),
+            Some(TAG_TO_RESP_TOF_450_CM_TICKS)
+        );
+        assert_eq!(resp.anchor_cfo, INVALID_CFO);
+        assert_eq!(resp.responder_reply_time, DS_TWR_REPLY_TIME_AT_600_CM_TICKS);
+        assert_eq!(resp.initiator_reply_time, DS_TWR_REPLY_TIME_AT_600_CM_TICKS);
+        assert_eq!(resp.initiator_responder_tof, 0);
+        assert_eq!(
+            resp.wgs84_location,
+            Some(Wgs84Location { data: WGS84_COORDS })
+        );
+
+        let final_m = &ds_ntf.dl_tdoa_measurements[2].measurement;
+        assert_eq!(final_m.message_type, DlTdoaMessageType::FinalDtm);
+        let final_tx = final_m.tx_timestamp_64.unwrap();
+        let final_rx = final_m.rx_timestamp_64.unwrap();
+        assert_eq!(final_tx.checked_sub(resp_tx), Some(ONE_SLOT_TICKS));
+        assert_eq!(
+            final_rx.checked_sub(final_tx),
+            Some(TAG_TO_INIT_TOF_300_CM_TICKS)
+        );
+        assert!(final_m.active_ranging_rounds.is_empty());
+    }
+
+    #[test]
+    fn dl_tdoa_ds_twr_reports_responder_tof_when_enabled() {
+        let estimator = PairwiseEstimator::default();
+        let mut pica = Pica::new(Box::new(estimator.clone()));
+
+        let init_anchor = start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![],
+        );
+        let resp_anchor = start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            RESP_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Responder,
+            }],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::DlTdoaResponderTof,
+                v: vec![1],
+            }],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![1],
+            vec![],
+        );
+        estimator.insert(tag, init_anchor, TAG_TO_INIT_MEASUREMENT);
+        estimator.insert(init_anchor, resp_anchor, INIT_TO_RESP_MEASUREMENT);
+        estimator.insert(tag, resp_anchor, TAG_TO_RESP_MEASUREMENT);
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let ds_ntf = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt).unwrap();
+        let resp = &ds_ntf.dl_tdoa_measurements[1].measurement;
+        assert_eq!(resp.message_type, DlTdoaMessageType::ResponseDtm);
+        assert_eq!(resp.initiator_responder_tof, INIT_TO_RESP_TOF_600_CM_TICKS);
+    }
+
+    #[test]
+    fn dl_tdoa_forty_bit_timestamps_truncate_to_40_bits() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_20S_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::DlTdoaTxTimestampConf,
+                v: vec![COMMON_40_BIT_TX_TIMESTAMP_CONF],
+            }],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_20S_MS,
+            vec![1],
+            vec![],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt1 = drain_reassembled_packet(&mut pica, tag);
+        let ntf1 = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt1).unwrap();
+        let m1 = &ntf1.dl_tdoa_measurements[0].measurement;
+        let tx1 = m1.tx_timestamp_40.unwrap();
+        assert_eq!(m1.tx_timestamp_64, None);
+        assert!(tx1 < FORTY_BIT_TIMESTAMP_LIMIT);
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt2 = drain_reassembled_packet(&mut pica, tag);
+        let ntf2 = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt2).unwrap();
+        let m2 = &ntf2.dl_tdoa_measurements[0].measurement;
+        let tx2 = m2.tx_timestamp_40.unwrap();
+        assert_eq!(m2.tx_timestamp_64, None);
+        assert!(tx2 < FORTY_BIT_TIMESTAMP_LIMIT);
+        assert_eq!(
+            tx2.checked_sub(tx1),
+            Some(ONE_BLOCK_AT_20S_MOD_40_BIT_TICKS)
+        );
+        assert_eq!(m2.rx_timestamp_40, None);
+        assert!(m2.rx_timestamp_64.unwrap() >= FORTY_BIT_TIMESTAMP_LIMIT);
+    }
+
+    #[test]
+    fn dl_tdoa_virtual_anchor_included_in_active_rounds() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_RESP_MEASUREMENT)));
+        pica.create_anchor(MacAddress::Short(VIRTUAL_ANCHOR_MAC))
+            .unwrap();
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![2],
+            vec![],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let ntf = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt).unwrap();
+        assert_eq!(ntf.dl_tdoa_measurements.len(), 1);
+        assert_eq!(ntf.dl_tdoa_measurements[0].mac_address, VIRTUAL_ANCHOR_ADDR);
+        let m = &ntf.dl_tdoa_measurements[0].measurement;
+        assert_eq!(m.round_index, 2);
+        let tx = m.tx_timestamp_64.unwrap();
+        let rx = m.rx_timestamp_64.unwrap();
+        assert!(tx > 0);
+        assert_eq!(rx.checked_sub(tx), Some(TAG_TO_RESP_TOF_450_CM_TICKS));
+    }
+
+    #[test]
+    fn dl_tdoa_round_caps_responders_at_8() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            MULTI_RESPONDER_INIT_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![],
+        );
+        for idx in 1u8..=(MAX_RESPONDERS_PER_ROUND as u8 + 1) {
+            start_dt_anchor(
+                &mut pica,
+                DL_TDOA_SESSION_ID,
+                [MULTI_RESPONDER_MAC_PREFIX, idx],
+                RANGING_DURATION_100_MS,
+                vec![DtAnchorRangingRound {
+                    round_index: 1,
+                    role: DtAnchorActingRole::Responder,
+                }],
+                vec![],
+            );
+        }
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![1],
+            vec![],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let ntf = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt).unwrap();
+        assert_eq!(ntf.dl_tdoa_measurements.len(), MAX_RESPONDERS_PER_ROUND + 2);
+        assert_eq!(
+            ntf.dl_tdoa_measurements
+                .iter()
+                .filter(|m| m.measurement.message_type == DlTdoaMessageType::ResponseDtm)
+                .count(),
+            MAX_RESPONDERS_PER_ROUND
+        );
+    }
+
+    #[test]
+    fn dl_tdoa_ss_twr_fans_out_across_rounds_with_rssi() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(TAG_TO_INIT_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![
+                DtAnchorRangingRound {
+                    round_index: 0,
+                    role: DtAnchorActingRole::Initiator,
+                },
+                DtAnchorRangingRound {
+                    round_index: 1,
+                    role: DtAnchorActingRole::Initiator,
+                },
+            ],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::DlTdoaRangingMethod,
+                v: vec![DlTdoaRangingMethod::SsTwr as u8],
+            }],
+        );
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            RESP_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![
+                DtAnchorRangingRound {
+                    round_index: 0,
+                    role: DtAnchorActingRole::Responder,
+                },
+                DtAnchorRangingRound {
+                    round_index: 1,
+                    role: DtAnchorActingRole::Responder,
+                },
+            ],
+            vec![],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![0, 1],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::RssiReporting,
+                v: vec![RssiReporting::Enable as u8],
+            }],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let ss_ntf = ShortMacDlTDoASessionInfoNtf::decode_full(&pkt).unwrap();
+        let rounds: Vec<u8> = ss_ntf
+            .dl_tdoa_measurements
+            .iter()
+            .map(|m| m.measurement.round_index)
+            .collect();
+        assert_eq!(rounds, vec![0, 0, 1, 1]);
+        assert!(ss_ntf.dl_tdoa_measurements.iter().all(|m| {
+            m.measurement.initiator_reply_time == 0 && m.measurement.rssi == DEFAULT_RSSI_Q7_1
+        }));
+    }
+
+    #[test]
+    fn dl_tdoa_aoa_disabled_zeros_aoa_fields() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(AOA_TEST_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![1],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::AoaResultReq,
+                v: vec![AoaResultReq::AoaDisabled as u8],
+            }],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let m = &ShortMacDlTDoASessionInfoNtf::decode_full(&pkt)
+            .unwrap()
+            .dl_tdoa_measurements[0]
+            .measurement;
+        assert_eq!(
+            (
+                m.aoa_azimuth,
+                m.aoa_azimuth_fom,
+                m.aoa_elevation,
+                m.aoa_elevation_fom
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn dl_tdoa_aoa_azimuth_only_populates_azimuth_and_zeros_elevation() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(AOA_TEST_MEASUREMENT)));
+        start_dt_anchor(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            INIT_ANCHOR_MAC,
+            RANGING_DURATION_100_MS,
+            vec![DtAnchorRangingRound {
+                round_index: 1,
+                role: DtAnchorActingRole::Initiator,
+            }],
+            vec![],
+        );
+        let tag = start_dt_tag(
+            &mut pica,
+            DL_TDOA_SESSION_ID,
+            TAG_MAC,
+            RANGING_DURATION_100_MS,
+            vec![1],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::AoaResultReq,
+                v: vec![AoaResultReq::AoaEnabledAzimuthOnly as u8],
+            }],
+        );
+
+        pica.dl_tdoa_ranging(tag, DL_TDOA_SESSION_ID);
+        let pkt = drain_reassembled_packet(&mut pica, tag);
+        let m = &ShortMacDlTDoASessionInfoNtf::decode_full(&pkt)
+            .unwrap()
+            .dl_tdoa_measurements[0]
+            .measurement;
+        assert_eq!(m.aoa_azimuth, AZIMUTH_15_DEG_Q9_7);
+        assert_eq!(m.aoa_azimuth_fom, AOA_FOM_FULL);
+        assert_eq!((m.aoa_elevation, m.aoa_elevation_fom), (0, 0));
+    }
+}

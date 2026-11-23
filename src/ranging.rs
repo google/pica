@@ -422,3 +422,409 @@ impl Pica {
         self.apply_device_effects(device_handle, effects);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{
+        FiraSessionConfig, FixedEstimator, add_reset_device, start_fira_session,
+    };
+
+    const TWR_SESSION_ID: u32 = 17;
+    const AOA_SESSION_ID: u32 = 23;
+    const VIRTUAL_ANCHOR_SESSION_ID: u32 = 29;
+    const EDGE_TRIGGER_SESSION_ID: u32 = 31;
+    const RANGING_DURATION_MS: u32 = 100;
+    const CONTROLLER_SHORT_MAC: [u8; 2] = [0x1A, 0x2B];
+    const CONTROLEE_SHORT_MAC: [u8; 2] = [0x3C, 0x4D];
+    const CONTROLEE_SHORT_ADDR: u16 = 0x4D3C;
+    const CONTROLLER_EXT_MAC: [u8; 8] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+    const CONTROLEE_EXT_MAC: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x12, 0x34];
+    const CONTROLEE_EXT_ADDR: u64 = 0x3412_FFEE_DDCC_BBAA;
+    const DEFAULT_RSSI_Q7_1: u8 = 100;
+    const AOA_FOM_FULL: u8 = 100;
+    const STANDARD_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 250,
+        azimuth: 10,
+        elevation: -5,
+    };
+    const EXTENDED_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 320,
+        azimuth: 25,
+        elevation: -12,
+    };
+    const VIRTUAL_ANCHOR_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 185,
+        azimuth: -18,
+        elevation: 8,
+    };
+    const AOA_MEASUREMENT: RangingMeasurement = RangingMeasurement {
+        range: 50,
+        azimuth: 5,
+        elevation: 10,
+    };
+    const AZIMUTH_5_DEG_Q9_7: u16 = 0x0280;
+    const ELEVATION_10_DEG_Q9_7: u16 = 0x0500;
+    const AZIMUTH_25_DEG_Q9_7: u16 = 0x0C80;
+    const ELEVATION_NEG_12_DEG_Q9_7: u16 = 0xFA00;
+    // -10..=10 deg azimuth, 20..=45 deg elevation in Q9.7 little-endian.
+    const AOA_BOUNDS_AZ_NEG10_TO_10_EL_20_TO_45_LE: [u8; 8] =
+        [0x00, 0xFB, 0x00, 0x05, 0x00, 0x0A, 0x80, 0x16];
+    const NEAR_PROXIMITY_100_CM_LE: [u8; 2] = [0x64, 0x00];
+    const FAR_PROXIMITY_200_CM_LE: [u8; 2] = [0xC8, 0x00];
+    const IN_RANGE_CM: u16 = 150;
+    const OUT_OF_RANGE_CM: u16 = 250;
+
+    fn start_twr_pair(
+        pica: &mut Pica,
+        session_id: u32,
+        mac_mode: MacAddressMode,
+        local_mac: &[u8],
+        dst_mac: &[u8],
+        controller_extra: Vec<AppConfigTlv>,
+    ) -> (Handle, Handle) {
+        let controller = add_reset_device(pica);
+        let controlee = add_reset_device(pica);
+
+        start_fira_session(
+            pica,
+            controller,
+            &FiraSessionConfig {
+                session_id,
+                session_type: SessionType::FiraRangingSession,
+                role: DeviceRole::Initiator,
+                dev_type: DeviceType::Controller,
+                mac_mode,
+                multi_node_mode: MultiNodeMode::OneToOne,
+                local_mac,
+                dst_mac: Some(dst_mac),
+                ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+                ranging_duration_ms: RANGING_DURATION_MS,
+                extra_tlvs: controller_extra,
+            },
+        );
+        start_fira_session(
+            pica,
+            controlee,
+            &FiraSessionConfig {
+                session_id,
+                session_type: SessionType::FiraRangingSession,
+                role: DeviceRole::Responder,
+                dev_type: DeviceType::Controlee,
+                mac_mode,
+                multi_node_mode: MultiNodeMode::OneToOne,
+                local_mac: dst_mac,
+                dst_mac: Some(local_mac),
+                ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+                ranging_duration_ms: RANGING_DURATION_MS,
+                extra_tlvs: vec![],
+            },
+        );
+        (controller, controlee)
+    }
+
+    #[test]
+    fn twr_mode0_reports_distance_and_default_zero_rssi() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let (controller, _controlee) = start_twr_pair(
+            &mut pica,
+            TWR_SESSION_ID,
+            MacAddressMode::Mode0,
+            &CONTROLLER_SHORT_MAC,
+            &CONTROLEE_SHORT_MAC,
+            vec![],
+        );
+
+        pica.ranging(controller, TWR_SESSION_ID);
+        let pkt = pica.drain_packets().next().unwrap().1;
+        let ntf = ShortMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
+        assert_eq!(ntf.two_way_ranging_measurements[0].status, uci::Status::Ok);
+        assert_eq!(
+            ntf.two_way_ranging_measurements[0].distance,
+            STANDARD_MEASUREMENT.range
+        );
+        assert_eq!(ntf.two_way_ranging_measurements[0].rssi, 0);
+    }
+
+    #[test]
+    fn twr_suspend_suppresses_notifications() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let (controller, controlee) = start_twr_pair(
+            &mut pica,
+            TWR_SESSION_ID,
+            MacAddressMode::Mode0,
+            &CONTROLLER_SHORT_MAC,
+            &CONTROLEE_SHORT_MAC,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::SuspendRangingRounds,
+                v: vec![SuspendRangingRounds::Enable as u8],
+            }],
+        );
+
+        pica.ranging(controller, TWR_SESSION_ID);
+        pica.ranging(controlee, TWR_SESSION_ID);
+        assert!(pica.drain_packets().next().is_none());
+    }
+
+    #[test]
+    fn twr_rssi_reporting_enable_reports_default_rssi() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let (controller, _controlee) = start_twr_pair(
+            &mut pica,
+            TWR_SESSION_ID,
+            MacAddressMode::Mode0,
+            &CONTROLLER_SHORT_MAC,
+            &CONTROLEE_SHORT_MAC,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::RssiReporting,
+                v: vec![RssiReporting::Enable as u8],
+            }],
+        );
+
+        pica.ranging(controller, TWR_SESSION_ID);
+        let pkt = pica.drain_packets().next().unwrap().1;
+        let ntf = ShortMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
+        assert_eq!(ntf.two_way_ranging_measurements[0].rssi, DEFAULT_RSSI_Q7_1);
+    }
+
+    #[test]
+    fn twr_removed_peer_reports_rx_timeout() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let (controller, controlee) = start_twr_pair(
+            &mut pica,
+            TWR_SESSION_ID,
+            MacAddressMode::Mode0,
+            &CONTROLLER_SHORT_MAC,
+            &CONTROLEE_SHORT_MAC,
+            vec![],
+        );
+
+        assert!(pica.remove_device(controlee));
+        pica.ranging(controller, TWR_SESSION_ID);
+        let pkt = pica.drain_packets().next().unwrap().1;
+        let ntf = ShortMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
+        assert_eq!(
+            ntf.two_way_ranging_measurements[0].status,
+            uci::Status::RangingRxTimeout
+        );
+        assert_eq!(ntf.two_way_ranging_measurements[0].rssi, 0);
+    }
+
+    #[test]
+    fn twr_mode2_reports_extended_mac_address() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(EXTENDED_MEASUREMENT)));
+        let (controller, _controlee) = start_twr_pair(
+            &mut pica,
+            TWR_SESSION_ID,
+            MacAddressMode::Mode2,
+            &CONTROLLER_EXT_MAC,
+            &CONTROLEE_EXT_MAC,
+            vec![],
+        );
+
+        pica.ranging(controller, TWR_SESSION_ID);
+        let pkt = pica.drain_packets().next().unwrap().1;
+        let ntf = ExtendedMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
+        let m = &ntf.two_way_ranging_measurements[0];
+        assert_eq!(m.status, uci::Status::Ok);
+        assert_eq!(m.mac_address, CONTROLEE_EXT_ADDR);
+        assert_eq!(m.distance, EXTENDED_MEASUREMENT.range);
+        assert_eq!(m.aoa_azimuth, AZIMUTH_25_DEG_Q9_7);
+        assert_eq!(m.aoa_elevation, ELEVATION_NEG_12_DEG_Q9_7);
+    }
+
+    #[test]
+    fn twr_virtual_anchor_reports_ranging_without_device_session() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(VIRTUAL_ANCHOR_MEASUREMENT)));
+        pica.create_anchor(MacAddress::Short(CONTROLEE_SHORT_MAC))
+            .unwrap();
+        let controller = add_reset_device(&mut pica);
+        start_fira_session(
+            &mut pica,
+            controller,
+            &FiraSessionConfig {
+                session_id: VIRTUAL_ANCHOR_SESSION_ID,
+                session_type: SessionType::FiraRangingSession,
+                role: DeviceRole::Initiator,
+                dev_type: DeviceType::Controller,
+                mac_mode: MacAddressMode::Mode0,
+                multi_node_mode: MultiNodeMode::OneToOne,
+                local_mac: &CONTROLLER_SHORT_MAC,
+                dst_mac: Some(&CONTROLEE_SHORT_MAC),
+                ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+                ranging_duration_ms: RANGING_DURATION_MS,
+                extra_tlvs: vec![],
+            },
+        );
+
+        pica.ranging(controller, VIRTUAL_ANCHOR_SESSION_ID);
+        let pkt = pica.drain_packets().next().unwrap().1;
+        let ntf = ShortMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
+        let m = &ntf.two_way_ranging_measurements[0];
+        assert_eq!(m.status, uci::Status::Ok);
+        assert_eq!(m.mac_address, CONTROLEE_SHORT_ADDR);
+        assert_eq!(m.distance, VIRTUAL_ANCHOR_MEASUREMENT.range);
+    }
+
+    #[test]
+    fn twr_aoa_result_req_populates_requested_fom_fields() {
+        for (req, exp_az, exp_az_fom, exp_el, exp_el_fom) in [
+            (AoaResultReq::AoaDisabled, 0, 0, 0, 0),
+            (
+                AoaResultReq::AoaEnabledAzimuthOnly,
+                AZIMUTH_5_DEG_Q9_7,
+                AOA_FOM_FULL,
+                0,
+                0,
+            ),
+            (
+                AoaResultReq::AoaEnabledElevationOnly,
+                0,
+                0,
+                ELEVATION_10_DEG_Q9_7,
+                AOA_FOM_FULL,
+            ),
+            (
+                AoaResultReq::AoaEnabled,
+                AZIMUTH_5_DEG_Q9_7,
+                AOA_FOM_FULL,
+                ELEVATION_10_DEG_Q9_7,
+                AOA_FOM_FULL,
+            ),
+        ] {
+            let mut pica = Pica::new(Box::new(FixedEstimator(AOA_MEASUREMENT)));
+            let (controller, _controlee) = start_twr_pair(
+                &mut pica,
+                AOA_SESSION_ID,
+                MacAddressMode::Mode0,
+                &CONTROLLER_SHORT_MAC,
+                &CONTROLEE_SHORT_MAC,
+                vec![AppConfigTlv {
+                    cfg_id: AppConfigTlvType::AoaResultReq,
+                    v: vec![req as u8],
+                }],
+            );
+
+            pica.ranging(controller, AOA_SESSION_ID);
+            let pkt = pica.drain_packets().next().unwrap().1;
+            let m = &ShortMacTwoWaySessionInfoNtf::decode_full(&pkt)
+                .unwrap()
+                .two_way_ranging_measurements[0];
+            assert_eq!(
+                (
+                    m.aoa_azimuth,
+                    m.aoa_azimuth_fom,
+                    m.aoa_elevation,
+                    m.aoa_elevation_fom
+                ),
+                (exp_az, exp_az_fom, exp_el, exp_el_fom)
+            );
+            assert_eq!(
+                (
+                    m.aoa_destination_azimuth_fom,
+                    m.aoa_destination_elevation_fom
+                ),
+                (AOA_FOM_FULL, AOA_FOM_FULL)
+            );
+        }
+    }
+
+    #[test]
+    fn twr_aoa_bounds_trigger_emits_in_bounds_and_suppresses_out_of_bounds() {
+        for (azimuth, elevation, expect_ntf) in [(5, 30, true), (30, 30, false), (5, 10, false)] {
+            let mut pica = Pica::new(Box::new(FixedEstimator(RangingMeasurement {
+                range: AOA_MEASUREMENT.range,
+                azimuth,
+                elevation,
+            })));
+
+            let (controller, _controlee) = start_twr_pair(
+                &mut pica,
+                AOA_SESSION_ID,
+                MacAddressMode::Mode0,
+                &CONTROLLER_SHORT_MAC,
+                &CONTROLEE_SHORT_MAC,
+                vec![
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::AoaResultReq,
+                        v: vec![AoaResultReq::AoaEnabled as u8],
+                    },
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::SessionInfoNtfConfig,
+                        v: vec![SessionInfoNtfConfig::EnableAoaTrigger as u8],
+                    },
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::AoaBoundConfig,
+                        v: AOA_BOUNDS_AZ_NEG10_TO_10_EL_20_TO_45_LE.to_vec(),
+                    },
+                ],
+            );
+
+            pica.ranging(controller, AOA_SESSION_ID);
+            let emitted = pica.drain_packets().next();
+            assert_eq!(
+                emitted.is_some(),
+                expect_ntf,
+                "unexpected notification presence for azimuth={azimuth}, elevation={elevation}"
+            );
+        }
+    }
+
+    #[test]
+    fn twr_proximity_edge_trigger_emits_only_on_entry_and_exit() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU16, Ordering};
+
+        struct DynamicRangeEstimator(Arc<AtomicU16>);
+        impl crate::RangingEstimator for DynamicRangeEstimator {
+            fn estimate(&self, _left: &Handle, _right: &Handle) -> Option<RangingMeasurement> {
+                Some(RangingMeasurement {
+                    range: self.0.load(Ordering::Relaxed),
+                    azimuth: AOA_MEASUREMENT.azimuth,
+                    elevation: AOA_MEASUREMENT.elevation,
+                })
+            }
+        }
+
+        let range = Arc::new(AtomicU16::new(IN_RANGE_CM));
+        let mut pica = Pica::new(Box::new(DynamicRangeEstimator(Arc::clone(&range))));
+        let (controller, _controlee) = start_twr_pair(
+            &mut pica,
+            EDGE_TRIGGER_SESSION_ID,
+            MacAddressMode::Mode0,
+            &CONTROLLER_SHORT_MAC,
+            &CONTROLEE_SHORT_MAC,
+            vec![
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::SessionInfoNtfConfig,
+                    v: vec![SessionInfoNtfConfig::EnableProximityEdgeTrigger as u8],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::NearProximityConfig,
+                    v: NEAR_PROXIMITY_100_CM_LE.to_vec(),
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::FarProximityConfig,
+                    v: FAR_PROXIMITY_200_CM_LE.to_vec(),
+                },
+            ],
+        );
+
+        // Enters 100..=200 window -> emits.
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_some());
+
+        // Remains in window -> suppressed.
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_none());
+
+        // Exits window -> emits.
+        range.store(OUT_OF_RANGE_CM, Ordering::Relaxed);
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_some());
+
+        // Remains outside window -> suppressed.
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_none());
+    }
+}

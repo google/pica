@@ -55,6 +55,9 @@ mod ranging;
 
 mod session;
 
+#[cfg(test)]
+mod test_support;
+
 /// Raw serialized UCI packet bytes.
 pub type UciPacket = Vec<u8>;
 
