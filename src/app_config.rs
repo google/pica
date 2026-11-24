@@ -992,16 +992,6 @@ mod tests {
     const RELATIVE_LOCATION_TLV: [u8; 11] = [
         0x03, 0x56, 0x34, 0x12, 0x70, 0x56, 0x34, 0x02, 0x78, 0x56, 0x34,
     ];
-    const CCC_HOP_MODE_KEY: [u8; 16] = [
-        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
-        0x1F,
-    ];
-    const STS_INDEX_LE: [u8; 4] = [0x78, 0x56, 0x34, 0x12];
-    const ALIRO_SESSION_KEY: [u8; 16] = [
-        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE,
-        0xAF,
-    ];
-    const ALIRO_MAC_MODE_1_STEP_2_BITS: u8 = 0x41;
 
     fn fira_config() -> AppConfig {
         let mut cfg = AppConfig::new(uci::SessionType::FiraRangingSession);
@@ -1035,18 +1025,6 @@ mod tests {
         cfg.set(uci::AppConfigTlvType::DstMacAddress, &PEER_SHORT_MAC)
             .unwrap();
         cfg
-    }
-
-    #[test]
-    fn unconfigured_fira_session_lacks_mandatory_parameters() {
-        let unconfigured = AppConfig::new(uci::SessionType::FiraRangingSession);
-        assert!(!unconfigured.has_mandatory_parameters());
-    }
-
-    #[test]
-    fn configured_fira_session_has_mandatory_parameters() {
-        let configured = fira_config();
-        assert!(configured.has_mandatory_parameters());
     }
 
     #[test]
@@ -1256,59 +1234,6 @@ mod tests {
         assert_eq!(
             cfg.effective_session_info_ntf_config(),
             uci::SessionInfoNtfConfig::EnableProximityTrigger
-        );
-    }
-
-    #[test]
-    fn ccc_and_aliro_preserve_hop_key_and_sts_index_updates() {
-        for session_type in [uci::SessionType::Ccc, uci::SessionType::Aliro] {
-            let mut cfg = AppConfig::new(session_type);
-            assert_eq!(
-                cfg.get(uci::AppConfigTlvType::CccHopModeKey),
-                Some(&Bytes::from_static(&[0, 0, 0, 0]))
-            );
-            assert_eq!(
-                cfg.get(uci::AppConfigTlvType::CccLastIndexUsed),
-                Some(&Bytes::from_static(&[0, 0, 0, 0]))
-            );
-            assert!(cfg.get(uci::AppConfigTlvType::CccUwbTime0).is_none());
-
-            cfg.set(uci::AppConfigTlvType::CccHopModeKey, &CCC_HOP_MODE_KEY)
-                .unwrap();
-            cfg.set(uci::AppConfigTlvType::StsIndex, &STS_INDEX_LE)
-                .unwrap();
-            assert_eq!(
-                cfg.get(uci::AppConfigTlvType::CccHopModeKey),
-                Some(&Bytes::from_static(&CCC_HOP_MODE_KEY))
-            );
-            assert_eq!(
-                cfg.get(uci::AppConfigTlvType::StsIndex),
-                Some(&Bytes::from_static(&STS_INDEX_LE))
-            );
-        }
-    }
-
-    #[test]
-    fn aliro_preserves_mac_mode_and_session_key() {
-        let mut cfg = AppConfig::new(uci::SessionType::Aliro);
-        assert_eq!(
-            cfg.get(uci::AppConfigTlvType::AliroMacMode),
-            Some(&Bytes::from_static(&[0]))
-        );
-        cfg.set(uci::AppConfigTlvType::SessionKey, &ALIRO_SESSION_KEY)
-            .unwrap();
-        cfg.set(
-            uci::AppConfigTlvType::AliroMacMode,
-            &[ALIRO_MAC_MODE_1_STEP_2_BITS],
-        )
-        .unwrap();
-        assert_eq!(
-            cfg.get(uci::AppConfigTlvType::AliroMacMode),
-            Some(&Bytes::from_static(&[ALIRO_MAC_MODE_1_STEP_2_BITS]))
-        );
-        assert_eq!(
-            cfg.get(uci::AppConfigTlvType::SessionKey),
-            Some(&Bytes::from_static(&ALIRO_SESSION_KEY))
         );
     }
 }

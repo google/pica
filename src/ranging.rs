@@ -547,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn twr_suspend_suppresses_notifications() {
+    fn twr_suspend_suppresses_and_resumes_both_peers() {
         let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
         let (controller, controlee) = start_twr_pair(
             &mut pica,
@@ -564,6 +564,30 @@ mod tests {
         pica.ranging(controller, TWR_SESSION_ID);
         pica.ranging(controlee, TWR_SESSION_ID);
         assert!(pica.drain_packets().next().is_none());
+
+        let resume = SessionSetAppConfigCmd {
+            session_token: TWR_SESSION_ID,
+            tlvs: vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::SuspendRangingRounds,
+                v: vec![SuspendRangingRounds::Disable as u8],
+            }],
+        }
+        .encode_to_vec()
+        .unwrap();
+        pica.handle_packet(controller, &resume, std::time::Instant::now());
+        let _ = pica.drain_packets().count();
+
+        pica.ranging(controller, TWR_SESSION_ID);
+        pica.ranging(controlee, TWR_SESSION_ID);
+        let recipients: Vec<_> = pica
+            .drain_packets()
+            .filter_map(|(h, bytes)| {
+                ShortMacTwoWaySessionInfoNtf::decode_full(&bytes)
+                    .ok()
+                    .map(|_| h)
+            })
+            .collect();
+        assert_eq!(recipients, vec![controller, controlee]);
     }
 
     #[test]
@@ -770,24 +794,35 @@ mod tests {
         }
     }
 
+    struct DynamicEstimator(
+        std::sync::Arc<std::sync::atomic::AtomicU16>,
+        std::sync::Arc<std::sync::atomic::AtomicI16>,
+        i8,
+    );
+
+    impl crate::RangingEstimator for DynamicEstimator {
+        fn estimate(&self, _left: &Handle, _right: &Handle) -> Option<RangingMeasurement> {
+            use std::sync::atomic::Ordering;
+            Some(RangingMeasurement {
+                range: self.0.load(Ordering::Relaxed),
+                azimuth: self.1.load(Ordering::Relaxed),
+                elevation: self.2,
+            })
+        }
+    }
+
     #[test]
     fn twr_proximity_edge_trigger_emits_only_on_entry_and_exit() {
         use std::sync::Arc;
-        use std::sync::atomic::{AtomicU16, Ordering};
-
-        struct DynamicRangeEstimator(Arc<AtomicU16>);
-        impl crate::RangingEstimator for DynamicRangeEstimator {
-            fn estimate(&self, _left: &Handle, _right: &Handle) -> Option<RangingMeasurement> {
-                Some(RangingMeasurement {
-                    range: self.0.load(Ordering::Relaxed),
-                    azimuth: AOA_MEASUREMENT.azimuth,
-                    elevation: AOA_MEASUREMENT.elevation,
-                })
-            }
-        }
+        use std::sync::atomic::{AtomicI16, AtomicU16, Ordering};
 
         let range = Arc::new(AtomicU16::new(IN_RANGE_CM));
-        let mut pica = Pica::new(Box::new(DynamicRangeEstimator(Arc::clone(&range))));
+        let azimuth = Arc::new(AtomicI16::new(AOA_MEASUREMENT.azimuth));
+        let mut pica = Pica::new(Box::new(DynamicEstimator(
+            Arc::clone(&range),
+            azimuth,
+            AOA_MEASUREMENT.elevation,
+        )));
         let (controller, _controlee) = start_twr_pair(
             &mut pica,
             EDGE_TRIGGER_SESSION_ID,
@@ -826,5 +861,64 @@ mod tests {
         // Remains outside window -> suppressed.
         pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
         assert!(pica.drain_packets().next().is_none());
+    }
+
+    #[test]
+    fn twr_proximity_aoa_edge_trigger_tracks_combined_bounds() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicI16, AtomicU16, Ordering};
+
+        let range = Arc::new(AtomicU16::new(OUT_OF_RANGE_CM));
+        let azimuth = Arc::new(AtomicI16::new(AOA_MEASUREMENT.azimuth));
+        let mut pica = Pica::new(Box::new(DynamicEstimator(
+            Arc::clone(&range),
+            Arc::clone(&azimuth),
+            30,
+        )));
+        let (controller, _controlee) = start_twr_pair(
+            &mut pica,
+            EDGE_TRIGGER_SESSION_ID,
+            MacAddressMode::Mode0,
+            &CONTROLLER_SHORT_MAC,
+            &CONTROLEE_SHORT_MAC,
+            vec![
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::AoaResultReq,
+                    v: vec![AoaResultReq::AoaEnabled as u8],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::SessionInfoNtfConfig,
+                    v: vec![SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger as u8],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::NearProximityConfig,
+                    v: NEAR_PROXIMITY_100_CM_LE.to_vec(),
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::FarProximityConfig,
+                    v: FAR_PROXIMITY_200_CM_LE.to_vec(),
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::AoaBoundConfig,
+                    v: AOA_BOUNDS_AZ_NEG10_TO_10_EL_20_TO_45_LE.to_vec(),
+                },
+            ],
+        );
+
+        // Starts outside proximity bounds -> suppressed.
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_none());
+
+        // Enters both proximity and AoA bounds -> emits once, then suppresses.
+        range.store(IN_RANGE_CM, Ordering::Relaxed);
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_some());
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_none());
+
+        // Exits AoA bounds -> emits once on exit.
+        azimuth.store(30, Ordering::Relaxed);
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_some());
     }
 }
