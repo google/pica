@@ -304,6 +304,7 @@ fn finish_twr_round(
     }
 
     session.ranging_count += 1;
+    session.advance_ccc_last_sts_index_used();
     if session.has_reached_max_measurements() {
         device.stop_active_session(session_id, ReasonCode::MaxNumberOfMeasurementsReached)
     } else {
@@ -427,7 +428,7 @@ impl Pica {
 mod tests {
     use super::*;
     use crate::test_support::{
-        FiraSessionConfig, FixedEstimator, add_reset_device, start_fira_session,
+        FiraSessionConfig, FixedEstimator, add_reset_device, send_cmd, start_fira_session,
     };
 
     const TWR_SESSION_ID: u32 = 17;
@@ -920,5 +921,95 @@ mod tests {
         azimuth.store(30, Ordering::Relaxed);
         pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
         assert!(pica.drain_packets().next().is_some());
+    }
+
+    fn start_ccc_or_aliro_session(
+        pica: &mut Pica,
+        session_id: u32,
+        session_type: SessionType,
+        role: DeviceRole,
+        multi_node: MultiNodeMode,
+        extra: Vec<AppConfigTlv>,
+    ) -> Handle {
+        let handle = add_reset_device(pica);
+        let _ = send_cmd(
+            pica,
+            handle,
+            SessionInitCmd {
+                session_id,
+                session_type,
+            },
+        );
+        let tlvs: Vec<AppConfigTlv> = [
+            AppConfigTlv {
+                cfg_id: AppConfigTlvType::DeviceRole,
+                v: vec![role as u8],
+            },
+            AppConfigTlv {
+                cfg_id: AppConfigTlvType::MultiNodeMode,
+                v: vec![multi_node as u8],
+            },
+            AppConfigTlv {
+                cfg_id: AppConfigTlvType::SessionInfoNtfConfig,
+                v: vec![SessionInfoNtfConfig::Enable as u8],
+            },
+        ]
+        .into_iter()
+        .chain(extra)
+        .collect();
+        let cfg = send_cmd(
+            pica,
+            handle,
+            SessionSetAppConfigCmd {
+                session_token: session_id,
+                tlvs,
+            },
+        );
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&cfg[0]).unwrap().status,
+            uci::Status::Ok
+        );
+        let start = send_cmd(pica, handle, SessionStartCmd { session_id });
+        assert_eq!(
+            SessionStartRsp::decode_full(&start[0]).unwrap().status,
+            uci::Status::Ok
+        );
+        handle
+    }
+
+    #[test]
+    fn ccc_ranging_advances_last_sts_index_used() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let initiator = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Initiator,
+            MultiNodeMode::OneToOne,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::StsIndex,
+                v: 100u32.to_le_bytes().to_vec(),
+            }],
+        );
+        let read_last_sts = |pica: &mut Pica| -> u32 {
+            let pkts = send_cmd(
+                pica,
+                initiator,
+                SessionGetAppConfigCmd {
+                    session_token: TWR_SESSION_ID,
+                    app_cfg: vec![AppConfigTlvType::CccLastIndexUsed],
+                },
+            );
+            let rsp = SessionGetAppConfigRsp::decode_full(&pkts[0]).unwrap();
+            u32::from_le_bytes(rsp.tlvs[0].v.as_slice().try_into().unwrap())
+        };
+
+        pica.ranging(initiator, TWR_SESSION_ID);
+        let _ = pica.drain_packets().count();
+        assert_eq!(read_last_sts(&mut pica), 100);
+
+        pica.ranging(initiator, TWR_SESSION_ID);
+        let _ = pica.drain_packets().count();
+        assert_eq!(read_last_sts(&mut pica), 101);
     }
 }

@@ -180,6 +180,10 @@ impl Device {
 
         let mut app_config = session.app_config.clone();
         let mut invalid_parameters = vec![];
+        let resets_ccc_sts = cmd
+            .tlvs
+            .iter()
+            .any(|cfg| cfg.cfg_id == AppConfigTlvType::StsIndex);
         // Defer DeviceMacAddress and DstMacAddress so MacAddressMode and
         // NumberOfControlees take effect first regardless of TLV order in the command.
         let (deferred_tlvs, immediate_tlvs): (Vec<_>, Vec<_>) =
@@ -212,6 +216,9 @@ impl Device {
         }
 
         if invalid_parameters.is_empty() {
+            if resets_ccc_sts {
+                session.ccc_last_sts_index_used = None;
+            }
             session.set_app_config(app_config, now);
             let effects = if session.state == SessionState::SessionStateInit {
                 session
@@ -254,17 +261,36 @@ impl Device {
             };
         };
 
+        let ccc_last_sts_index_used = session.app_config.is_ccc_or_aliro().then(|| {
+            session
+                .ccc_last_sts_index_used
+                .unwrap_or(0)
+                .to_le_bytes()
+                .to_vec()
+        });
+
         let (status, tlvs) = if cmd.app_cfg.is_empty() {
-            (uci::Status::Ok, session.app_config.to_tlvs())
+            let tlvs = session
+                .app_config
+                .to_tlvs()
+                .into_iter()
+                .chain(ccc_last_sts_index_used.map(|v| AppConfigTlv {
+                    cfg_id: AppConfigTlvType::CccLastIndexUsed,
+                    v,
+                }))
+                .collect();
+            (uci::Status::Ok, tlvs)
         } else {
             let mut valid_parameters = vec![];
             let mut invalid_parameters = vec![];
             for id in cmd.app_cfg {
-                match session.app_config.get(id) {
-                    Some(value) => valid_parameters.push(AppConfigTlv {
-                        cfg_id: id,
-                        v: value.to_vec(),
-                    }),
+                let value = if id == AppConfigTlvType::CccLastIndexUsed {
+                    ccc_last_sts_index_used.clone()
+                } else {
+                    session.app_config.get(id).map(|v| v.to_vec())
+                };
+                match value {
+                    Some(v) => valid_parameters.push(AppConfigTlv { cfg_id: id, v }),
                     None => invalid_parameters.push(AppConfigTlv {
                         cfg_id: id,
                         v: vec![],

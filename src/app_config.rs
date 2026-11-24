@@ -89,7 +89,7 @@ impl AoaBounds {
         }
     }
 }
-const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
+const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 4] = [
     (
         uci::AppConfigTlvType::RangingDuration,
         Bytes::from_static(const { &96u32.to_le_bytes() }),
@@ -101,10 +101,6 @@ const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
     (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[6])),
     (
         uci::AppConfigTlvType::CccHopModeKey,
-        Bytes::from_static(&[0, 0, 0, 0]),
-    ),
-    (
-        uci::AppConfigTlvType::CccLastIndexUsed,
         Bytes::from_static(&[0, 0, 0, 0]),
     ),
 ];
@@ -363,6 +359,13 @@ impl AppConfig {
         Self { session_type, tlvs }
     }
 
+    pub fn is_ccc_or_aliro(&self) -> bool {
+        matches!(
+            self.session_type,
+            uci::SessionType::Ccc | uci::SessionType::Aliro
+        )
+    }
+
     /// Retrieve the APP configuration value with the selected identifier
     /// Returns `Some` if the identifier is set, `None` otherwise.
     pub fn get(&self, id: uci::AppConfigTlvType) -> Option<&Bytes> {
@@ -380,6 +383,23 @@ impl AppConfig {
     }
 
     fn parse_tlv(&self, id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
+        match id {
+            uci::AppConfigTlvType::CccHopModeKey
+            | uci::AppConfigTlvType::CccUwbTime0
+            | uci::AppConfigTlvType::CccRangingProtocolVer
+            | uci::AppConfigTlvType::CccUwbConfigId
+            | uci::AppConfigTlvType::CccPulseshapeCombo
+            | uci::AppConfigTlvType::CccUrskTtl
+                if !self.is_ccc_or_aliro() =>
+            {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            uci::AppConfigTlvType::AliroMacMode if self.session_type != uci::SessionType::Aliro => {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            _ => {}
+        }
+
         fn try_parse_array<const N: usize>(
             id: uci::AppConfigTlvType,
             value: &[u8],
@@ -518,8 +538,7 @@ impl AppConfig {
             | uci::AppConfigTlvType::CccUrskTtl => try_parse_u16(id, value),
             uci::AppConfigTlvType::RangingDuration
             | uci::AppConfigTlvType::StsIndex
-            | uci::AppConfigTlvType::SubSessionId
-            | uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
+            | uci::AppConfigTlvType::SubSessionId => try_parse_u32(id, value),
             uci::AppConfigTlvType::MacFcsType => try_parse_enum::<uci::MacFcsType>(id, value),
             uci::AppConfigTlvType::AoaResultReq => try_parse_enum::<uci::AoaResultReq>(id, value),
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
@@ -603,6 +622,10 @@ impl AppConfig {
         let bytes = self
             .parse_tlv(id, value)
             .inspect_err(|err| tracing::error!("{err}"))?;
+        if self.is_ccc_or_aliro() && id == uci::AppConfigTlvType::UwbInitiationTime {
+            self.tlvs
+                .insert(uci::AppConfigTlvType::CccUwbTime0, bytes.clone());
+        }
         self.tlvs.insert(id, bytes);
         Ok(())
     }
@@ -633,6 +656,10 @@ impl AppConfig {
 
     pub fn device_type(&self) -> Option<uci::DeviceType> {
         self.get_enum(uci::AppConfigTlvType::DeviceType)
+    }
+
+    pub fn sts_index(&self) -> u32 {
+        self.get_u32(uci::AppConfigTlvType::StsIndex).unwrap_or(0)
     }
 
     pub fn ranging_round_usage(&self) -> Option<uci::RangingRoundUsage> {
@@ -1235,5 +1262,77 @@ mod tests {
             cfg.effective_session_info_ntf_config(),
             uci::SessionInfoNtfConfig::EnableProximityTrigger
         );
+    }
+
+    #[test]
+    fn ccc_and_aliro_tlvs_are_gated_by_session_type() {
+        let mut fira = fira_config();
+        let fira_rejected: &[(uci::AppConfigTlvType, &[u8])] = &[
+            (uci::AppConfigTlvType::CccHopModeKey, &[1, 2, 3, 4]),
+            (uci::AppConfigTlvType::CccUwbTime0, &[0; 8]),
+            (uci::AppConfigTlvType::CccRangingProtocolVer, &[0, 1]),
+            (uci::AppConfigTlvType::CccUwbConfigId, &[1, 0]),
+            (uci::AppConfigTlvType::CccPulseshapeCombo, &[0x11]),
+            (uci::AppConfigTlvType::CccUrskTtl, &[0x10, 0x00]),
+            (uci::AppConfigTlvType::AliroMacMode, &[0x01]),
+            (uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+        ];
+        for &(id, value) in fira_rejected {
+            assert_eq!(
+                fira.set(id, value),
+                Err(AppConfigError::UnsupportedParameter(id)),
+                "expected FiRa to reject {id:?}"
+            );
+        }
+
+        let mut ccc = AppConfig::new(uci::SessionType::Ccc);
+        assert!(
+            ccc.set(uci::AppConfigTlvType::CccHopModeKey, &[1, 2, 3, 4])
+                .is_ok()
+        );
+        assert_eq!(
+            ccc.set(uci::AppConfigTlvType::AliroMacMode, &[0x01]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::AliroMacMode
+            ))
+        );
+        assert_eq!(
+            ccc.set(uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::CccLastIndexUsed
+            ))
+        );
+
+        let mut aliro = AppConfig::new(uci::SessionType::Aliro);
+        assert!(
+            aliro
+                .set(uci::AppConfigTlvType::AliroMacMode, &[0x41])
+                .is_ok()
+        );
+        assert_eq!(
+            aliro.set(uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::CccLastIndexUsed
+            ))
+        );
+    }
+
+    #[test]
+    fn ccc_uwb_initiation_time_mirrors_to_uwb_time0() {
+        const LEGACY_4B: [u8; 4] = [0x20, 0x03, 0x00, 0x00];
+        const EXPECTED_8B: [u8; 8] = [0x20, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+        let mut ccc = AppConfig::new(uci::SessionType::Ccc);
+        ccc.set(uci::AppConfigTlvType::UwbInitiationTime, &LEGACY_4B)
+            .unwrap();
+        assert_eq!(
+            ccc.get(uci::AppConfigTlvType::CccUwbTime0),
+            Some(&Bytes::from_static(&EXPECTED_8B))
+        );
+
+        let mut fira = fira_config();
+        fira.set(uci::AppConfigTlvType::UwbInitiationTime, &LEGACY_4B)
+            .unwrap();
+        assert!(fira.get(uci::AppConfigTlvType::CccUwbTime0).is_none());
     }
 }
