@@ -182,9 +182,10 @@ pub struct CccCapabilities {
     pub hopping_config_modes_and_sequences: u8,
     pub channels: u8,
     pub versions: &'static [Version],
-    pub uwb_configs: u8,
-    pub pulse_shape_combos: u8,
+    pub uwb_configs: &'static [u8],
+    pub pulse_shape_combos: &'static [u8],
     pub ran_multiplier: u32,
+    pub max_ranging_session_number: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,7 +271,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    pub fn to_tlvs(&self) -> [CapTlv; 38] {
+    pub fn to_tlvs(&self) -> [CapTlv; 39] {
         let device_types = [bitmask_u8(self.device_types)];
         let device_roles = bitmask_u16(self.device_roles).to_le_bytes();
         let ranging_methods = bitmask_u16(self.ranging_methods).to_le_bytes();
@@ -293,11 +294,12 @@ impl Capabilities {
             .flat_map(|v| v.to_bytes())
             .collect();
         let ccc_ran_multiplier = self.ccc.ran_multiplier.to_le_bytes();
+        let ccc_max_ranging_session_number = self.ccc.max_ranging_session_number.to_le_bytes();
         let ccc_sync_codes = self.ccc.sync_codes.to_bytes();
         let aliro_mac_modes = [self.aliro.mac_modes.to_byte()];
         let aliro_protocol_version = self.aliro.protocol_version.to_bytes();
 
-        let tlvs: [(CapTlvType, &[u8]); 38] = [
+        let tlvs: [(CapTlvType, &[u8]); 39] = [
             (
                 CapTlvType::SupportedMaxMessageSize,
                 &self.max_message_size.to_le_bytes(),
@@ -371,12 +373,16 @@ impl Capabilities {
             ),
             (CapTlvType::CccSupportedChannels, &[self.ccc.channels]),
             (CapTlvType::CccSupportedVersions, &ccc_versions),
-            (CapTlvType::CccSupportedUwbConfigs, &[self.ccc.uwb_configs]),
+            (CapTlvType::CccSupportedUwbConfigs, self.ccc.uwb_configs),
             (
                 CapTlvType::CccSupportedPulseShapeCombos,
-                &[self.ccc.pulse_shape_combos],
+                self.ccc.pulse_shape_combos,
             ),
             (CapTlvType::CccSupportedRanMultiplier, &ccc_ran_multiplier),
+            (
+                CapTlvType::CccSupportedMaxRangingSessionNumber,
+                &ccc_max_ranging_session_number,
+            ),
             (CapTlvType::AliroSupportedMacModes, &aliro_mac_modes),
             (
                 CapTlvType::AliroSupportedProtocolVersion,
@@ -470,9 +476,10 @@ pub const DEFAULT_CAPS_INFO: Capabilities = Capabilities {
         hopping_config_modes_and_sequences: CCC_ALL_HOPPING_CONFIGS,
         channels: CCC_ALL_CHANNELS,
         versions: &[Version::new(1, 0)],
-        uwb_configs: 0,
-        pulse_shape_combos: 0,
+        uwb_configs: &[0, 1],
+        pulse_shape_combos: &[0x00, 0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x22],
         ran_multiplier: 1,
+        max_ranging_session_number: 8,
     },
     aliro: AliroCapabilities {
         mac_modes: AliroMacModes {
@@ -541,9 +548,10 @@ mod tests {
             hopping_config_modes_and_sequences: 0x0A,
             channels: 0x03,
             versions: &[Version::new(1, 0), Version::new(2, 1)],
-            uwb_configs: 0x07,
-            pulse_shape_combos: 0x04,
+            uwb_configs: &[0x07, 0x09],
+            pulse_shape_combos: &[0x04, 0x13],
             ran_multiplier: 3,
+            max_ranging_session_number: 6,
         },
         aliro: AliroCapabilities {
             mac_modes: AliroMacModes {
@@ -720,15 +728,19 @@ mod tests {
         );
         assert_eq!(
             caps.get(&CapTlvType::CccSupportedUwbConfigs),
-            Some(&vec![0x07])
+            Some(&vec![0x07, 0x09])
         );
         assert_eq!(
             caps.get(&CapTlvType::CccSupportedPulseShapeCombos),
-            Some(&vec![0x04])
+            Some(&vec![0x04, 0x13])
         );
         assert_eq!(
             caps.get(&CapTlvType::CccSupportedRanMultiplier),
             Some(&vec![0x03, 0x00, 0x00, 0x00])
+        );
+        assert_eq!(
+            caps.get(&CapTlvType::CccSupportedMaxRangingSessionNumber),
+            Some(&vec![0x06, 0x00, 0x00, 0x00])
         );
         assert_eq!(
             caps.get(&CapTlvType::AliroSupportedMacModes),

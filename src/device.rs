@@ -1063,4 +1063,152 @@ mod tests {
             }]
         );
     }
+
+    fn init_ccc_device_with_sts(init_sts: u32) -> Device {
+        let mut device = reset_device();
+        let _ = send_cmd(
+            &mut device,
+            SessionInitCmd {
+                session_id: SESSION_ID,
+                session_type: SessionType::Ccc,
+            },
+        );
+        let cfg_pkts = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: SESSION_ID,
+                tlvs: vec![
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::DeviceRole,
+                        v: vec![DeviceRole::Initiator as u8],
+                    },
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::MultiNodeMode,
+                        v: vec![MultiNodeMode::OneToOne as u8],
+                    },
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::StsIndex,
+                        v: init_sts.to_le_bytes().to_vec(),
+                    },
+                ],
+            },
+        );
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&cfg_pkts[0])
+                .unwrap()
+                .status,
+            uci::Status::Ok
+        );
+        device
+    }
+
+    fn read_ccc_last_sts(device: &mut Device) -> u32 {
+        let pkts = send_cmd(
+            device,
+            SessionGetAppConfigCmd {
+                session_token: SESSION_ID,
+                app_cfg: vec![AppConfigTlvType::CccLastIndexUsed],
+            },
+        );
+        let rsp = SessionGetAppConfigRsp::decode_full(&pkts[0]).unwrap();
+        assert_eq!(rsp.status, uci::Status::Ok);
+        u32::from_le_bytes(rsp.tlvs[0].v.as_slice().try_into().unwrap())
+    }
+
+    #[test]
+    fn ccc_last_sts_index_used_advances_and_persists_across_stop() {
+        let mut device = init_ccc_device_with_sts(100);
+        assert_eq!(read_ccc_last_sts(&mut device), 0);
+
+        let _ = send_cmd(
+            &mut device,
+            SessionStartCmd {
+                session_id: SESSION_ID,
+            },
+        );
+        device
+            .session_mut(SESSION_ID)
+            .unwrap()
+            .advance_ccc_last_sts_index_used();
+        device
+            .session_mut(SESSION_ID)
+            .unwrap()
+            .advance_ccc_last_sts_index_used();
+        assert_eq!(read_ccc_last_sts(&mut device), 101);
+
+        // Must survive stop so hosts can resume with STS_INDEX = last + 1.
+        let _ = send_cmd(
+            &mut device,
+            SessionStopCmd {
+                session_id: SESSION_ID,
+            },
+        );
+        assert_eq!(read_ccc_last_sts(&mut device), 101);
+    }
+
+    #[test]
+    fn ccc_empty_get_app_config_includes_last_sts_index_used() {
+        let mut device = init_ccc_device_with_sts(100);
+        let _ = send_cmd(
+            &mut device,
+            SessionStartCmd {
+                session_id: SESSION_ID,
+            },
+        );
+        device
+            .session_mut(SESSION_ID)
+            .unwrap()
+            .advance_ccc_last_sts_index_used();
+
+        let all_pkts = send_cmd(
+            &mut device,
+            SessionGetAppConfigCmd {
+                session_token: SESSION_ID,
+                app_cfg: vec![],
+            },
+        );
+        let all_rsp = SessionGetAppConfigRsp::decode_full(&all_pkts[0]).unwrap();
+        assert!(all_rsp.tlvs.iter().any(|tlv| {
+            tlv.cfg_id == AppConfigTlvType::CccLastIndexUsed && tlv.v == 100u32.to_le_bytes()
+        }));
+    }
+
+    #[test]
+    fn ccc_sts_index_write_resets_last_sts_index_used() {
+        let mut device = init_ccc_device_with_sts(100);
+        let _ = send_cmd(
+            &mut device,
+            SessionStartCmd {
+                session_id: SESSION_ID,
+            },
+        );
+        device
+            .session_mut(SESSION_ID)
+            .unwrap()
+            .advance_ccc_last_sts_index_used();
+        let _ = send_cmd(
+            &mut device,
+            SessionStopCmd {
+                session_id: SESSION_ID,
+            },
+        );
+
+        let reset_pkts = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: SESSION_ID,
+                tlvs: vec![AppConfigTlv {
+                    cfg_id: AppConfigTlvType::StsIndex,
+                    v: 200u32.to_le_bytes().to_vec(),
+                }],
+            },
+        );
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&reset_pkts[0])
+                .unwrap()
+                .status,
+            uci::Status::Ok
+        );
+        assert_eq!(read_ccc_last_sts(&mut device), 0);
+    }
 }
