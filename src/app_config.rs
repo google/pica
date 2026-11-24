@@ -5,6 +5,7 @@ use pdl_runtime::Packet;
 use thiserror::Error;
 
 use crate::MacAddress;
+use crate::dl_tdoa::DlTdoaAnchorLocation;
 use crate::packets::uci;
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -40,69 +41,6 @@ pub enum SubSessionKey {
     Extended([u8; 32]),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DlTdoaAnchorLocation {
-    Wgs84(uci::Wgs84Location),
-    Relative(uci::RelativeLocation),
-}
-
-impl DlTdoaAnchorLocation {
-    fn parse(value: &[u8]) -> Result<Option<Self>, AppConfigError> {
-        let id = uci::AppConfigTlvType::DlTdoaAnchorLocation;
-        let Some(&byte) = value.first() else {
-            return Err(AppConfigError::InvalidLength {
-                id,
-                expected: 1,
-                actual: 0,
-            });
-        };
-        let (header, rest) = uci::DlTdoaAnchorLocationHeader::decode(value)
-            .map_err(|_| AppConfigError::InvalidEnumValue { id, value: byte })?;
-        match (header.presence, header.location_type) {
-            (uci::DlTdoaAnchorLocationPresence::Absent, uci::DlTdoaAnchorLocationType::Wgs84) => {
-                if !rest.is_empty() {
-                    return Err(AppConfigError::InvalidLength {
-                        id,
-                        expected: 1,
-                        actual: value.len(),
-                    });
-                }
-                Ok(None)
-            }
-            (uci::DlTdoaAnchorLocationPresence::Absent, _) => {
-                Err(AppConfigError::InvalidEnumValue { id, value: byte })
-            }
-            (uci::DlTdoaAnchorLocationPresence::Present, uci::DlTdoaAnchorLocationType::Wgs84) => {
-                uci::Wgs84Location::decode_full(rest)
-                    .map(|loc| Some(Self::Wgs84(loc)))
-                    .map_err(|_| AppConfigError::InvalidLength {
-                        id,
-                        expected: 13,
-                        actual: value.len(),
-                    })
-            }
-            (
-                uci::DlTdoaAnchorLocationPresence::Present,
-                uci::DlTdoaAnchorLocationType::Relative,
-            ) => uci::RelativeLocation::decode_full(rest)
-                .map(|loc| Some(Self::Relative(loc)))
-                .map_err(|_| AppConfigError::InvalidLength {
-                    id,
-                    expected: 11,
-                    actual: value.len(),
-                }),
-        }
-    }
-}
-
-pub const DEFAULT_DL_TDOA_TX_TIMESTAMP_CONF: uci::DlTdoaTxTimestampConf =
-    uci::DlTdoaTxTimestampConf {
-        timestamp_type: uci::DlTdoaTxTimestampType::CommonTimeBase,
-        timestamp_length: uci::DlTdoaTimestampLength::SixtyFourBit,
-    };
-pub const DEFAULT_DL_TDOA_RANGING_METHOD: uci::DlTdoaRangingMethod =
-    uci::DlTdoaRangingMethod::DsTwr;
-
 const DEFAULT_STS_CONFIG: uci::StsConfig = uci::StsConfig::Static;
 const DEFAULT_CHANNEL_NUMBER: uci::ChannelNumber = uci::ChannelNumber::ChannelNumber9;
 const DEFAULT_NUMBER_OF_CONTROLEES: u8 = 1;
@@ -123,11 +61,6 @@ const DEFAULT_SUSPEND_RANGING_ROUNDS: uci::SuspendRangingRounds =
 const DEFAULT_RSSI_REPORTING: uci::RssiReporting = uci::RssiReporting::Disable;
 const DEFAULT_DATA_REPETITION_COUNT: u8 = 0;
 const DEFAULT_BLOCK_STRIDE_LENGTH: u8 = 0;
-const DEFAULT_DL_TDOA_BLOCK_SKIPPING: u8 = 0;
-const DEFAULT_DL_TDOA_ANCHOR_CFO: uci::DlTdoaAnchorCfo = uci::DlTdoaAnchorCfo::AnchorCfoIncluded;
-const DEFAULT_DL_TDOA_TX_ACTIVE_RANGING_ROUNDS: bool = false;
-const DEFAULT_DL_TDOA_TIME_REFERENCE_ANCHOR: bool = false;
-const DEFAULT_DL_TDOA_RESPONDER_TOF: bool = false;
 const DEFAULT_AOA_RESULT_REQ: uci::AoaResultReq = uci::AoaResultReq::AoaEnabled;
 const DEFAULT_AOA_BOUND_CONFIG: [u8; 8] = [0x00, 0xa6, 0x00, 0x5a, 0x00, 0xd3, 0x00, 0x2d];
 
@@ -674,17 +607,17 @@ impl AppConfig {
         Ok(())
     }
 
-    fn get_enum<T: TryFrom<u8>>(&self, id: uci::AppConfigTlvType) -> Option<T> {
+    pub fn get_enum<T: TryFrom<u8>>(&self, id: uci::AppConfigTlvType) -> Option<T> {
         self.get(id)
             .and_then(|v| v.first().copied())
             .and_then(|b| T::try_from(b).ok())
     }
 
-    fn get_u8(&self, id: uci::AppConfigTlvType) -> Option<u8> {
+    pub fn get_u8(&self, id: uci::AppConfigTlvType) -> Option<u8> {
         self.get(id).and_then(|v| v.first().copied())
     }
 
-    fn get_bool(&self, id: uci::AppConfigTlvType) -> Option<bool> {
+    pub fn get_bool(&self, id: uci::AppConfigTlvType) -> Option<bool> {
         self.get_u8(id).map(|v| v != 0)
     }
 
@@ -837,63 +770,9 @@ impl AppConfig {
             .unwrap_or(DEFAULT_NUMBER_OF_CONTROLEES)
     }
 
-    fn channel_number(&self) -> uci::ChannelNumber {
+    pub fn channel_number(&self) -> uci::ChannelNumber {
         self.get_enum(uci::AppConfigTlvType::ChannelNumber)
             .unwrap_or(DEFAULT_CHANNEL_NUMBER)
-    }
-
-    pub fn is_dl_tdoa(&self) -> bool {
-        self.ranging_round_usage() == Some(uci::RangingRoundUsage::OneWayRangingDlTdoa)
-    }
-
-    pub fn dl_tdoa_role(&self) -> Option<uci::DeviceRole> {
-        if self.is_dl_tdoa() {
-            self.device_role()
-        } else {
-            None
-        }
-    }
-
-    pub fn dl_tdoa_anchor_location(&self) -> Option<DlTdoaAnchorLocation> {
-        self.get(uci::AppConfigTlvType::DlTdoaAnchorLocation)
-            .and_then(|bytes| DlTdoaAnchorLocation::parse(bytes).ok().flatten())
-    }
-
-    pub fn dl_tdoa_includes_active_ranging_rounds(&self) -> bool {
-        self.get_bool(uci::AppConfigTlvType::DlTdoaTxActiveRangingRounds)
-            .unwrap_or(DEFAULT_DL_TDOA_TX_ACTIVE_RANGING_ROUNDS)
-    }
-
-    pub fn dl_tdoa_tx_timestamp_conf(&self) -> uci::DlTdoaTxTimestampConf {
-        self.get(uci::AppConfigTlvType::DlTdoaTxTimestampConf)
-            .and_then(|bytes| uci::DlTdoaTxTimestampConf::decode_full(bytes).ok())
-            .unwrap_or(DEFAULT_DL_TDOA_TX_TIMESTAMP_CONF)
-    }
-
-    pub fn dl_tdoa_ranging_method(&self) -> uci::DlTdoaRangingMethod {
-        self.get_enum(uci::AppConfigTlvType::DlTdoaRangingMethod)
-            .unwrap_or(DEFAULT_DL_TDOA_RANGING_METHOD)
-    }
-
-    pub fn dl_tdoa_includes_responder_tof(&self) -> bool {
-        self.get_bool(uci::AppConfigTlvType::DlTdoaResponderTof)
-            .unwrap_or(DEFAULT_DL_TDOA_RESPONDER_TOF)
-    }
-
-    pub fn dl_tdoa_includes_anchor_cfo(&self) -> bool {
-        self.get_enum(uci::AppConfigTlvType::DlTdoaAnchorCfo)
-            .unwrap_or(DEFAULT_DL_TDOA_ANCHOR_CFO)
-            == uci::DlTdoaAnchorCfo::AnchorCfoIncluded
-    }
-
-    pub fn dl_tdoa_is_time_reference_anchor(&self) -> bool {
-        self.get_bool(uci::AppConfigTlvType::DlTdoaTimeReferenceAnchor)
-            .unwrap_or(DEFAULT_DL_TDOA_TIME_REFERENCE_ANCHOR)
-    }
-
-    fn dl_tdoa_block_skipping(&self) -> u8 {
-        self.get_u8(uci::AppConfigTlvType::DlTdoaBlockSkipping)
-            .unwrap_or(DEFAULT_DL_TDOA_BLOCK_SKIPPING)
     }
 
     fn block_stride_length(&self) -> u8 {
@@ -994,13 +873,6 @@ impl AppConfig {
                 .is_some_and(|mac| self.dst_mac_address().any(|a| a == mac))
     }
 
-    pub fn is_compatible_for_dl_tdoa(&self, tag_config: &Self) -> bool {
-        self.dl_tdoa_role() == Some(uci::DeviceRole::DtAnchor)
-            && self.suspend_ranging_rounds() == uci::SuspendRangingRounds::Disable
-            && self.channel_number() == tag_config.channel_number()
-            && self.mac_address_mode() == tag_config.mac_address_mode()
-    }
-
     /// [UCI] 7.5.1 Configuration of a Session
     /// This section defines the mandatory APP Configuration Parameters to be applied
     /// by the Host for FiRa defined UWB Session types. The Host shall apply these
@@ -1090,7 +962,7 @@ impl AppConfig {
                 | uci::SessionType::FiraRangingAndInBandDataSession
                 | uci::SessionType::FiraDataTransferSession
         ) && u64::from(self.slot_duration()) * u64::from(self.slots_per_rr())
-            > u64::from(self.ranging_duration()) * crate::RSTU_PER_MS
+            > u64::from(self.ranging_duration()) * crate::ranging::RSTU_PER_MS
         {
             return Some(uci::ReasonCode::ErrorInvalidRangingDuration);
         }
