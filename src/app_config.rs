@@ -46,6 +46,7 @@ const DEFAULT_CHANNEL_NUMBER: uci::ChannelNumber = uci::ChannelNumber::ChannelNu
 const DEFAULT_NUMBER_OF_CONTROLEES: u8 = 1;
 const DEFAULT_SLOT_DURATION: u16 = 2400;
 const DEFAULT_SLOTS_PER_RR: u8 = 25;
+const DEFAULT_RESPONDER_SLOT_INDEX: u8 = 1;
 const DEFAULT_RANGING_DURATION: u32 = 200;
 const DEFAULT_SESSION_INFO_NTF_CONFIG: uci::SessionInfoNtfConfig =
     uci::SessionInfoNtfConfig::Enable;
@@ -89,7 +90,7 @@ impl AoaBounds {
         }
     }
 }
-const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
+const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 4] = [
     (
         uci::AppConfigTlvType::RangingDuration,
         Bytes::from_static(const { &96u32.to_le_bytes() }),
@@ -101,10 +102,6 @@ const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
     (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[6])),
     (
         uci::AppConfigTlvType::CccHopModeKey,
-        Bytes::from_static(&[0, 0, 0, 0]),
-    ),
-    (
-        uci::AppConfigTlvType::CccLastIndexUsed,
         Bytes::from_static(&[0, 0, 0, 0]),
     ),
 ];
@@ -363,6 +360,13 @@ impl AppConfig {
         Self { session_type, tlvs }
     }
 
+    pub fn is_ccc_or_aliro(&self) -> bool {
+        matches!(
+            self.session_type,
+            uci::SessionType::Ccc | uci::SessionType::Aliro
+        )
+    }
+
     /// Retrieve the APP configuration value with the selected identifier
     /// Returns `Some` if the identifier is set, `None` otherwise.
     pub fn get(&self, id: uci::AppConfigTlvType) -> Option<&Bytes> {
@@ -380,6 +384,23 @@ impl AppConfig {
     }
 
     fn parse_tlv(&self, id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
+        match id {
+            uci::AppConfigTlvType::CccHopModeKey
+            | uci::AppConfigTlvType::CccUwbTime0
+            | uci::AppConfigTlvType::CccRangingProtocolVer
+            | uci::AppConfigTlvType::CccUwbConfigId
+            | uci::AppConfigTlvType::CccPulseshapeCombo
+            | uci::AppConfigTlvType::CccUrskTtl
+                if !self.is_ccc_or_aliro() =>
+            {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            uci::AppConfigTlvType::AliroMacMode if self.session_type != uci::SessionType::Aliro => {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            _ => {}
+        }
+
         fn try_parse_array<const N: usize>(
             id: uci::AppConfigTlvType,
             value: &[u8],
@@ -518,8 +539,7 @@ impl AppConfig {
             | uci::AppConfigTlvType::CccUrskTtl => try_parse_u16(id, value),
             uci::AppConfigTlvType::RangingDuration
             | uci::AppConfigTlvType::StsIndex
-            | uci::AppConfigTlvType::SubSessionId
-            | uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
+            | uci::AppConfigTlvType::SubSessionId => try_parse_u32(id, value),
             uci::AppConfigTlvType::MacFcsType => try_parse_enum::<uci::MacFcsType>(id, value),
             uci::AppConfigTlvType::AoaResultReq => try_parse_enum::<uci::AoaResultReq>(id, value),
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
@@ -537,6 +557,10 @@ impl AppConfig {
                 try_parse_enum::<uci::RangingTimeStruct>(id, value)
             }
             uci::AppConfigTlvType::AoaBoundConfig => try_parse_array::<8>(id, value),
+            uci::AppConfigTlvType::ResponderSlotIndex => match try_parse_u8(id, value)? {
+                0 => Err(AppConfigError::InvalidEnumValue { id, value: 0 }),
+                _ => Ok(Bytes::copy_from_slice(value)),
+            },
             uci::AppConfigTlvType::PrfMode => try_parse_enum::<uci::PrfMode>(id, value),
             uci::AppConfigTlvType::CapSizeRange | uci::AppConfigTlvType::CccRangingProtocolVer => {
                 try_parse_array::<2>(id, value)
@@ -603,6 +627,10 @@ impl AppConfig {
         let bytes = self
             .parse_tlv(id, value)
             .inspect_err(|err| tracing::error!("{err}"))?;
+        if self.is_ccc_or_aliro() && id == uci::AppConfigTlvType::UwbInitiationTime {
+            self.tlvs
+                .insert(uci::AppConfigTlvType::CccUwbTime0, bytes.clone());
+        }
         self.tlvs.insert(id, bytes);
         Ok(())
     }
@@ -633,6 +661,10 @@ impl AppConfig {
 
     pub fn device_type(&self) -> Option<uci::DeviceType> {
         self.get_enum(uci::AppConfigTlvType::DeviceType)
+    }
+
+    pub fn sts_index(&self) -> u32 {
+        self.get_u32(uci::AppConfigTlvType::StsIndex).unwrap_or(0)
     }
 
     pub fn ranging_round_usage(&self) -> Option<uci::RangingRoundUsage> {
@@ -725,6 +757,11 @@ impl AppConfig {
             .unwrap_or(DEFAULT_SLOTS_PER_RR)
     }
 
+    pub fn responder_slot_index(&self) -> u8 {
+        self.get_u8(uci::AppConfigTlvType::ResponderSlotIndex)
+            .unwrap_or(DEFAULT_RESPONDER_SLOT_INDEX)
+    }
+
     pub fn effective_session_info_ntf_config(&self) -> uci::SessionInfoNtfConfig {
         let config = self
             .get_enum(uci::AppConfigTlvType::SessionInfoNtfConfig)
@@ -765,7 +802,7 @@ impl AppConfig {
             .unwrap_or(DEFAULT_SESSION_DATA_TRANSFER_STATUS_NTF_CONFIG)
     }
 
-    fn number_of_controlees(&self) -> u8 {
+    pub fn number_of_controlees(&self) -> u8 {
         self.get_u8(uci::AppConfigTlvType::NumberOfControlees)
             .unwrap_or(DEFAULT_NUMBER_OF_CONTROLEES)
     }
@@ -860,17 +897,64 @@ impl AppConfig {
         }
     }
 
+    fn is_compatible_for_ccc_or_aliro_ranging(&self, peer_config: &Self) -> bool {
+        const SHARED_CCC_TLVS: &[uci::AppConfigTlvType] = &[
+            uci::AppConfigTlvType::ChannelNumber,
+            uci::AppConfigTlvType::PreambleCodeIndex,
+            uci::AppConfigTlvType::SlotDuration,
+            uci::AppConfigTlvType::SlotsPerRr,
+            uci::AppConfigTlvType::RangingDuration,
+            uci::AppConfigTlvType::HoppingMode,
+            uci::AppConfigTlvType::CccHopModeKey,
+            uci::AppConfigTlvType::StsIndex,
+            uci::AppConfigTlvType::CccUwbConfigId,
+            uci::AppConfigTlvType::CccPulseshapeCombo,
+            uci::AppConfigTlvType::CccRangingProtocolVer,
+        ];
+        const SHARED_ALIRO_TLVS: &[uci::AppConfigTlvType] = &[
+            uci::AppConfigTlvType::AliroMacMode,
+            uci::AppConfigTlvType::SessionKey,
+        ];
+
+        let opposite_role = matches!(
+            (self.device_role(), peer_config.device_role()),
+            (
+                Some(uci::DeviceRole::Initiator),
+                Some(uci::DeviceRole::Responder)
+            ) | (
+                Some(uci::DeviceRole::Responder),
+                Some(uci::DeviceRole::Initiator)
+            )
+        );
+        let aliro_extra = if self.session_type == uci::SessionType::Aliro {
+            SHARED_ALIRO_TLVS
+        } else {
+            &[]
+        };
+
+        self.session_type == peer_config.session_type
+            && opposite_role
+            && SHARED_CCC_TLVS
+                .iter()
+                .chain(aliro_extra)
+                .all(|&id| self.get(id) == peer_config.get(id))
+    }
+
     pub fn is_compatible_for_ranging(&self, peer_config: &Self) -> bool {
-        self.device_role() != peer_config.device_role()
-            && self.device_type() != peer_config.device_type()
-            && self.mac_address_mode() == peer_config.mac_address_mode()
-            && self.channel_number() == peer_config.channel_number()
-            && self
-                .device_mac_address()
-                .is_some_and(|mac| peer_config.dst_mac_address().any(|a| a == mac))
-            && peer_config
-                .device_mac_address()
-                .is_some_and(|mac| self.dst_mac_address().any(|a| a == mac))
+        if self.is_ccc_or_aliro() || peer_config.is_ccc_or_aliro() {
+            self.is_compatible_for_ccc_or_aliro_ranging(peer_config)
+        } else {
+            self.device_role() != peer_config.device_role()
+                && self.device_type() != peer_config.device_type()
+                && self.mac_address_mode() == peer_config.mac_address_mode()
+                && self.channel_number() == peer_config.channel_number()
+                && self
+                    .device_mac_address()
+                    .is_some_and(|mac| peer_config.dst_mac_address().any(|a| a == mac))
+                && peer_config
+                    .device_mac_address()
+                    .is_some_and(|mac| self.dst_mac_address().any(|a| a == mac))
+        }
     }
 
     /// [UCI] 7.5.1 Configuration of a Session
@@ -945,6 +1029,16 @@ impl AppConfig {
         }
 
         if self.slots_per_rr() == 0 {
+            return Some(uci::ReasonCode::ErrorInsufficientSlotsPerRr);
+        }
+
+        if self.device_role() == Some(uci::DeviceRole::Responder)
+            && (self.is_ccc_or_aliro()
+                || self
+                    .tlvs
+                    .contains_key(&uci::AppConfigTlvType::ResponderSlotIndex))
+            && self.responder_slot_index() >= self.slots_per_rr()
+        {
             return Some(uci::ReasonCode::ErrorInsufficientSlotsPerRr);
         }
 
@@ -1234,6 +1328,127 @@ mod tests {
         assert_eq!(
             cfg.effective_session_info_ntf_config(),
             uci::SessionInfoNtfConfig::EnableProximityTrigger
+        );
+    }
+
+    #[test]
+    fn ccc_and_aliro_tlvs_are_gated_by_session_type() {
+        let mut fira = fira_config();
+        let fira_rejected: &[(uci::AppConfigTlvType, &[u8])] = &[
+            (uci::AppConfigTlvType::CccHopModeKey, &[1, 2, 3, 4]),
+            (uci::AppConfigTlvType::CccUwbTime0, &[0; 8]),
+            (uci::AppConfigTlvType::CccRangingProtocolVer, &[0, 1]),
+            (uci::AppConfigTlvType::CccUwbConfigId, &[1, 0]),
+            (uci::AppConfigTlvType::CccPulseshapeCombo, &[0x11]),
+            (uci::AppConfigTlvType::CccUrskTtl, &[0x10, 0x00]),
+            (uci::AppConfigTlvType::AliroMacMode, &[0x01]),
+            (uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+        ];
+        for &(id, value) in fira_rejected {
+            assert_eq!(
+                fira.set(id, value),
+                Err(AppConfigError::UnsupportedParameter(id)),
+                "expected FiRa to reject {id:?}"
+            );
+        }
+
+        let mut ccc = AppConfig::new(uci::SessionType::Ccc);
+        assert!(
+            ccc.set(uci::AppConfigTlvType::CccHopModeKey, &[1, 2, 3, 4])
+                .is_ok()
+        );
+        assert_eq!(
+            ccc.set(uci::AppConfigTlvType::AliroMacMode, &[0x01]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::AliroMacMode
+            ))
+        );
+        assert_eq!(
+            ccc.set(uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::CccLastIndexUsed
+            ))
+        );
+
+        let mut aliro = AppConfig::new(uci::SessionType::Aliro);
+        assert!(
+            aliro
+                .set(uci::AppConfigTlvType::AliroMacMode, &[0x41])
+                .is_ok()
+        );
+        assert_eq!(
+            aliro.set(uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::CccLastIndexUsed
+            ))
+        );
+    }
+
+    #[test]
+    fn ccc_uwb_initiation_time_mirrors_to_uwb_time0() {
+        const LEGACY_4B: [u8; 4] = [0x20, 0x03, 0x00, 0x00];
+        const EXPECTED_8B: [u8; 8] = [0x20, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+        let mut ccc = AppConfig::new(uci::SessionType::Ccc);
+        ccc.set(uci::AppConfigTlvType::UwbInitiationTime, &LEGACY_4B)
+            .unwrap();
+        assert_eq!(
+            ccc.get(uci::AppConfigTlvType::CccUwbTime0),
+            Some(&Bytes::from_static(&EXPECTED_8B))
+        );
+
+        let mut fira = fira_config();
+        fira.set(uci::AppConfigTlvType::UwbInitiationTime, &LEGACY_4B)
+            .unwrap();
+        assert!(fira.get(uci::AppConfigTlvType::CccUwbTime0).is_none());
+    }
+
+    #[test]
+    fn responder_slot_index_rejects_zero_and_out_of_range_start() {
+        let mut ccc = AppConfig::new(uci::SessionType::Ccc);
+        ccc.set(
+            uci::AppConfigTlvType::DeviceRole,
+            &[uci::DeviceRole::Responder as u8],
+        )
+        .unwrap();
+        ccc.set(
+            uci::AppConfigTlvType::MultiNodeMode,
+            &[uci::MultiNodeMode::OneToMany as u8],
+        )
+        .unwrap();
+        assert_eq!(
+            ccc.set(uci::AppConfigTlvType::ResponderSlotIndex, &[0]),
+            Err(AppConfigError::InvalidEnumValue {
+                id: uci::AppConfigTlvType::ResponderSlotIndex,
+                value: 0,
+            })
+        );
+
+        // Default CCC SLOTS_PER_RR is 6: slot 5 fits, slot 6 fails start validation.
+        ccc.set(uci::AppConfigTlvType::ResponderSlotIndex, &[5])
+            .unwrap();
+        assert_eq!(ccc.invalid_start_reason(), None);
+
+        ccc.set(uci::AppConfigTlvType::ResponderSlotIndex, &[6])
+            .unwrap();
+        assert_eq!(
+            ccc.invalid_start_reason(),
+            Some(uci::ReasonCode::ErrorInsufficientSlotsPerRr)
+        );
+
+        let mut fira_resp = fira_config();
+        fira_resp
+            .set(
+                uci::AppConfigTlvType::DeviceRole,
+                &[uci::DeviceRole::Responder as u8],
+            )
+            .unwrap();
+        fira_resp
+            .set(uci::AppConfigTlvType::ResponderSlotIndex, &[25])
+            .unwrap();
+        assert_eq!(
+            fira_resp.invalid_start_reason(),
+            Some(uci::ReasonCode::ErrorInsufficientSlotsPerRr)
         );
     }
 }

@@ -24,7 +24,13 @@ use bytes::BytesMut;
 use crate::data_transfer::DataTransfer;
 use crate::dl_tdoa::DlTdoaRangingRounds;
 use crate::packets::uci::*;
-use crate::{AppConfig, MacAddress};
+use crate::{AppConfig, Handle, MacAddress};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PeerKey {
+    Mac(MacAddress),
+    Handle(Handle),
+}
 
 pub struct Session {
     /// cf. [UCI] 7.1
@@ -38,9 +44,10 @@ pub struct Session {
     pub session_type: SessionType,
     pub sequence_number: u32,
     pub ranging_count: u32,
+    pub ccc_last_sts_index_used: Option<u32>,
     pub dl_tdoa_rounds: Option<DlTdoaRangingRounds>,
     pub app_config: AppConfig,
-    pub in_range_peers: HashSet<MacAddress>,
+    pub in_range_peers: HashSet<PeerKey>,
     next_ranging_at: Option<Instant>,
 }
 
@@ -55,6 +62,7 @@ impl Session {
             session_type,
             sequence_number: 0,
             ranging_count: 0,
+            ccc_last_sts_index_used: None,
             dl_tdoa_rounds: None,
             app_config: AppConfig::new(session_type),
             in_range_peers: HashSet::new(),
@@ -174,6 +182,15 @@ impl Session {
     pub fn has_reached_max_measurements(&self) -> bool {
         let max_measurements = u32::from(self.app_config.max_number_of_measurements());
         max_measurements != 0 && self.ranging_count >= max_measurements
+    }
+
+    pub fn advance_ccc_last_sts_index_used(&mut self) {
+        if self.app_config.is_ccc_or_aliro() {
+            self.ccc_last_sts_index_used = Some(match self.ccc_last_sts_index_used {
+                Some(last) => last.wrapping_add(1),
+                None => self.app_config.sts_index(),
+            });
+        }
     }
 }
 
