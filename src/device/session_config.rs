@@ -323,6 +323,7 @@ impl Device {
             && session.state != SessionState::SessionStateIdle)
             || session.app_config.device_type() != Some(DeviceType::Controller)
             || session.app_config.multi_node_mode() != Some(MultiNodeMode::OneToMany)
+            || session.app_config.mac_address_mode() != MacAddressMode::Mode0
         {
             return SessionUpdateControllerMulticastListRsp {
                 status: uci::Status::Rejected,
