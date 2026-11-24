@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
+
 use pdl_runtime::Packet;
 
 use crate::app_config::AppConfig;
 use crate::device::{Device, DeviceEffect};
 use crate::packets::uci::{self, *};
-use crate::session::Session;
+use crate::session::{PeerKey, Session};
 use crate::{DeviceEntry, Handle, MacAddress, Pica, RangingMeasurement, UciPacket};
 
 /// IEEE 802.15.4z fundamental UWB chipping rate (`499.2 MHz`).
@@ -63,6 +65,7 @@ impl TwoWayRangingMeasurement {
         mac_address: &MacAddress,
         local: RangingMeasurement,
         remote: RangingMeasurement,
+        slot_index: u8,
     ) -> Self {
         let (aoa_azimuth, aoa_azimuth_fom, aoa_elevation, aoa_elevation_fom) =
             encode_aoa(local, app_config.aoa_result_req());
@@ -88,7 +91,7 @@ impl TwoWayRangingMeasurement {
                     aoa_destination_azimuth_fom,
                     aoa_destination_elevation,
                     aoa_destination_elevation_fom,
-                    slot_index: 0,
+                    slot_index,
                     rssi,
                 })
             }
@@ -106,14 +109,14 @@ impl TwoWayRangingMeasurement {
                     aoa_destination_azimuth_fom,
                     aoa_destination_elevation,
                     aoa_destination_elevation_fom,
-                    slot_index: 0,
+                    slot_index,
                     rssi,
                 })
             }
         }
     }
 
-    fn timeout(mac_address: &MacAddress) -> Self {
+    fn timeout(mac_address: &MacAddress, slot_index: u8) -> Self {
         match mac_address {
             MacAddress::Short(address) => Self::Short(ShortAddressTwoWayRangingMeasurement {
                 mac_address: u16::from_le_bytes(*address),
@@ -128,7 +131,7 @@ impl TwoWayRangingMeasurement {
                 aoa_destination_azimuth_fom: 0,
                 aoa_destination_elevation: 0,
                 aoa_destination_elevation_fom: 0,
-                slot_index: 0,
+                slot_index,
                 rssi: 0,
             }),
             MacAddress::Extended(address) => {
@@ -145,7 +148,7 @@ impl TwoWayRangingMeasurement {
                     aoa_destination_azimuth_fom: 0,
                     aoa_destination_elevation: 0,
                     aoa_destination_elevation_fom: 0,
-                    slot_index: 0,
+                    slot_index,
                     rssi: 0,
                 })
             }
@@ -156,13 +159,6 @@ impl TwoWayRangingMeasurement {
         match self {
             Self::Short(m) => m.status,
             Self::Extended(m) => m.status,
-        }
-    }
-
-    fn mac_address(&self) -> MacAddress {
-        match self {
-            Self::Short(m) => MacAddress::Short(m.mac_address.to_le_bytes()),
-            Self::Extended(m) => MacAddress::Extended(m.mac_address.to_le_bytes()),
         }
     }
 
@@ -214,7 +210,7 @@ impl Device {
 fn finish_twr_round(
     device: &mut Device,
     session_id: u32,
-    measurements: Vec<TwoWayRangingMeasurement>,
+    measurements: Vec<(PeerKey, TwoWayRangingMeasurement)>,
     local_packets: &mut Vec<UciPacket>,
 ) -> Vec<DeviceEffect> {
     let Some(session) = device.session_mut(session_id) else {
@@ -226,27 +222,33 @@ fn finish_twr_round(
 
     let (send_ntf, measurements) = match session.app_config.effective_session_info_ntf_config() {
         uci::SessionInfoNtfConfig::Disable => (false, Vec::new()),
-        uci::SessionInfoNtfConfig::Enable => (true, measurements),
+        uci::SessionInfoNtfConfig::Enable => {
+            (true, measurements.into_iter().map(|(_, m)| m).collect())
+        }
         uci::SessionInfoNtfConfig::EnableProximityTrigger
         | uci::SessionInfoNtfConfig::EnableAoaTrigger
         | uci::SessionInfoNtfConfig::EnableProximityAoaTrigger => {
             let filtered: Vec<_> = measurements
                 .into_iter()
-                .filter(|m| m.is_within_bounds(&session.app_config))
+                .filter_map(|(_, m)| m.is_within_bounds(&session.app_config).then_some(m))
                 .collect();
             (!filtered.is_empty(), filtered)
         }
         uci::SessionInfoNtfConfig::EnableProximityEdgeTrigger
         | uci::SessionInfoNtfConfig::EnableAoaEdgeTrigger
         | uci::SessionInfoNtfConfig::EnableProximityAoaEdgeTrigger => {
+            session
+                .in_range_peers
+                .retain(|key| measurements.iter().any(|(k, _)| k == key));
             let emitted: Vec<_> = measurements
                 .into_iter()
-                .filter(|m| {
-                    if m.is_within_bounds(&session.app_config) {
-                        session.in_range_peers.insert(m.mac_address())
+                .filter_map(|(key, m)| {
+                    let changed = if m.is_within_bounds(&session.app_config) {
+                        session.in_range_peers.insert(key)
                     } else {
-                        session.in_range_peers.remove(&m.mac_address())
-                    }
+                        session.in_range_peers.remove(&key)
+                    };
+                    changed.then_some(m)
                 })
                 .collect();
             (!emitted.is_empty(), emitted)
@@ -333,6 +335,7 @@ impl Pica {
         device_handle: Handle,
         peer_handle: Option<Handle>,
         mac_address: &MacAddress,
+        slot_index: u8,
     ) -> TwoWayRangingMeasurement {
         peer_handle
             .and_then(|peer_handle| {
@@ -347,9 +350,10 @@ impl Pica {
                     mac_address,
                     local,
                     remote,
+                    slot_index,
                 ))
             })
-            .unwrap_or_else(|| TwoWayRangingMeasurement::timeout(mac_address))
+            .unwrap_or_else(|| TwoWayRangingMeasurement::timeout(mac_address, slot_index))
     }
 
     fn ccc_selected_initiator(
@@ -375,48 +379,119 @@ impl Pica {
         (initiator_entry, any_suspended)
     }
 
+    fn ccc_active_responder_slots(
+        &self,
+        initiator_handle: Handle,
+        initiator_session: &Session,
+        session_id: u32,
+    ) -> Vec<(u8, Handle)> {
+        let max_slot = if initiator_session.app_config.multi_node_mode()
+            == Some(uci::MultiNodeMode::OneToMany)
+        {
+            initiator_session.app_config.number_of_controlees()
+        } else {
+            1
+        };
+        let slots_per_rr = initiator_session.app_config.slots_per_rr();
+        let mut by_slot: BTreeMap<u8, Vec<Handle>> = BTreeMap::new();
+        for (slot, handle) in self
+            .devices
+            .values()
+            .filter(|peer| {
+                peer.device.handle != initiator_handle
+                    && peer.device.can_start_ranging(initiator_session, session_id)
+                    && !Self::is_peer_suspended(&peer.device, session_id)
+            })
+            .filter_map(|peer| {
+                let peer_session = peer.device.session(session_id)?;
+                let (selected, _) =
+                    self.ccc_selected_initiator(peer.device.handle, peer_session, session_id);
+                if selected.map(|entry| entry.device.handle) != Some(initiator_handle) {
+                    return None;
+                }
+                let slot = peer_session.app_config.responder_slot_index();
+                (slot <= max_slot && slot < slots_per_rr).then_some((slot, peer.device.handle))
+            })
+        {
+            by_slot.entry(slot).or_default().push(handle);
+        }
+        by_slot
+            .into_iter()
+            .filter_map(|(slot, handles)| match handles.as_slice() {
+                &[handle] => Some((slot, handle)),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn collect_ccc_twr_measurements(
         &self,
         device_handle: Handle,
         session_id: u32,
         session: &Session,
-    ) -> Option<Vec<TwoWayRangingMeasurement>> {
+    ) -> Option<Vec<(PeerKey, TwoWayRangingMeasurement)>> {
         let Some(mac_address) = Self::zero_mac(session.app_config.mac_address_mode()) else {
             return Some(Vec::new());
         };
-        let peer_handle = match session.app_config.device_role() {
-            Some(uci::DeviceRole::Initiator) => self
-                .devices
-                .values()
-                .filter(|peer_entry| {
-                    peer_entry.device.handle != device_handle
-                        && peer_entry.device.can_start_ranging(session, session_id)
-                        && !Self::is_peer_suspended(&peer_entry.device, session_id)
-                })
-                .map(|peer_entry| peer_entry.device.handle)
-                .min(),
+        match session.app_config.device_role() {
+            Some(uci::DeviceRole::Initiator) => {
+                let measurements = self
+                    .ccc_active_responder_slots(device_handle, session, session_id)
+                    .into_iter()
+                    .map(|(slot, peer_handle)| {
+                        (
+                            PeerKey::Handle(peer_handle),
+                            self.two_way_measurement(
+                                &session.app_config,
+                                device_handle,
+                                Some(peer_handle),
+                                &mac_address,
+                                slot,
+                            ),
+                        )
+                    })
+                    .collect();
+                Some(measurements)
+            }
             Some(uci::DeviceRole::Responder) => {
                 let (selected, any_suspended) =
                     self.ccc_selected_initiator(device_handle, session, session_id);
                 let Some(initiator_entry) = selected else {
                     return (!any_suspended).then(Vec::new);
                 };
-                Some(initiator_entry.device.handle)
+                let initiator_handle = initiator_entry.device.handle;
+                let has_active_slot =
+                    initiator_entry
+                        .device
+                        .session(session_id)
+                        .is_some_and(|initiator_session| {
+                            self.ccc_active_responder_slots(
+                                initiator_handle,
+                                initiator_session,
+                                session_id,
+                            )
+                            .iter()
+                            .any(|&(_, h)| h == device_handle)
+                        });
+                let measurements = has_active_slot
+                    .then(|| {
+                        (
+                            PeerKey::Handle(initiator_handle),
+                            self.two_way_measurement(
+                                &session.app_config,
+                                device_handle,
+                                Some(initiator_handle),
+                                &mac_address,
+                                0,
+                            ),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                Some(measurements)
             }
-            _ => None,
-        };
-        let measurements = peer_handle
-            .map(|peer_handle| {
-                self.two_way_measurement(
-                    &session.app_config,
-                    device_handle,
-                    Some(peer_handle),
-                    &mac_address,
-                )
-            })
-            .into_iter()
-            .collect();
-        Some(measurements)
+            _ => Some(Vec::new()),
+        }
     }
 
     fn collect_twr_measurements(
@@ -424,7 +499,7 @@ impl Pica {
         device_handle: Handle,
         session_id: u32,
         session: &Session,
-    ) -> Option<Vec<TwoWayRangingMeasurement>> {
+    ) -> Option<Vec<(PeerKey, TwoWayRangingMeasurement)>> {
         if session.app_config.is_ccc_or_aliro() {
             return self.collect_ccc_twr_measurements(device_handle, session_id, session);
         }
@@ -453,11 +528,15 @@ impl Pica {
             } else {
                 None
             };
-            measurements.push(self.two_way_measurement(
-                &session.app_config,
-                device_handle,
-                peer_handle,
-                &mac_address,
+            measurements.push((
+                PeerKey::Mac(mac_address),
+                self.two_way_measurement(
+                    &session.app_config,
+                    device_handle,
+                    peer_handle,
+                    &mac_address,
+                    0,
+                ),
             ));
         }
 
@@ -1070,42 +1149,6 @@ mod tests {
     }
 
     #[test]
-    fn ccc_ranging_advances_last_sts_index_used() {
-        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
-        let initiator = start_ccc_or_aliro_session(
-            &mut pica,
-            TWR_SESSION_ID,
-            SessionType::Ccc,
-            DeviceRole::Initiator,
-            MultiNodeMode::OneToOne,
-            vec![AppConfigTlv {
-                cfg_id: AppConfigTlvType::StsIndex,
-                v: 100u32.to_le_bytes().to_vec(),
-            }],
-        );
-        let read_last_sts = |pica: &mut Pica| -> u32 {
-            let pkts = send_cmd(
-                pica,
-                initiator,
-                SessionGetAppConfigCmd {
-                    session_token: TWR_SESSION_ID,
-                    app_cfg: vec![AppConfigTlvType::CccLastIndexUsed],
-                },
-            );
-            let rsp = SessionGetAppConfigRsp::decode_full(&pkts[0]).unwrap();
-            u32::from_le_bytes(rsp.tlvs[0].v.as_slice().try_into().unwrap())
-        };
-
-        pica.ranging(initiator, TWR_SESSION_ID);
-        let _ = pica.drain_packets().count();
-        assert_eq!(read_last_sts(&mut pica), 100);
-
-        pica.ranging(initiator, TWR_SESSION_ID);
-        let _ = pica.drain_packets().count();
-        assert_eq!(read_last_sts(&mut pica), 101);
-    }
-
-    #[test]
     fn ccc_and_aliro_pair_without_mac_addresses() {
         for (session_type, extra) in [
             (SessionType::Ccc, vec![]),
@@ -1141,7 +1184,7 @@ mod tests {
                 extra,
             );
 
-            for handle in [initiator, responder] {
+            for (handle, expected_slot) in [(initiator, 1u8), (responder, 0u8)] {
                 pica.ranging(handle, TWR_SESSION_ID);
                 let pkt = pica.drain_packets().next().unwrap().1;
                 let ntf = ShortMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
@@ -1150,7 +1193,7 @@ mod tests {
                 assert_eq!(m.status, uci::Status::Ok);
                 assert_eq!(m.mac_address, 0);
                 assert_eq!(m.distance, STANDARD_MEASUREMENT.range);
-                assert_eq!(m.slot_index, 0);
+                assert_eq!(m.slot_index, expected_slot);
             }
         }
     }
@@ -1233,6 +1276,42 @@ mod tests {
     }
 
     #[test]
+    fn ccc_ranging_advances_last_sts_index_used() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let initiator = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Initiator,
+            MultiNodeMode::OneToOne,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::StsIndex,
+                v: 100u32.to_le_bytes().to_vec(),
+            }],
+        );
+        let read_last_sts = |pica: &mut Pica| -> u32 {
+            let pkts = send_cmd(
+                pica,
+                initiator,
+                SessionGetAppConfigCmd {
+                    session_token: TWR_SESSION_ID,
+                    app_cfg: vec![AppConfigTlvType::CccLastIndexUsed],
+                },
+            );
+            let rsp = SessionGetAppConfigRsp::decode_full(&pkts[0]).unwrap();
+            u32::from_le_bytes(rsp.tlvs[0].v.as_slice().try_into().unwrap())
+        };
+
+        pica.ranging(initiator, TWR_SESSION_ID);
+        let _ = pica.drain_packets().count();
+        assert_eq!(read_last_sts(&mut pica), 100);
+
+        pica.ranging(initiator, TWR_SESSION_ID);
+        let _ = pica.drain_packets().count();
+        assert_eq!(read_last_sts(&mut pica), 101);
+    }
+
+    #[test]
     fn ccc_same_role_sessions_do_not_pair() {
         let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
         let resp1 = start_ccc_or_aliro_session(
@@ -1289,6 +1368,56 @@ mod tests {
 
     #[test]
     fn ccc_responder_suspend_filters_only_suspended_responder() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let initiator = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Initiator,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::NumberOfControlees,
+                v: vec![2],
+            }],
+        );
+        let _active_resp = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![1],
+            }],
+        );
+        let _suspended_resp = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                    v: vec![2],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::SuspendRangingRounds,
+                    v: vec![SuspendRangingRounds::Enable as u8],
+                },
+            ],
+        );
+
+        pica.ranging(initiator, TWR_SESSION_ID);
+        let pkt = pica.drain_packets().next().unwrap().1;
+        let ntf = ShortMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
+        assert_eq!(ntf.two_way_ranging_measurements.len(), 1);
+        assert_eq!(ntf.two_way_ranging_measurements[0].slot_index, 1);
+    }
+
+    #[test]
+    fn ccc_multi_anchor_reports_slots_within_controlee_limit() {
         let estimator = PairwiseEstimator::default();
         let mut pica = Pica::new(Box::new(estimator.clone()));
         let initiator = start_ccc_or_aliro_session(
@@ -1297,28 +1426,45 @@ mod tests {
             SessionType::Ccc,
             DeviceRole::Initiator,
             MultiNodeMode::OneToMany,
-            vec![],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::NumberOfControlees,
+                v: vec![2],
+            }],
         );
-        let suspended_resp = start_ccc_or_aliro_session(
+        let resp_slot1 = start_ccc_or_aliro_session(
             &mut pica,
             TWR_SESSION_ID,
             SessionType::Ccc,
             DeviceRole::Responder,
             MultiNodeMode::OneToMany,
             vec![AppConfigTlv {
-                cfg_id: AppConfigTlvType::SuspendRangingRounds,
-                v: vec![SuspendRangingRounds::Enable as u8],
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![1],
             }],
         );
-        let active_resp = start_ccc_or_aliro_session(
+        let resp_slot2 = start_ccc_or_aliro_session(
             &mut pica,
             TWR_SESSION_ID,
             SessionType::Ccc,
             DeviceRole::Responder,
             MultiNodeMode::OneToMany,
-            vec![],
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![2],
+            }],
         );
-        for (peer, range) in [(suspended_resp, 111u16), (active_resp, 222u16)] {
+        let _resp_slot3_over_limit = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![3],
+            }],
+        );
+        for (peer, range) in [(resp_slot1, 120u16), (resp_slot2, 240u16)] {
             let m = RangingMeasurement {
                 range,
                 azimuth: 0,
@@ -1331,7 +1477,283 @@ mod tests {
         pica.ranging(initiator, TWR_SESSION_ID);
         let pkt = pica.drain_packets().next().unwrap().1;
         let ntf = ShortMacTwoWaySessionInfoNtf::decode_full(&pkt).unwrap();
-        assert_eq!(ntf.two_way_ranging_measurements.len(), 1);
-        assert_eq!(ntf.two_way_ranging_measurements[0].distance, 222);
+        let slots_and_ranges: Vec<(u8, u16)> = ntf
+            .two_way_ranging_measurements
+            .iter()
+            .map(|m| (m.slot_index, m.distance))
+            .collect();
+        assert_eq!(slots_and_ranges, vec![(1, 120), (2, 240)]);
+    }
+
+    #[test]
+    fn ccc_multi_anchor_drops_colliding_slot_for_both_sides() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(STANDARD_MEASUREMENT)));
+        let initiator = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Initiator,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::NumberOfControlees,
+                v: vec![2],
+            }],
+        );
+        let _resp_slot1 = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![1],
+            }],
+        );
+        let resp_slot2_a = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![2],
+            }],
+        );
+        let _resp_slot2_b = start_ccc_or_aliro_session(
+            &mut pica,
+            TWR_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![2],
+            }],
+        );
+
+        pica.ranging(initiator, TWR_SESSION_ID);
+        let init_ntf =
+            ShortMacTwoWaySessionInfoNtf::decode_full(&pica.drain_packets().next().unwrap().1)
+                .unwrap();
+        assert_eq!(init_ntf.two_way_ranging_measurements.len(), 1);
+        assert_eq!(init_ntf.two_way_ranging_measurements[0].slot_index, 1);
+
+        pica.ranging(resp_slot2_a, TWR_SESSION_ID);
+        let resp_ntf =
+            ShortMacTwoWaySessionInfoNtf::decode_full(&pica.drain_packets().next().unwrap().1)
+                .unwrap();
+        assert!(resp_ntf.two_way_ranging_measurements.is_empty());
+    }
+
+    #[test]
+    fn ccc_multi_anchor_edge_trigger_tracks_peers_independently_by_handle() {
+        let estimator = PairwiseEstimator::default();
+        let mut pica = Pica::new(Box::new(estimator.clone()));
+        let initiator = start_ccc_or_aliro_session(
+            &mut pica,
+            EDGE_TRIGGER_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Initiator,
+            MultiNodeMode::OneToMany,
+            vec![
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::NumberOfControlees,
+                    v: vec![2],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::SessionInfoNtfConfig,
+                    v: vec![SessionInfoNtfConfig::EnableProximityEdgeTrigger as u8],
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::NearProximityConfig,
+                    v: NEAR_PROXIMITY_100_CM_LE.to_vec(),
+                },
+                AppConfigTlv {
+                    cfg_id: AppConfigTlvType::FarProximityConfig,
+                    v: FAR_PROXIMITY_200_CM_LE.to_vec(),
+                },
+            ],
+        );
+        let resp1 = start_ccc_or_aliro_session(
+            &mut pica,
+            EDGE_TRIGGER_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![1],
+            }],
+        );
+        let resp2 = start_ccc_or_aliro_session(
+            &mut pica,
+            EDGE_TRIGGER_SESSION_ID,
+            SessionType::Ccc,
+            DeviceRole::Responder,
+            MultiNodeMode::OneToMany,
+            vec![AppConfigTlv {
+                cfg_id: AppConfigTlvType::ResponderSlotIndex,
+                v: vec![2],
+            }],
+        );
+        let set_range = |peer: Handle, range: u16| {
+            let m = RangingMeasurement {
+                range,
+                azimuth: 0,
+                elevation: 0,
+            };
+            estimator.insert(initiator, peer, m);
+            estimator.insert(peer, initiator, m);
+        };
+
+        set_range(resp1, IN_RANGE_CM);
+        set_range(resp2, OUT_OF_RANGE_CM);
+        pica.ranging(initiator, EDGE_TRIGGER_SESSION_ID);
+        let ntf1 =
+            ShortMacTwoWaySessionInfoNtf::decode_full(&pica.drain_packets().next().unwrap().1)
+                .unwrap();
+        assert_eq!(ntf1.two_way_ranging_measurements.len(), 1);
+        assert_eq!(ntf1.two_way_ranging_measurements[0].slot_index, 1);
+
+        // Second responder entering window must emit independently despite sharing 0x0000 MAC.
+        set_range(resp2, IN_RANGE_CM);
+        pica.ranging(initiator, EDGE_TRIGGER_SESSION_ID);
+        let ntf2 =
+            ShortMacTwoWaySessionInfoNtf::decode_full(&pica.drain_packets().next().unwrap().1)
+                .unwrap();
+        assert_eq!(ntf2.two_way_ranging_measurements.len(), 1);
+        assert_eq!(ntf2.two_way_ranging_measurements[0].slot_index, 2);
+    }
+
+    #[test]
+    fn fira_multicast_remove_and_readd_retriggers_edge() {
+        let mut pica = Pica::new(Box::new(FixedEstimator(RangingMeasurement {
+            range: IN_RANGE_CM,
+            azimuth: 0,
+            elevation: 0,
+        })));
+        let controller = add_reset_device(&mut pica);
+        let controlee = add_reset_device(&mut pica);
+        start_fira_session(
+            &mut pica,
+            controller,
+            &FiraSessionConfig {
+                session_id: EDGE_TRIGGER_SESSION_ID,
+                session_type: SessionType::FiraRangingSession,
+                role: DeviceRole::Initiator,
+                dev_type: DeviceType::Controller,
+                mac_mode: MacAddressMode::Mode0,
+                multi_node_mode: MultiNodeMode::OneToMany,
+                local_mac: &CONTROLLER_SHORT_MAC,
+                dst_mac: Some(&CONTROLEE_SHORT_MAC),
+                ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+                ranging_duration_ms: RANGING_DURATION_MS,
+                extra_tlvs: vec![
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::SessionInfoNtfConfig,
+                        v: vec![SessionInfoNtfConfig::EnableProximityEdgeTrigger as u8],
+                    },
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::NearProximityConfig,
+                        v: NEAR_PROXIMITY_100_CM_LE.to_vec(),
+                    },
+                    AppConfigTlv {
+                        cfg_id: AppConfigTlvType::FarProximityConfig,
+                        v: FAR_PROXIMITY_200_CM_LE.to_vec(),
+                    },
+                ],
+            },
+        );
+        start_fira_session(
+            &mut pica,
+            controlee,
+            &FiraSessionConfig {
+                session_id: EDGE_TRIGGER_SESSION_ID,
+                session_type: SessionType::FiraRangingSession,
+                role: DeviceRole::Responder,
+                dev_type: DeviceType::Controlee,
+                mac_mode: MacAddressMode::Mode0,
+                multi_node_mode: MultiNodeMode::OneToMany,
+                local_mac: &CONTROLEE_SHORT_MAC,
+                dst_mac: Some(&CONTROLLER_SHORT_MAC),
+                ranging_round_usage: RangingRoundUsage::DsTwrDeferredMode,
+                ranging_duration_ms: RANGING_DURATION_MS,
+                extra_tlvs: vec![],
+            },
+        );
+
+        // Add a dummy second controlee so removing controlee does not deactivate the session.
+        let dummy_mac = [0x9A, 0xBC];
+        let _ = send_cmd(
+            &mut pica,
+            controller,
+            SessionUpdateControllerMulticastListCmd {
+                session_token: EDGE_TRIGGER_SESSION_ID,
+                action: UpdateMulticastListAction::AddControlee,
+                payload: SessionUpdateControllerMulticastListCmdPayload {
+                    controlees: vec![Controlee {
+                        short_address: dummy_mac,
+                        subsession_id: 1,
+                    }],
+                }
+                .encode_to_vec()
+                .unwrap(),
+            },
+        );
+
+        // Initial entry emits; second round suppressed.
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_some());
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_none());
+
+        // Remove controlee, tick once to clear stale in_range_peers entry, then re-add.
+        let _ = send_cmd(
+            &mut pica,
+            controller,
+            SessionUpdateControllerMulticastListCmd {
+                session_token: EDGE_TRIGGER_SESSION_ID,
+                action: UpdateMulticastListAction::RemoveControlee,
+                payload: SessionUpdateControllerMulticastListCmdPayload {
+                    controlees: vec![Controlee {
+                        short_address: CONTROLEE_SHORT_MAC,
+                        subsession_id: 0,
+                    }],
+                }
+                .encode_to_vec()
+                .unwrap(),
+            },
+        );
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        let _ = pica.drain_packets().count();
+
+        // Re-start controlee (stopped by in-band termination on removal) and re-add to multicast list.
+        let _ = send_cmd(
+            &mut pica,
+            controlee,
+            SessionStartCmd {
+                session_id: EDGE_TRIGGER_SESSION_ID,
+            },
+        );
+        let _ = send_cmd(
+            &mut pica,
+            controller,
+            SessionUpdateControllerMulticastListCmd {
+                session_token: EDGE_TRIGGER_SESSION_ID,
+                action: UpdateMulticastListAction::AddControlee,
+                payload: SessionUpdateControllerMulticastListCmdPayload {
+                    controlees: vec![Controlee {
+                        short_address: CONTROLEE_SHORT_MAC,
+                        subsession_id: 0,
+                    }],
+                }
+                .encode_to_vec()
+                .unwrap(),
+            },
+        );
+        pica.ranging(controller, EDGE_TRIGGER_SESSION_ID);
+        assert!(pica.drain_packets().next().is_some());
     }
 }

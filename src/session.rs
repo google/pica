@@ -24,7 +24,13 @@ use bytes::BytesMut;
 use crate::data_transfer::DataTransfer;
 use crate::dl_tdoa::DlTdoaRangingRounds;
 use crate::packets::uci::*;
-use crate::{AppConfig, MacAddress};
+use crate::{AppConfig, Handle, MacAddress};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PeerKey {
+    Mac(MacAddress),
+    Handle(Handle),
+}
 
 pub struct Session {
     /// cf. [UCI] 7.1
@@ -41,7 +47,7 @@ pub struct Session {
     pub ccc_last_sts_index_used: Option<u32>,
     pub dl_tdoa_rounds: Option<DlTdoaRangingRounds>,
     pub app_config: AppConfig,
-    pub in_range_peers: HashSet<MacAddress>,
+    pub in_range_peers: HashSet<PeerKey>,
     next_ranging_at: Option<Instant>,
 }
 
