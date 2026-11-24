@@ -33,6 +33,8 @@ use thiserror::Error;
 
 #[cfg(feature = "ffi")]
 pub mod ffi;
+#[cfg(feature = "hegel")]
+use hegel as _;
 pub mod packets;
 pub mod pcapng;
 
