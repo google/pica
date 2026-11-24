@@ -117,14 +117,13 @@ impl Session {
         )
     }
 
-    pub fn set_app_config(&mut self, app_config: AppConfig) {
+    pub fn set_app_config(&mut self, app_config: AppConfig, now: Instant) {
         let old_interval = self.ranging_interval();
         self.app_config = app_config;
         let new_interval = self.ranging_interval();
         if new_interval != old_interval
             && let Some(deadline) = self.next_ranging_at
         {
-            let now = Instant::now();
             self.next_ranging_at = Some(
                 deadline
                     .checked_sub(old_interval)
@@ -147,8 +146,8 @@ impl Session {
         self.next_ranging_at
     }
 
-    pub fn start_ranging(&mut self) {
-        self.next_ranging_at = Some(Instant::now() + self.ranging_interval());
+    pub fn start_ranging(&mut self, now: Instant) {
+        self.next_ranging_at = Some(now + self.ranging_interval());
     }
 
     pub fn poll_ranging(&mut self, now: Instant) -> bool {

@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::time::Instant;
+
 use crate::packets::uci::{self, *};
 
 use super::{CommandOutput, Device, DeviceEffect};
 
 impl Device {
-    pub fn session_start(&mut self, cmd: SessionStartCmd) -> CommandOutput {
+    pub fn session_start(&mut self, cmd: SessionStartCmd, now: Instant) -> CommandOutput {
         let session_id = cmd.session_id;
 
         tracing::debug!("[{}:0x{session_id:x}] Session Start", self.handle);
@@ -49,7 +51,7 @@ impl Device {
             );
         }
 
-        session.start_ranging();
+        session.start_ranging(now);
 
         let session_ntf = session
             .set_state(

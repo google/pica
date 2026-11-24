@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::time::Instant;
+
 use crate::packets::uci::{self, *};
 
 use super::capabilities::DEFAULT_CAPS_INFO;
@@ -25,13 +27,13 @@ const TEST_VERSION: u16 = 0x1001; // Version 1.1
 impl Device {
     // The fira norm specify to send a response, then reset, then
     // send a notification once the reset is done
-    pub fn core_device_reset(&mut self, cmd: CoreDeviceResetCmd) -> CommandOutput {
+    pub fn core_device_reset(&mut self, cmd: CoreDeviceResetCmd, now: Instant) -> CommandOutput {
         let reset_config = cmd.reset_config;
         tracing::debug!("[{}] DeviceReset", self.handle);
         tracing::debug!("  reset_config={reset_config:?}");
 
         *self = Device::new(self.handle);
-        self.is_reset = true;
+        self.boot_time = Some(now);
         let effects = self.init();
 
         CommandOutput::with_effects(
@@ -152,10 +154,16 @@ impl Device {
         }
     }
 
-    pub fn core_query_timestamp(&self) -> CoreQueryTimeStampRsp {
+    pub fn core_query_timestamp(&self, now: Instant) -> CoreQueryTimeStampRsp {
+        let Some(boot) = self.boot_time else {
+            return CoreQueryTimeStampRsp {
+                status: uci::Status::Rejected,
+                timeStamp: 0,
+            };
+        };
         CoreQueryTimeStampRsp {
             status: uci::Status::Ok,
-            timeStamp: self.boot_time.elapsed().as_micros() as u64,
+            timeStamp: now.saturating_duration_since(boot).as_micros() as u64,
         }
     }
 }

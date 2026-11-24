@@ -20,6 +20,7 @@ use pica::Pica;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
+use std::time::Instant;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -94,13 +95,13 @@ async fn main() -> Result<(), Error> {
                 let sink = spawn_device(handle, socket, args.pcapng_dir.as_deref(), &event_tx);
                 device_sinks.insert(handle, sink);
             }
-            () = wait_for_tick(pica.next_tick()) => {
-                pica.tick();
+            () = wait_for_tick(pica.next_deadline()) => {
+                pica.tick(Instant::now());
             }
             Some(event) = event_rx.recv() => {
                 match event {
                     DeviceEvent::Packet(handle, packet) => {
-                        pica.handle_packet(handle, &packet);
+                        pica.handle_packet(handle, &packet, Instant::now());
                     }
                     DeviceEvent::Disconnected(handle) => {
                         pica.remove_device(handle);
