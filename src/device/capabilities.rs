@@ -491,7 +491,6 @@ mod tests {
 
     use super::*;
 
-    const EXPECTED_CAPS_TLV_COUNT: usize = 38;
     const CUSTOM_CAPS: Capabilities = Capabilities {
         max_message_size: 2048,
         max_data_packet_payload_size: 512,
@@ -558,11 +557,43 @@ mod tests {
     };
 
     #[test]
-    fn default_caps_info_emits_distinct_tlv_keys() {
+    fn default_caps_info_satisfies_fira_2_0_contract() {
         let raw_tlvs = DEFAULT_CAPS_INFO.to_tlvs();
         let caps: HashMap<CapTlvType, Vec<u8>> =
             raw_tlvs.iter().map(|tlv| (tlv.t, tlv.v.clone())).collect();
-        assert_eq!(caps.len(), EXPECTED_CAPS_TLV_COUNT);
+        assert_eq!(caps.len(), raw_tlvs.len());
+
+        // Android FiraDecoder branches on 4-byte PHY/MAC ranges and indexes these fields unguarded.
+        for key in [
+            CapTlvType::SupportedFiraPhyVersionRange,
+            CapTlvType::SupportedFiraMacVersionRange,
+        ] {
+            assert_eq!(caps.get(&key).map(Vec::len), Some(4), "for {key:?}");
+        }
+        for key in [
+            CapTlvType::SupportedMaxMessageSize,
+            CapTlvType::SupportedMaxDataPacketPayloadSize,
+            CapTlvType::SupportedDeviceRoles,
+        ] {
+            assert_eq!(caps.get(&key).map(Vec::len), Some(2), "for {key:?}");
+        }
+        let ranging_methods = caps
+            .get(&CapTlvType::SupportedRangingMethod)
+            .expect("missing SupportedRangingMethod");
+        assert_eq!(ranging_methods.len(), 2);
+        // Bit 0x02 of byte 1 advertises FiRa 3.0 RANGING_ROUND_USAGE_DATA_TRANSFER_MODE (unimplemented).
+        assert_eq!(ranging_methods[1] & 0x02, 0);
+        let hprf = caps
+            .get(&CapTlvType::SupportedHprfParameterSets)
+            .expect("missing SupportedHprfParameterSets");
+        assert_eq!(hprf.len(), 5);
+        // Bit 39 must stay clear so Android's reverse-bytes BigInteger.longValue() stays positive.
+        assert_eq!(hprf[4] & 0x80, 0);
+        assert_eq!(
+            caps.get(&CapTlvType::SupportedAoaResultReqAntennaInterleaving)
+                .map(Vec::len),
+            Some(1)
+        );
     }
 
     #[test]

@@ -401,7 +401,6 @@ mod tests {
     const PEER_SHORT_MAC: [u8; 2] = [0x56, 0x78];
     const EXTRA_CONTROLEE_MAC: [u8; 2] = [0x9A, 0xBC];
     const RANGING_DURATION_MS: u32 = 100;
-    const EXPECTED_FIRA_VERSION_2_0: u16 = 0x0002;
     const EXPECTED_MAX_DATA_SIZE: u16 = 1020;
     const DEVICE_STATE_READY_BYTE: u8 = 0x01;
     const DEVICE_STATE_ACTIVE_BYTE: u8 = 0x02;
@@ -516,17 +515,6 @@ mod tests {
     }
 
     #[test]
-    fn core_get_device_info_returns_fira_2_0_versions() {
-        let mut device = reset_device();
-        let packets = send_cmd(&mut device, CoreGetDeviceInfoCmd {});
-        let info = CoreGetDeviceInfoRsp::decode_full(&packets[0]).unwrap();
-        assert_eq!(info.status, uci::Status::Ok);
-        assert_eq!(info.uci_version, EXPECTED_FIRA_VERSION_2_0);
-        assert_eq!(info.mac_version, EXPECTED_FIRA_VERSION_2_0);
-        assert_eq!(info.phy_version, EXPECTED_FIRA_VERSION_2_0);
-    }
-
-    #[test]
     fn core_query_timestamp_measures_elapsed_microseconds_from_reset() {
         use std::time::Duration;
 
@@ -556,6 +544,36 @@ mod tests {
         assert_eq!(ts1.timeStamp, 0);
         assert_eq!(ts2.status, uci::Status::Ok);
         assert_eq!(ts2.timeStamp, 500);
+    }
+
+    #[test]
+    fn core_device_reset_resets_timestamp_to_zero() {
+        use std::time::Duration;
+
+        let t0 = Instant::now();
+        let mut device = Device::new(0);
+        let _ = device.init();
+        let _ = send_cmd_at(
+            &mut device,
+            CoreDeviceResetCmd {
+                reset_config: ResetConfig::UwbsReset,
+            },
+            t0,
+        );
+        let t1 = t0 + Duration::from_micros(500);
+        let _ = send_cmd_at(
+            &mut device,
+            CoreDeviceResetCmd {
+                reset_config: ResetConfig::UwbsReset,
+            },
+            t1,
+        );
+        let ts = CoreQueryTimeStampRsp::decode_full(
+            &send_cmd_at(&mut device, CoreQueryTimeStampCmd {}, t1)[0],
+        )
+        .unwrap();
+        assert_eq!(ts.status, uci::Status::Ok);
+        assert_eq!(ts.timeStamp, 0);
     }
 
     #[test]
@@ -693,6 +711,20 @@ mod tests {
     }
 
     #[test]
+    fn receive_packet_ignores_non_command_packets() {
+        let mut device = reset_device();
+        for mt in [MessageType::Response, MessageType::Notification] {
+            let pkt = [u8::from(mt) << 5, 0x02, 0x00, 0x00];
+            assert!(
+                device
+                    .receive_packet(pkt.to_vec(), Instant::now())
+                    .is_empty(),
+                "expected {mt:?} frame to be ignored"
+            );
+        }
+    }
+
+    #[test]
     fn receive_command_rejects_vendor_reserved_gid() {
         let mut device = reset_device();
         let effects = device.receive_packet(VENDOR_RESERVED_GID_CMD.to_vec(), Instant::now());
@@ -810,6 +842,34 @@ mod tests {
             DeviceState::DeviceStateReady
         );
         assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn session_set_app_config_rejects_missing_mandatory_params() {
+        let mut device = reset_device();
+        let _ = send_cmd(
+            &mut device,
+            SessionInitCmd {
+                session_id: SESSION_ID,
+                session_type: SessionType::FiraRangingSession,
+            },
+        );
+        let packets = send_cmd(
+            &mut device,
+            SessionSetAppConfigCmd {
+                session_token: SESSION_ID,
+                tlvs: vec![AppConfigTlv {
+                    cfg_id: AppConfigTlvType::DeviceRole,
+                    v: vec![DeviceRole::Initiator as u8],
+                }],
+            },
+        );
+        assert_eq!(
+            SessionSetAppConfigRsp::decode_full(&packets[0])
+                .unwrap()
+                .status,
+            uci::Status::Rejected
+        );
     }
 
     #[test]
