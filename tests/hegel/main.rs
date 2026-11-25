@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[path = "../common/mod.rs"]
 mod common;
 mod config;
 mod data_transfer;

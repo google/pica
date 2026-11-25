@@ -38,6 +38,7 @@ pub struct Session {
     pub session_type: SessionType,
     pub sequence_number: u32,
     pub ranging_count: u32,
+    pub ccc_last_sts_index_used: Option<u32>,
     pub dl_tdoa_rounds: Option<DlTdoaRangingRounds>,
     pub app_config: AppConfig,
     pub in_range_peers: HashSet<MacAddress>,
@@ -55,6 +56,7 @@ impl Session {
             session_type,
             sequence_number: 0,
             ranging_count: 0,
+            ccc_last_sts_index_used: None,
             dl_tdoa_rounds: None,
             app_config: AppConfig::new(session_type),
             in_range_peers: HashSet::new(),
@@ -174,5 +176,115 @@ impl Session {
     pub fn has_reached_max_measurements(&self) -> bool {
         let max_measurements = u32::from(self.app_config.max_number_of_measurements());
         max_measurements != 0 && self.ranging_count >= max_measurements
+    }
+
+    pub fn advance_ccc_last_sts_index_used(&mut self) {
+        if self.app_config.is_ccc_or_aliro() {
+            self.ccc_last_sts_index_used = Some(match self.ccc_last_sts_index_used {
+                Some(last) => last.wrapping_add(1),
+                None => self.app_config.sts_index(),
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packets::uci;
+
+    const TEST_SESSION_ID: u32 = 42;
+    const TEST_DEVICE_HANDLE: usize = 7;
+    const BASE_DURATION_MS: u32 = 120;
+    const BASE_DURATION_MS_LE: [u8; 4] = [0x78, 0x00, 0x00, 0x00];
+    const STRIDE_1_INTERVAL_MS: u64 = 240;
+    const STRIDE_2_INTERVAL_MS: u32 = 360;
+    const MISSED_INTERVAL_NOW_MS: u64 = 600;
+    const RESCHEDULE_ELAPSED_MS: u64 = 25;
+
+    fn make_session(role: uci::DeviceRole, dev_type: uci::DeviceType, stride: u8) -> Session {
+        let mut session = Session::new(
+            TEST_SESSION_ID,
+            SessionType::FiraRangingSession,
+            TEST_DEVICE_HANDLE,
+        );
+        session
+            .app_config
+            .set(uci::AppConfigTlvType::DeviceRole, &[role as u8])
+            .unwrap();
+        session
+            .app_config
+            .set(uci::AppConfigTlvType::DeviceType, &[dev_type as u8])
+            .unwrap();
+        session
+            .app_config
+            .set(uci::AppConfigTlvType::RangingDuration, &BASE_DURATION_MS_LE)
+            .unwrap();
+        session
+            .app_config
+            .set(uci::AppConfigTlvType::BlockStrideLength, &[stride])
+            .unwrap();
+        session
+    }
+
+    #[test]
+    fn block_stride_extends_controller_interval() {
+        let controller = make_session(uci::DeviceRole::Initiator, uci::DeviceType::Controller, 2);
+        assert_eq!(controller.ranging_interval_ms(), STRIDE_2_INTERVAL_MS);
+    }
+
+    #[test]
+    fn block_stride_ignored_for_controlee() {
+        let controlee = make_session(uci::DeviceRole::Responder, uci::DeviceType::Controlee, 2);
+        assert_eq!(controlee.ranging_interval_ms(), BASE_DURATION_MS);
+    }
+
+    #[test]
+    fn poll_ranging_advances_deadline_after_expiry() {
+        let mut session = make_session(uci::DeviceRole::Initiator, uci::DeviceType::Controller, 1);
+        assert_eq!(session.ranging_interval_ms(), STRIDE_1_INTERVAL_MS as u32);
+
+        let t0 = Instant::now();
+        session.start_ranging(t0);
+        let first_deadline = t0 + Duration::from_millis(STRIDE_1_INTERVAL_MS);
+        assert!(!session.poll_ranging(first_deadline - Duration::from_millis(1)));
+        assert!(session.poll_ranging(first_deadline));
+        assert_eq!(
+            session.next_ranging_at(),
+            Some(t0 + Duration::from_millis(2 * STRIDE_1_INTERVAL_MS))
+        );
+    }
+
+    #[test]
+    fn poll_ranging_catches_up_after_missed_interval() {
+        let mut session = make_session(uci::DeviceRole::Initiator, uci::DeviceType::Controller, 1);
+        let t0 = Instant::now();
+        session.start_ranging(t0);
+
+        let late = t0 + Duration::from_millis(MISSED_INTERVAL_NOW_MS);
+        assert!(session.poll_ranging(late));
+        assert_eq!(
+            session.next_ranging_at(),
+            Some(late + Duration::from_millis(STRIDE_1_INTERVAL_MS))
+        );
+    }
+
+    #[test]
+    fn set_app_config_reschedules_next_ranging_deadline() {
+        let mut session = make_session(uci::DeviceRole::Initiator, uci::DeviceType::Controller, 1);
+        let t0 = Instant::now();
+        session.start_ranging(t0);
+
+        let mut updated = session.app_config.clone();
+        updated
+            .set(uci::AppConfigTlvType::BlockStrideLength, &[0])
+            .unwrap();
+        session.set_app_config(updated, t0 + Duration::from_millis(RESCHEDULE_ELAPSED_MS));
+
+        assert_eq!(session.ranging_interval_ms(), BASE_DURATION_MS);
+        assert_eq!(
+            session.next_ranging_at(),
+            Some(t0 + Duration::from_millis(u64::from(BASE_DURATION_MS)))
+        );
     }
 }

@@ -89,7 +89,7 @@ impl AoaBounds {
         }
     }
 }
-const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
+const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 4] = [
     (
         uci::AppConfigTlvType::RangingDuration,
         Bytes::from_static(const { &96u32.to_le_bytes() }),
@@ -101,10 +101,6 @@ const DEFAULT_CCC_TLVS: [(uci::AppConfigTlvType, Bytes); 5] = [
     (uci::AppConfigTlvType::SlotsPerRr, Bytes::from_static(&[6])),
     (
         uci::AppConfigTlvType::CccHopModeKey,
-        Bytes::from_static(&[0, 0, 0, 0]),
-    ),
-    (
-        uci::AppConfigTlvType::CccLastIndexUsed,
         Bytes::from_static(&[0, 0, 0, 0]),
     ),
 ];
@@ -363,6 +359,13 @@ impl AppConfig {
         Self { session_type, tlvs }
     }
 
+    pub fn is_ccc_or_aliro(&self) -> bool {
+        matches!(
+            self.session_type,
+            uci::SessionType::Ccc | uci::SessionType::Aliro
+        )
+    }
+
     /// Retrieve the APP configuration value with the selected identifier
     /// Returns `Some` if the identifier is set, `None` otherwise.
     pub fn get(&self, id: uci::AppConfigTlvType) -> Option<&Bytes> {
@@ -380,6 +383,23 @@ impl AppConfig {
     }
 
     fn parse_tlv(&self, id: uci::AppConfigTlvType, value: &[u8]) -> Result<Bytes, AppConfigError> {
+        match id {
+            uci::AppConfigTlvType::CccHopModeKey
+            | uci::AppConfigTlvType::CccUwbTime0
+            | uci::AppConfigTlvType::CccRangingProtocolVer
+            | uci::AppConfigTlvType::CccUwbConfigId
+            | uci::AppConfigTlvType::CccPulseshapeCombo
+            | uci::AppConfigTlvType::CccUrskTtl
+                if !self.is_ccc_or_aliro() =>
+            {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            uci::AppConfigTlvType::AliroMacMode if self.session_type != uci::SessionType::Aliro => {
+                return Err(AppConfigError::UnsupportedParameter(id));
+            }
+            _ => {}
+        }
+
         fn try_parse_array<const N: usize>(
             id: uci::AppConfigTlvType,
             value: &[u8],
@@ -518,8 +538,7 @@ impl AppConfig {
             | uci::AppConfigTlvType::CccUrskTtl => try_parse_u16(id, value),
             uci::AppConfigTlvType::RangingDuration
             | uci::AppConfigTlvType::StsIndex
-            | uci::AppConfigTlvType::SubSessionId
-            | uci::AppConfigTlvType::CccLastIndexUsed => try_parse_u32(id, value),
+            | uci::AppConfigTlvType::SubSessionId => try_parse_u32(id, value),
             uci::AppConfigTlvType::MacFcsType => try_parse_enum::<uci::MacFcsType>(id, value),
             uci::AppConfigTlvType::AoaResultReq => try_parse_enum::<uci::AoaResultReq>(id, value),
             uci::AppConfigTlvType::SessionInfoNtfConfig => {
@@ -603,6 +622,10 @@ impl AppConfig {
         let bytes = self
             .parse_tlv(id, value)
             .inspect_err(|err| tracing::error!("{err}"))?;
+        if self.is_ccc_or_aliro() && id == uci::AppConfigTlvType::UwbInitiationTime {
+            self.tlvs
+                .insert(uci::AppConfigTlvType::CccUwbTime0, bytes.clone());
+        }
         self.tlvs.insert(id, bytes);
         Ok(())
     }
@@ -633,6 +656,10 @@ impl AppConfig {
 
     pub fn device_type(&self) -> Option<uci::DeviceType> {
         self.get_enum(uci::AppConfigTlvType::DeviceType)
+    }
+
+    pub fn sts_index(&self) -> u32 {
+        self.get_u32(uci::AppConfigTlvType::StsIndex).unwrap_or(0)
     }
 
     pub fn ranging_round_usage(&self) -> Option<uci::RangingRoundUsage> {
@@ -968,5 +995,344 @@ impl AppConfig {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LOCAL_SHORT_MAC: [u8; 2] = [0x12, 0x34];
+    const PEER_SHORT_MAC: [u8; 2] = [0x56, 0x78];
+    const EXTRA_PEER_SHORT_MAC: [u8; 2] = [0x9A, 0xBC];
+    const DURATION_49_MS_LE: [u8; 4] = [0x31, 0x00, 0x00, 0x00];
+    const DURATION_50_MS_LE: [u8; 4] = [0x32, 0x00, 0x00, 0x00];
+    const ZERO_U32_LE: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
+    const ZERO_U16_LE: [u8; 2] = [0x00, 0x00];
+    const WGS84_COORDS: [u8; 12] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+    ];
+    const WGS84_LOCATION_TLV: [u8; 13] = [
+        0x01, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+    ];
+    const RELATIVE_COORDS: (u32, u32, u32) = (0x012_3456, 0x023_4567, 0x34_5678);
+    const RELATIVE_LOCATION_TLV: [u8; 11] = [
+        0x03, 0x56, 0x34, 0x12, 0x70, 0x56, 0x34, 0x02, 0x78, 0x56, 0x34,
+    ];
+
+    fn fira_config() -> AppConfig {
+        let mut cfg = AppConfig::new(uci::SessionType::FiraRangingSession);
+        cfg.set(
+            uci::AppConfigTlvType::DeviceRole,
+            &[uci::DeviceRole::Initiator as u8],
+        )
+        .unwrap();
+        cfg.set(
+            uci::AppConfigTlvType::DeviceType,
+            &[uci::DeviceType::Controller as u8],
+        )
+        .unwrap();
+        cfg.set(
+            uci::AppConfigTlvType::MultiNodeMode,
+            &[uci::MultiNodeMode::OneToOne as u8],
+        )
+        .unwrap();
+        cfg.set(
+            uci::AppConfigTlvType::ScheduleMode,
+            &[uci::ScheduleMode::ContentionBased as u8],
+        )
+        .unwrap();
+        cfg.set(
+            uci::AppConfigTlvType::RangingRoundUsage,
+            &[uci::RangingRoundUsage::DsTwrDeferredMode as u8],
+        )
+        .unwrap();
+        cfg.set(uci::AppConfigTlvType::DeviceMacAddress, &LOCAL_SHORT_MAC)
+            .unwrap();
+        cfg.set(uci::AppConfigTlvType::DstMacAddress, &PEER_SHORT_MAC)
+            .unwrap();
+        cfg
+    }
+
+    #[test]
+    fn invalid_start_reason_rejects_mismatched_mac_mode() {
+        let mut cfg = fira_config();
+        cfg.set(
+            uci::AppConfigTlvType::MacAddressMode,
+            &[uci::MacAddressMode::Mode2 as u8],
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.invalid_start_reason(),
+            Some(uci::ReasonCode::ErrorMacAddressModeNotSupported)
+        );
+    }
+
+    #[test]
+    fn invalid_start_reason_rejects_dst_list_length_mismatch() {
+        let mut cfg = fira_config();
+        cfg.set_number_of_controlees(2);
+        assert_eq!(
+            cfg.invalid_start_reason(),
+            Some(uci::ReasonCode::ErrorInvalidDstAddressList)
+        );
+    }
+
+    #[test]
+    fn invalid_start_reason_rejects_excess_controlees_in_one_to_one() {
+        let mut cfg = fira_config();
+        cfg.set_number_of_controlees(2);
+        cfg.set_dst_mac_address(&[
+            MacAddress::Short(PEER_SHORT_MAC),
+            MacAddress::Short(EXTRA_PEER_SHORT_MAC),
+        ]);
+        assert_eq!(
+            cfg.invalid_start_reason(),
+            Some(uci::ReasonCode::ErrorInvalidNumOfControlees)
+        );
+    }
+
+    #[test]
+    fn invalid_start_reason_rejects_insufficient_ranging_duration() {
+        let mut cfg = fira_config();
+        // Default 25 slots * 2400 RSTU = 60,000 RSTU (50 ms at 1200 RSTU/ms).
+        cfg.set(uci::AppConfigTlvType::RangingDuration, &DURATION_49_MS_LE)
+            .unwrap();
+        assert_eq!(
+            cfg.invalid_start_reason(),
+            Some(uci::ReasonCode::ErrorInvalidRangingDuration)
+        );
+    }
+
+    #[test]
+    fn invalid_start_reason_accepts_exact_slot_budget() {
+        let mut cfg = fira_config();
+        cfg.set(uci::AppConfigTlvType::RangingDuration, &DURATION_50_MS_LE)
+            .unwrap();
+        assert_eq!(cfg.invalid_start_reason(), None);
+    }
+
+    #[test]
+    fn set_rejects_unsupported_mac_address_mode_1() {
+        let mut cfg = fira_config();
+        assert_eq!(
+            cfg.set(uci::AppConfigTlvType::MacAddressMode, &[0x01]),
+            Err(AppConfigError::UnsupportedMacAddressMode(
+                uci::MacAddressMode::Mode1
+            ))
+        );
+    }
+
+    #[test]
+    fn invalid_start_reason_rejects_zero_controlees_with_empty_dst_list() {
+        let mut cfg = fira_config();
+        cfg.set(uci::AppConfigTlvType::NumberOfControlees, &[0x00])
+            .unwrap();
+        cfg.set(uci::AppConfigTlvType::DstMacAddress, &[]).unwrap();
+        assert_eq!(
+            cfg.invalid_start_reason(),
+            Some(uci::ReasonCode::ErrorInvalidNumOfControlees)
+        );
+    }
+
+    #[test]
+    fn invalid_start_reason_rejects_zero_boundary_values() {
+        for (id, value, expected) in [
+            (
+                uci::AppConfigTlvType::SlotsPerRr,
+                &[0x00][..],
+                uci::ReasonCode::ErrorInsufficientSlotsPerRr,
+            ),
+            (
+                uci::AppConfigTlvType::SlotDuration,
+                &ZERO_U16_LE[..],
+                uci::ReasonCode::ErrorSlotLengthNotSupported,
+            ),
+            (
+                uci::AppConfigTlvType::RangingDuration,
+                &ZERO_U32_LE[..],
+                uci::ReasonCode::ErrorInvalidRangingDuration,
+            ),
+        ] {
+            let mut cfg = fira_config();
+            cfg.set(id, value).unwrap();
+            assert_eq!(
+                cfg.invalid_start_reason(),
+                Some(expected),
+                "unexpected start reason for {id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dl_tdoa_tlvs_reject_malformed_inputs() {
+        let mut cfg = fira_config();
+        for (id, value) in [
+            (uci::AppConfigTlvType::AoaResultReq, &[0xFF][..]),
+            (uci::AppConfigTlvType::DlTdoaTxTimestampConf, &[0x04][..]),
+            (uci::AppConfigTlvType::DlTdoaResponderTof, &[0x02][..]),
+            (
+                uci::AppConfigTlvType::DlTdoaAnchorLocation,
+                &[0x01, 0x00][..],
+            ),
+            (uci::AppConfigTlvType::DlTdoaAnchorLocation, &[0x05][..]),
+            (uci::AppConfigTlvType::DlTdoaAnchorLocation, &[0x02][..]),
+            (uci::AppConfigTlvType::DlTdoaAnchorLocation, &[][..]),
+            (
+                uci::AppConfigTlvType::DlTdoaAnchorLocation,
+                &[0x00, 0x01][..],
+            ),
+        ] {
+            assert!(cfg.set(id, value).is_err(), "expected error for {id:?}");
+        }
+    }
+
+    #[test]
+    fn dl_tdoa_anchor_location_parses_wgs84() {
+        let mut cfg = fira_config();
+        cfg.set(uci::AppConfigTlvType::DlTdoaHopCount, &[3])
+            .unwrap();
+        cfg.set(uci::AppConfigTlvType::DlTdoaTxTimestampConf, &[0xFB])
+            .unwrap();
+
+        cfg.set(
+            uci::AppConfigTlvType::DlTdoaAnchorLocation,
+            &WGS84_LOCATION_TLV,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.dl_tdoa_anchor_location(),
+            Some(DlTdoaAnchorLocation::Wgs84(uci::Wgs84Location {
+                data: WGS84_COORDS,
+            }))
+        );
+    }
+
+    #[test]
+    fn dl_tdoa_anchor_location_parses_relative() {
+        let mut cfg = fira_config();
+        cfg.set(
+            uci::AppConfigTlvType::DlTdoaAnchorLocation,
+            &RELATIVE_LOCATION_TLV,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.dl_tdoa_anchor_location(),
+            Some(DlTdoaAnchorLocation::Relative(uci::RelativeLocation {
+                x: RELATIVE_COORDS.0,
+                y: RELATIVE_COORDS.1,
+                z: RELATIVE_COORDS.2,
+            }))
+        );
+    }
+
+    #[test]
+    fn aoa_disabled_normalizes_aoa_trigger_to_disable() {
+        let mut cfg = fira_config();
+        cfg.set(
+            uci::AppConfigTlvType::AoaResultReq,
+            &[uci::AoaResultReq::AoaDisabled as u8],
+        )
+        .unwrap();
+        cfg.set(
+            uci::AppConfigTlvType::SessionInfoNtfConfig,
+            &[uci::SessionInfoNtfConfig::EnableAoaTrigger as u8],
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.effective_session_info_ntf_config(),
+            uci::SessionInfoNtfConfig::Disable
+        );
+    }
+
+    #[test]
+    fn aoa_disabled_normalizes_proximity_aoa_trigger_to_proximity_only() {
+        let mut cfg = fira_config();
+        cfg.set(
+            uci::AppConfigTlvType::AoaResultReq,
+            &[uci::AoaResultReq::AoaDisabled as u8],
+        )
+        .unwrap();
+        cfg.set(
+            uci::AppConfigTlvType::SessionInfoNtfConfig,
+            &[uci::SessionInfoNtfConfig::EnableProximityAoaTrigger as u8],
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.effective_session_info_ntf_config(),
+            uci::SessionInfoNtfConfig::EnableProximityTrigger
+        );
+    }
+
+    #[test]
+    fn ccc_and_aliro_tlvs_are_gated_by_session_type() {
+        let mut fira = fira_config();
+        let fira_rejected: &[(uci::AppConfigTlvType, &[u8])] = &[
+            (uci::AppConfigTlvType::CccHopModeKey, &[1, 2, 3, 4]),
+            (uci::AppConfigTlvType::CccUwbTime0, &[0; 8]),
+            (uci::AppConfigTlvType::CccRangingProtocolVer, &[0, 1]),
+            (uci::AppConfigTlvType::CccUwbConfigId, &[1, 0]),
+            (uci::AppConfigTlvType::CccPulseshapeCombo, &[0x11]),
+            (uci::AppConfigTlvType::CccUrskTtl, &[0x10, 0x00]),
+            (uci::AppConfigTlvType::AliroMacMode, &[0x01]),
+            (uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+        ];
+        for &(id, value) in fira_rejected {
+            assert_eq!(
+                fira.set(id, value),
+                Err(AppConfigError::UnsupportedParameter(id)),
+                "expected FiRa to reject {id:?}"
+            );
+        }
+
+        let mut ccc = AppConfig::new(uci::SessionType::Ccc);
+        assert!(
+            ccc.set(uci::AppConfigTlvType::CccHopModeKey, &[1, 2, 3, 4])
+                .is_ok()
+        );
+        assert_eq!(
+            ccc.set(uci::AppConfigTlvType::AliroMacMode, &[0x01]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::AliroMacMode
+            ))
+        );
+        assert_eq!(
+            ccc.set(uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::CccLastIndexUsed
+            ))
+        );
+
+        let mut aliro = AppConfig::new(uci::SessionType::Aliro);
+        assert!(
+            aliro
+                .set(uci::AppConfigTlvType::AliroMacMode, &[0x41])
+                .is_ok()
+        );
+        assert_eq!(
+            aliro.set(uci::AppConfigTlvType::CccLastIndexUsed, &[1, 0, 0, 0]),
+            Err(AppConfigError::UnsupportedParameter(
+                uci::AppConfigTlvType::CccLastIndexUsed
+            ))
+        );
+    }
+
+    #[test]
+    fn ccc_uwb_initiation_time_mirrors_to_uwb_time0() {
+        const LEGACY_4B: [u8; 4] = [0x20, 0x03, 0x00, 0x00];
+        const EXPECTED_8B: [u8; 8] = [0x20, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+        let mut ccc = AppConfig::new(uci::SessionType::Ccc);
+        ccc.set(uci::AppConfigTlvType::UwbInitiationTime, &LEGACY_4B)
+            .unwrap();
+        assert_eq!(
+            ccc.get(uci::AppConfigTlvType::CccUwbTime0),
+            Some(&Bytes::from_static(&EXPECTED_8B))
+        );
+
+        let mut fira = fira_config();
+        fira.set(uci::AppConfigTlvType::UwbInitiationTime, &LEGACY_4B)
+            .unwrap();
+        assert!(fira.get(uci::AppConfigTlvType::CccUwbTime0).is_none());
     }
 }
